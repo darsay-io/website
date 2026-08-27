@@ -3,5 +3,9 @@ dist/
 .astro/
 .wrangler/
 .env
+.dev.vars
 .DS_Store
 coverage/
+backup.sql
+*.backup.sql
+.wrangler/state/

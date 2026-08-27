@@ -29,6 +29,7 @@ npx wrangler d1 export darsay-io --output backup.sql
 ```
 
 Exports contain board ids (capability secrets). Store them like secrets.
+Do not commit `backup.sql` (gitignored).
 
 Time Travel: 7 days on D1 Free. Practice a restore on the preview database once.
 

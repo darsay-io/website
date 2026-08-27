@@ -26,3 +26,5 @@ darsay archive --next summer
 The GET `…/catalog.json` URL is the same write capability as the board. Do not paste it into chat; use the download button.
 
 See `ops/RUNBOOK.md` for Cloudflare. Docs Markdown is pinned in `docs.lock.json` from the CLI tag; do not edit `src/content/docs/docs/**` by hand.
+
+`wrangler.jsonc` D1 `database_id` values are placeholders (all zeros) until an operator creates the databases. There are no API tokens in this repo. Keep `.dev.vars` and D1 exports out of git.
