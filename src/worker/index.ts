@@ -42,9 +42,24 @@ const API_HEADERS: Record<string, string> = {
 	"Cache-Control": "no-store",
 };
 
+function applyApiHeaders(c: { header: (k: string, v: string) => void }) {
+	for (const [k, v] of Object.entries(API_HEADERS)) c.header(k, v);
+}
+
 app.use("*", async (c, next) => {
 	await next();
-	for (const [k, v] of Object.entries(API_HEADERS)) c.header(k, v);
+	applyApiHeaders(c);
+});
+
+app.notFound((c) => {
+	applyApiHeaders(c);
+	return c.json({ error: "not_found" }, 404);
+});
+
+app.onError((_err, c) => {
+	console.log({ msg: "unhandled", status: 500 });
+	applyApiHeaders(c);
+	return c.json({ error: "internal" }, 500);
 });
 
 function jsonError(c: { json: (b: unknown, s: number) => Response }, error: string, status: number) {
@@ -158,15 +173,8 @@ app.post("/boards", async (c) => {
 	return c.json({ id, url: `${origin}/b/${id}`, catalog_id: cat.id, created: now }, 201);
 });
 
-app.use("/boards/:id/*", async (c, next) => {
-	return lookupGate(c, next);
-});
-app.use("/boards/:id", async (c, next) => {
-	if (c.req.method === "POST" && !c.req.path.includes("/boards/")) {
-		return next();
-	}
-	return lookupGate(c, next);
-});
+app.use("/boards/:id/*", (c, next) => lookupGate(c, next));
+app.use("/boards/:id", (c, next) => lookupGate(c, next));
 
 async function lookupGate(
 	c: { req: { param: (k: string) => string }; env: Env; json: (b: unknown, s: number) => Response },
@@ -206,7 +214,9 @@ app.patch("/boards/:id", async (c) => {
 	const curator =
 		parsed.body.curator === undefined ? board.curator : clampStr(parsed.body.curator, MAX_CURATOR);
 	const note = parsed.body.note === undefined ? board.note : clampStr(parsed.body.note, MAX_BOARD_NOTE);
-	if (title === null || curator === null || note === null) return jsonError(c, "field too long", 400);
+	if (parsed.body.title !== undefined && title === null) return jsonError(c, "field too long", 400);
+	if (parsed.body.curator !== undefined && curator === null) return jsonError(c, "field too long", 400);
+	if (parsed.body.note !== undefined && note === null) return jsonError(c, "field too long", 400);
 	let catalogId = board.catalog_id;
 	if (parsed.body.catalog_id !== undefined) {
 		const cat = parseCatalogId(parsed.body.catalog_id, typeof title === "string" ? title : board.title);
@@ -314,18 +324,13 @@ app.post("/boards/:id/entries", async (c) => {
 			return c.json(entryToApi(row!));
 		}
 
-		const countRow = await c.env.DB
-			.prepare("SELECT COUNT(*) AS n FROM entries WHERE board_id = ?")
-			.bind(boardId)
-			.first<{ n: number }>();
-		if ((countRow?.n ?? 0) >= MAX_ENTRIES) return jsonError(c, "entry_cap", 400);
-
-		const ins = await c.env.DB.batch([
-			...capStmts(c.env.DB, "mutates", today, mutN + 1),
-			c.env.DB
+		let inserted: { meta?: { changes?: number } };
+		try {
+			inserted = await c.env.DB
 				.prepare(
 					`INSERT INTO entries (board_id, source, revision, include_json, include_key, desire, note, status, holders, added, payload_bytes, estimate_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE (SELECT COUNT(*) FROM entries WHERE board_id = ?) < ?`,
 				)
 				.bind(
 					boardId,
@@ -340,10 +345,20 @@ app.post("/boards/:id/entries", async (c) => {
 					now,
 					payloadBytes,
 					estimateJson,
-				),
+					boardId,
+					MAX_ENTRIES,
+				)
+				.run();
+		} catch (err) {
+			if (/UNIQUE/i.test(String(err))) return jsonError(c, "conflict", 409);
+			return jsonError(c, "quota", 503);
+		}
+		if (!inserted.meta?.changes) return jsonError(c, "entry_cap", 400);
+
+		await c.env.DB.batch([
+			...capStmts(c.env.DB, "mutates", today, mutN + 1),
 			c.env.DB.prepare("UPDATE boards SET updated = ? WHERE id = ?").bind(now, boardId),
 		]);
-		void ins;
 		const row = await c.env.DB
 			.prepare(
 				`SELECT * FROM entries WHERE board_id = ? AND source = ? AND revision = ? AND include_key = ?`,
@@ -351,7 +366,8 @@ app.post("/boards/:id/entries", async (c) => {
 			.bind(boardId, canonical, revIn, key)
 			.first<EntryRow>();
 		return c.json(entryToApi(row!), 201);
-	} catch {
+	} catch (err) {
+		if (/UNIQUE/i.test(String(err))) return jsonError(c, "conflict", 409);
 		return jsonError(c, "quota", 503);
 	}
 });
@@ -407,7 +423,8 @@ app.patch("/boards/:id/entries/:eid", async (c) => {
 		parsed.body.note === undefined ? existing.note : clampStr(parsed.body.note, MAX_ENTRY_NOTE);
 	const holders =
 		parsed.body.holders === undefined ? existing.holders : clampStr(parsed.body.holders, MAX_HOLDERS);
-	if (note === null || holders === null) return jsonError(c, "field too long", 400);
+	if (parsed.body.note !== undefined && note === null) return jsonError(c, "field too long", 400);
+	if (parsed.body.holders !== undefined && holders === null) return jsonError(c, "field too long", 400);
 
 	let status = existing.status;
 	if (parsed.body.status !== undefined) {
@@ -497,4 +514,18 @@ app.delete("/boards/:id/entries/:eid", async (c) => {
 	return c.json({ ok: true });
 });
 
-export default app;
+function isBoardPage(pathname: string): boolean {
+	return pathname === "/b" || pathname === "/b/" || pathname.startsWith("/b/");
+}
+
+export default {
+	fetch(request: Request, env: Env, ctx: ExecutionContext) {
+		const url = new URL(request.url);
+		if (isBoardPage(url.pathname) && env.ASSETS) {
+			return env.ASSETS.fetch(new Request(new URL("/b/", url.origin), request));
+		}
+		return app.fetch(request, env, ctx);
+	},
+};
+
+export { app };

@@ -10,7 +10,7 @@
     "binding": "ASSETS",
     "not_found_handling": "404-page",
     "html_handling": "auto-trailing-slash",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/b/*"]
   },
   "d1_databases": [
     {
@@ -29,6 +29,14 @@
     "preview": {
       "name": "darsay-io-preview",
       "workers_dev": false,
+      "preview_urls": true,
+      "assets": {
+        "directory": "./dist",
+        "binding": "ASSETS",
+        "not_found_handling": "404-page",
+        "html_handling": "auto-trailing-slash",
+        "run_worker_first": ["/api/*", "/b/*"]
+      },
       "d1_databases": [
         {
           "binding": "DB",

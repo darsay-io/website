@@ -20,7 +20,7 @@ export async function fetchEstimate(
 ): Promise<EstimateDigest | null> {
 	const kind = parsed.artifactType === "dataset" ? "datasets" : "models";
 	const rev = revision && revision.length > 0 ? revision : "main";
-	const url = `https://huggingface.co/api/${kind}/${parsed.locator}?blobs=true`;
+	const url = `https://huggingface.co/api/${kind}/${parsed.locator}/revision/${encodeURIComponent(rev)}?blobs=true`;
 	const ac = new AbortController();
 	const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
 	try {

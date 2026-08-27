@@ -27,6 +27,8 @@ describe("catalog_id", () => {
 		});
 		expect(parseCatalogId("Summer", "x")).toMatchObject({ ok: true, id: "summer" });
 		expect(parseCatalogId("Nope Space", "x").ok).toBe(false);
+		expect(parseCatalogId("a".repeat(65), "x").ok).toBe(false);
+		expect(parseCatalogId(12, "x").ok).toBe(false);
 	});
 });
 
