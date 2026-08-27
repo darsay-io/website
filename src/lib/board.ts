@@ -118,6 +118,26 @@ export function mountCreate(root: HTMLElement) {
 	root.append(form);
 }
 
+type SortKey = "source" | "desire" | "size" | "status";
+
+export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "desc"): number {
+	let cmp = 0;
+	if (key === "desire" || key === "size") {
+		const av = key === "desire" ? a.desire : a.payload_bytes;
+		const bv = key === "desire" ? b.desire : b.payload_bytes;
+		if (av === null && bv === null) cmp = 0;
+		else if (av === null) return 1;
+		else if (bv === null) return -1;
+		else cmp = av - bv;
+	} else if (key === "source") {
+		cmp = a.source.localeCompare(b.source);
+	} else {
+		cmp = (a.status === "have" ? 1 : 0) - (b.status === "have" ? 1 : 0);
+	}
+	if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
+	return a.id - b.id;
+}
+
 export async function mountBoard(root: HTMLElement, id: string) {
 	root.replaceChildren(el("p", {}, "Loading…"));
 	let board: Board;
@@ -128,6 +148,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		return;
 	}
 
+	let sortKey: SortKey = "desire";
+	let sortDir: "asc" | "desc" = "desc";
+	let message = "";
+
 	function field(label: string, value: string, onSave: (v: string) => void) {
 		const input = el("input", { type: "text", value });
 		input.addEventListener("change", () => onSave(input.value));
@@ -135,8 +159,25 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	}
 
 	async function patchBoard(body: Record<string, unknown>) {
-		await api(`/api/boards/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-		await reload();
+		try {
+			await api(`/api/boards/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+			message = "";
+			await reload();
+		} catch (e) {
+			message = e instanceof Error ? e.message : "failed";
+			render();
+		}
+	}
+
+	async function patchEntry(eid: number, body: Record<string, unknown>, reloadAfter = true) {
+		try {
+			await api(`/api/boards/${id}/entries/${eid}`, { method: "PATCH", body: JSON.stringify(body) });
+			message = "";
+			if (reloadAfter) await reload();
+		} catch (e) {
+			message = e instanceof Error ? e.message : "failed";
+			render();
+		}
 	}
 
 	async function reload() {
@@ -184,19 +225,46 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			location.href = "/";
 		});
 		actions.append(copy, dl, del);
-		header.append(el("p", { class: "muted" }, `catalog id ${board.catalog_id} · updated ${board.updated}`), actions);
+		header.append(
+			el("p", { class: "muted" }, `catalog id ${board.catalog_id} · created ${board.created} · updated ${board.updated}`),
+			actions,
+		);
+		if (message) header.append(el("p", { class: "flash" }, message));
 
 		const table = el("table", { class: "board-table" });
 		const thead = el("thead");
-		thead.append(
-			el(
-				"tr",
-				{},
-				...["Source", "Desire", "Size", "Have", "Who", "Note", ""].map((h) => el("th", {}, h)),
-			),
-		);
+		const sortCols: { label: string; key: SortKey | null }[] = [
+			{ label: "Source", key: "source" },
+			{ label: "Desire", key: "desire" },
+			{ label: "Size", key: "size" },
+			{ label: "Have", key: "status" },
+			{ label: "Who", key: null },
+			{ label: "Note", key: null },
+			{ label: "", key: null },
+		];
+		const headRow = el("tr");
+		for (const col of sortCols) {
+			if (!col.key) {
+				headRow.append(el("th", {}, col.label));
+				continue;
+			}
+			const key = col.key;
+			const mark = sortKey === key ? (sortDir === "desc" ? " ▾" : " ▴") : "";
+			const btn = el("button", { type: "button", class: "th-sort" }, col.label + mark);
+			btn.addEventListener("click", () => {
+				if (sortKey === key) sortDir = sortDir === "desc" ? "asc" : "desc";
+				else {
+					sortKey = key;
+					sortDir = key === "source" ? "asc" : "desc";
+				}
+				render();
+			});
+			headRow.append(el("th", {}, btn));
+		}
+		thead.append(headRow);
 		const tbody = el("tbody");
-		for (const e of board.entries) {
+		const rows = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
+		for (const e of rows) {
 			const tr = el("tr");
 			const srcCell = el("td");
 			const href = hfUrlFromCanonical(e.source);
@@ -212,37 +280,23 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			const desire = el("input", { type: "number", min: "1", max: "9", value: e.desire ? String(e.desire) : "" });
 			desire.addEventListener("change", async () => {
 				const v = desire.value === "" ? null : Number(desire.value);
-				await api(`/api/boards/${id}/entries/${e.id}`, {
-					method: "PATCH",
-					body: JSON.stringify({ desire: v }),
-				});
-				await reload();
+				await patchEntry(e.id, { desire: v });
 			});
 
 			const have = el("input", { type: "checkbox" });
 			if (e.status === "have") have.checked = true;
 			have.addEventListener("change", async () => {
-				await api(`/api/boards/${id}/entries/${e.id}`, {
-					method: "PATCH",
-					body: JSON.stringify({ status: have.checked ? "have" : "want" }),
-				});
-				await reload();
+				await patchEntry(e.id, { status: have.checked ? "have" : "want" });
 			});
 
 			const who = el("input", { type: "text", placeholder: "Maya, USB in Berlin", value: e.holders || "" });
 			who.addEventListener("change", async () => {
-				await api(`/api/boards/${id}/entries/${e.id}`, {
-					method: "PATCH",
-					body: JSON.stringify({ holders: who.value }),
-				});
+				await patchEntry(e.id, { holders: who.value }, false);
 			});
 
 			const note = el("input", { type: "text", value: e.note || "" });
 			note.addEventListener("change", async () => {
-				await api(`/api/boards/${id}/entries/${e.id}`, {
-					method: "PATCH",
-					body: JSON.stringify({ note: note.value }),
-				});
+				await patchEntry(e.id, { note: note.value }, false);
 			});
 
 			const rm = el("button", { type: "button" }, "Drop");
@@ -264,16 +318,18 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			tbody.append(tr);
 		}
 		table.append(thead, tbody);
+		const wrap = el("div", { class: "board-wrap" }, table);
 
 		const add = el("form", { class: "add-row" });
 		const source = el("input", { type: "text", placeholder: "huggingface:Qwen/Qwen3-0.6B", required: "true" });
 		const d = el("input", { type: "number", min: "1", max: "9", placeholder: "desire" });
+		const rev = el("input", { type: "text", placeholder: "revision (optional)", maxlength: "64" });
 		const advanced = el("details");
 		const inc = el("input", { type: "text", placeholder: "include globs, comma-separated" });
 		advanced.append(el("summary", {}, "subset / include"), inc);
 		const addBtn = el("button", { type: "submit" }, "Add source");
 		const addErr = el("p", { class: "muted" });
-		add.append(source, d, advanced, addBtn, addErr);
+		add.append(source, d, rev, advanced, addBtn, addErr);
 		add.addEventListener("submit", async (ev) => {
 			ev.preventDefault();
 			addErr.textContent = "";
@@ -287,17 +343,19 @@ export async function mountBoard(root: HTMLElement, id: string) {
 					body: JSON.stringify({
 						source: source.value,
 						desire: d.value === "" ? null : Number(d.value),
+						revision: rev.value.trim() || null,
 						include: include.length ? include : null,
 					}),
 				});
 				source.value = "";
+				rev.value = "";
 				await reload();
 			} catch (err) {
 				addErr.textContent = err instanceof Error ? err.message : "failed";
 			}
 		});
 
-		root.replaceChildren(header, table, add);
+		root.replaceChildren(header, wrap, add);
 	}
 
 	render();
