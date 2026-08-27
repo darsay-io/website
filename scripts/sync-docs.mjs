@@ -135,7 +135,7 @@ function resolveSourceDir(lock) {
 	if (fs.existsSync(path.join(sibling, "docs/GETTING-STARTED.md"))) {
 		return sibling;
 	}
-	throw new Error("Set DARSAY_DOCS_ROOT to a darsay checkout, or clone jeremynorris/darsay next to this repo");
+	throw new Error("Set DARSAY_DOCS_ROOT to a darsay checkout, or clone darsay-io/darsay next to this repo");
 }
 
 function readSourceFile(src, rel) {
