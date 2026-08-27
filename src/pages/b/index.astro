@@ -1,0 +1,27 @@
+---
+import Layout from "../../layouts/Plain.astro";
+---
+<Layout title="Board — darsay">
+	<main class="plain">
+		<div id="board-root">
+			<p class="muted">Paste a board URL or create one from the homepage.</p>
+		</div>
+	</main>
+</Layout>
+<script>
+	import { mountBoard, mountCreate } from "../../lib/board.ts";
+	const root = document.getElementById("board-root");
+	if (root) {
+		const parts = location.pathname.split("/").filter(Boolean);
+		const id = parts[0] === "b" ? parts[1] : "";
+		if (id && /^[0-9a-f]{32}$/.test(id)) {
+			mountBoard(root, id);
+		} else {
+			root.replaceChildren();
+			const p = document.createElement("p");
+			p.textContent = "No board id in the URL. Create one:";
+			root.append(p);
+			mountCreate(root);
+		}
+	}
+</script>

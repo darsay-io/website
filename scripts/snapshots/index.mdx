@@ -1,0 +1,112 @@
+---
+title: "Documentation"
+description: "**You have five minutes.**"
+---
+
+---
+
+| | Current |
+|---|---|
+| Tool | **0.7.0** |
+| Manifest schema | **1.6.0** |
+| Catalog schema | **1.0.0** |
+| MVB format | **1.1** |
+| License | Apache 2.0 |
+
+Tool version, schema version, and export-format version bump independently.
+Major schema / format bumps are breaking; additive fields are minor.
+
+## Where to go
+
+**You have five minutes.**
+[Start here](/docs/getting-started/) — install, archive a tiny model, look
+at the bundle, run it.
+
+**You want the picture in your head.**
+[Concepts](/docs/concepts/) — vault, bundle, pin, catalog,
+payload vs metadata, why the formats outlive the tool.
+
+**You want a command that already exists.**
+[Examples](/docs/examples/) — estimate, resume, datasets, catalogs,
+export, shards, verify. Then the spec for the command you are about to run.
+
+**You are reading this in 2040 and the CLI is gone.**
+[Manifest](/docs/manifest/) and [MVB format](/docs/mvb-format/) are the two
+documents that must survive to open a bundle. [Catalogs](/docs/catalogs/)
+are optional curator data — a want-list, not payload — and are not
+required to open a bundle. Everything else is how we got there.
+
+**You are changing the tool.**
+[Design](/docs/design/) for why, [Testing](/docs/testing/) and
+[Contributing](https://github.com/jeremynorris/darsay/blob/12eaacaab4747795801df9a39ea69f9d3f53b566/CONTRIBUTING.md) for how,
+[Distribution](/docs/distribution/) for how a release is consumed.
+
+## Using the vault
+
+| Document | Open it when… |
+|---|---|
+| [**Getting started**](/docs/getting-started/) | You have never run `darsay` |
+| [**Concepts**](/docs/concepts/) | You want the objects named before the flags |
+| [**Examples**](/docs/examples/) | You want a copy-paste recipe |
+| [**Hydration**](/docs/hydration/) | `hydrate` / `run` / `envs` — isolated engines, offline inference |
+| [**Incremental transfer**](/docs/incremental/) | Budgets, Ctrl-C, Range partials, `--shard N/T`, `assemble` |
+| [**Datasets**](/docs/datasets/) | The source is `datasets/owner/name`; payload under `data/` |
+| [**Sources**](/docs/sources/) | Provider-qualified refs; Hugging Face is a plugin |
+| [**Quantization**](/docs/quantization/) | Canonical bundle vs satellite quants vs derived precision |
+| [**Catalogs**](/docs/catalogs/) | Shareable want-lists; the vault is the same list, realized |
+
+## The formats
+
+Manifest and MVB are the archival surface of a bundle. A bundle remains
+useful if the CLI is gone, as long as those two are followed. Catalogs
+are an optional third surface: a shareable want-list. They are not inside
+`.mvb.tar` and are not required to open a bundle.
+
+| Document | What it specifies |
+|---|---|
+| [**manifest.json**](/docs/manifest/) | Every field of the machine-readable source of truth. `null` means unknown — the tool never fabricates. |
+| [**.mvb.tar**](/docs/mvb-format/) | Single-file export: uncompressed tar, marker first, deterministic metadata, manual recovery with stock `tar`. |
+| [**catalog.json**](/docs/catalogs/) | Optional curator want-list. Overlay is a view; the file does not record possession. |
+
+## Project
+
+| Document | Open it when… |
+|---|---|
+| [**Design**](/docs/design/) | Why Python. Why longevity is in the formats, not a frozen binary. |
+| [**Distribution**](/docs/distribution/) | PyPI, pipx / uvx / wheel, personal Homebrew tap. |
+| [**Testing**](/docs/testing/) | Unit / integration / opt-in Hub e2e. What the suite is there to keep. |
+
+## Invariants
+
+The short list that every document, and every change, is measured against:
+
+1. **Payload immutability.** Nothing under a bundle's payload root is
+   modified after archiving. Tool-written state lives at the bundle root.
+   The bundle hash covers the payload only.
+2. **Partials are portable.** `transfer.json` is disposable acceleration.
+   Full files and bundle-local Range partials survive budgets, SIGINT,
+   ledger loss, and copying to another vault. No source-machine absolute
+   paths in the ledger.
+3. **Export determinism.** The same bundle state produces a byte-identical
+   `.mvb.tar`. Volatile machine-local files are excluded.
+4. **Record, don't fabricate.** Manifests contain only what was established.
+   Unknown is `null`. Query caps are recorded, never silently truncated.
+5. **Verify before register.** `import` re-hashes a payload before a bundle
+   enters the vault. Failures write nothing.
+6. **Generated vs hand-edited.** Bundle `README.md` is a derived view
+   (`regen`). `curation.md` is never overwritten once it exists.
+7. **Registries, not special cases.** Artifact types, engines, and source
+   providers are registry entries.
+8. **Hydration is disposable.** Envs live outside bundles. Deleting
+   `hydration.json` never loses archival data. Inference is offline.
+
+## Extending the system
+
+| To add… | Register it in… |
+|---|---|
+| A new artifact type (`gguf-pack`, `paper`, …) | `ARTIFACT_TYPES` in `src/darsay/schema.py` |
+| A new inference runtime (MLX, vLLM, ONNX, …) | `ENGINES` in `src/darsay/hydrate.py` |
+| A new acquisition host | `SourceProvider` in `src/darsay/providers/`, wired in `sources.py` |
+
+Field changes to `manifest.json` or `.mvb.tar` need a docs update here and
+a schema / format version bump. See [Contributing](https://github.com/jeremynorris/darsay/blob/12eaacaab4747795801df9a39ea69f9d3f53b566/CONTRIBUTING.md).

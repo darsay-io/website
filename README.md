@@ -1,0 +1,28 @@
+# darsay.io
+
+Product site and anonymous want-list leaderboards for [darsay](https://github.com/darsay-io/darsay).
+
+This is documentation plus a coordination ledger. **It does not host model files.** Collectors run `darsay archive` from upstream, or sneakernet a vault.
+
+```bash
+npm install
+npm test
+npm run dev          # landing + docs
+npm run build
+npx wrangler d1 migrations apply darsay-io --local
+npx wrangler dev     # API + local D1 (after build)
+```
+
+Board URLs look like `https://darsay.io/b/<32-hex>`. The URL is the password. Anyone with it can edit.
+
+Catalog export is a `catalog.json` the CLI already understands:
+
+```bash
+# after downloading from the board UI
+darsay catalog adopt summer ./catalog.json
+darsay archive --next summer
+```
+
+The GET `…/catalog.json` URL is the same write capability as the board. Do not paste it into chat; use the download button.
+
+See `ops/RUNBOOK.md` for Cloudflare. Docs Markdown is pinned in `docs.lock.json` from the CLI tag; do not edit `src/content/docs/docs/**` by hand.

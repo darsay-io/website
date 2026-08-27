@@ -1,0 +1,36 @@
+---
+import Layout from "../layouts/Plain.astro";
+const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
+---
+<Layout title="darsay — Keep a model forever. Run it tomorrow.">
+	<main class="hero-plain">
+		<p class="muted">darsay</p>
+		<h1>Keep a model forever. Run it tomorrow.</h1>
+		<p class="lede">
+			A vault is a folder of bundles. A bundle is a pinned snapshot whose payload never changes.
+			The Hub is a living website. A darsay bundle is a museum piece that still runs.
+		</p>
+		<pre><code>pipx install darsay
+# or
+uvx darsay --help</code></pre>
+		<p>Three verbs: <code>estimate</code> → <code>archive</code> → <code>run</code> (offline).</p>
+		<p>
+			A catalog is a curated list of sources; the vault is that list, realized.
+		</p>
+		<div class="anti">
+			<strong>This site does not host model files.</strong>
+			It does not accept uploads and it does not give you weights. Upstream is Hugging Face
+			(and later other providers). Copies move with <code>darsay archive</code> or a sneakernet
+			of a vault / <code>.mvb.tar</code>.
+		</div>
+		<div class="cta-row">
+			<a class="btn" href="/docs/getting-started/">Start here</a>
+			{boards && <a class="btn secondary" href="/boards">Create a board</a>}
+		</div>
+		<p class="muted">
+			<a href="/docs/">Documentation</a>
+			· <a href="/privacy">Privacy</a>
+			· <a href="/terms">Terms</a>
+		</p>
+	</main>
+</Layout>

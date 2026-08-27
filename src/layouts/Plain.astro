@@ -1,0 +1,29 @@
+---
+import "../styles/site.css";
+interface Props {
+	title: string;
+}
+const { title } = Astro.props;
+const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
+---
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="referrer" content="no-referrer" />
+		<title>{title}</title>
+		<link rel="icon" href="/favicon.svg" />
+	</head>
+	<body style="background:#0b1220;margin:0;">
+		<header class="plain" style="padding-bottom:0;">
+			<nav class="site-nav">
+				<a href="/">darsay</a>
+				<a href="/docs/getting-started/">Docs</a>
+				{boards && <a href="/boards">Boards</a>}
+				<a href="https://github.com/darsay-io/darsay" rel="noreferrer">GitHub</a>
+			</nav>
+		</header>
+		<slot />
+	</body>
+</html>

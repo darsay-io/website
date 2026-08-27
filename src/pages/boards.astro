@@ -1,0 +1,33 @@
+---
+import Layout from "../layouts/Plain.astro";
+const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
+---
+<Layout title="Create a board — darsay">
+	<main class="plain">
+		<h1>Create a board</h1>
+		{
+			boards ? (
+				<>
+					<p class="lede">
+						A want-list for a group that is collecting models into their own vaults.
+						Anyone with the link can view and edit. There are no accounts.
+					</p>
+					<div id="create-root"></div>
+					<p class="muted">
+						The URL is the password. Copy it. Losing it loses the board. There is no email
+						reset.
+					</p>
+				</>
+			) : (
+				<p>Boards are not enabled in this build.</p>
+			)
+		}
+	</main>
+</Layout>
+{boards && (
+	<script>
+		import { mountCreate } from "../lib/board.ts";
+		const root = document.getElementById("create-root");
+		if (root) mountCreate(root);
+	</script>
+)}

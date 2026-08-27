@@ -1,0 +1,21 @@
+---
+import Layout from "../layouts/Plain.astro";
+---
+<Layout title="Privacy — darsay">
+	<main class="plain">
+		<h1>Privacy</h1>
+		<p>There are no accounts, passwords, or emails collected by this site.</p>
+		<p>
+			A board URL is a capability: anyone who has it can read and edit that board. Treat the
+			link like a secret. Do not put it in a public issue or a crawled page.
+		</p>
+		<p>
+			Board content is whatever holders of the link typed (source refs, notes, a “who has a
+			copy” string). The operator of the Cloudflare account can read the D1 database, including
+			board ids. Request-path logging is off by default. If it is turned on, URLs contain board
+			ids and are operator-secret.
+		</p>
+		<p>We do not run third-party analytics on board or API pages.</p>
+		<p>Client IPs are not stored on board rows.</p>
+	</main>
+</Layout>

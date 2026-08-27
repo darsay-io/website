@@ -1,0 +1,35 @@
+{
+  "name": "darsay-website",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "wrangler dev",
+    "astro": "astro",
+    "test": "vitest run",
+    "sync-docs": "node scripts/sync-docs.mjs",
+    "check:docs": "node scripts/sync-docs.mjs --check"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.7.3",
+    "@astrojs/starlight": "^0.41.9",
+    "astro": "^7.1.6",
+    "hono": "^4.13.5",
+    "sharp": "^0.35.3"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "workerd@1.20260825.1": true,
+    "fsevents@2.3.3": true
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.126.0"
+  }
+}
