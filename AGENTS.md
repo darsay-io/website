@@ -8,3 +8,4 @@ Astro + Starlight + a Cloudflare Worker for anonymous want-list boards.
 - `catalog.json` export must stay schema 1.0.0 (no holders/status/GUID).
 - Tests: `npm test`. Build: `PUBLIC_BOARDS_ENABLED=true npm run build`.
 - Do not put a Node toolchain in `darsay/darsay` (the Python CLI repo).
+- Provisioning is Wrangler + `ops/RUNBOOK.md`. Do not add Terraform, Ansible, or D1 auto-provision (omit `database_id`).
