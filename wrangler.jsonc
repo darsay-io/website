@@ -16,8 +16,7 @@
     {
       "binding": "DB",
       "database_name": "darsay-io",
-      // Placeholder — replace after `wrangler d1 create`. Not a secret; not a live DB.
-      "database_id": "00000000-0000-0000-0000-000000000001",
+      "database_id": "6b9bb710-36c3-42fa-b80c-44935397042c",
       "migrations_dir": "migrations"
     }
   ],
@@ -30,6 +29,8 @@
       "name": "darsay-io-preview",
       "workers_dev": false,
       "preview_urls": true,
+      // Do not inherit the apex custom domain from the top-level Worker.
+      "routes": [],
       "assets": {
         "directory": "./dist",
         "binding": "ASSETS",
@@ -41,8 +42,7 @@
         {
           "binding": "DB",
           "database_name": "darsay-io-preview",
-          // Placeholder — replace after `wrangler d1 create darsay-io-preview`.
-          "database_id": "00000000-0000-0000-0000-000000000002",
+          "database_id": "c1354c9a-aa8f-43ba-9b8a-4a3fe3b2ff6c",
           "migrations_dir": "migrations"
         }
       ]

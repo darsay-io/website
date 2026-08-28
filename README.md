@@ -27,4 +27,4 @@ The GET `…/catalog.json` URL is the same write capability as the board. Do not
 
 See `ops/RUNBOOK.md` for Cloudflare. Wrangler is the provisioning tool; there is no Terraform or Ansible. Docs Markdown is pinned in `docs.lock.json` from the CLI tag; do not edit `src/content/docs/docs/**` by hand.
 
-`wrangler.jsonc` D1 `database_id` values are placeholders (all zeros) until an operator creates the databases. There are no API tokens in this repo. Keep `.dev.vars` and D1 exports out of git.
+`wrangler.jsonc` D1 `database_id` values are not secrets; they identify the prod and preview databases. There are no API tokens in this repo. Keep `.dev.vars` and D1 exports out of git.

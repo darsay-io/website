@@ -37,9 +37,9 @@ npx wrangler dev    # Worker + local D1 + static assets after `npm run build`
    ```
 
    If `--update-config` writes the wrong block, paste each printed `database_id` into the matching `d1_databases` entry in `wrangler.jsonc`. Replace the all-zero placeholders. Commit the IDs.
-4. `npx wrangler d1 migrations apply darsay-io`
-5. `npx wrangler d1 migrations apply darsay-io-preview --env preview`
-6. Apex `darsay.io` is already in `wrangler.jsonc` `routes`. Deploy attaches it. Keep `workers_dev: false`.
+4. `npx wrangler d1 migrations apply darsay-io --remote`
+5. `npx wrangler d1 migrations apply darsay-io-preview --env preview --remote`
+6. Apex `darsay.io` is already in `wrangler.jsonc` `routes`. Deploy attaches it. Keep `workers_dev: false`. Preview must set `"routes": []` so it does not inherit the apex custom domain.
 7. Cloudflare Access on preview URLs (dashboard; before sharing a preview link).
 8. `PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy`
 
