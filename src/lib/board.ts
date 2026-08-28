@@ -71,27 +71,38 @@ async function api(path: string, init?: RequestInit) {
 }
 
 export function mountCreate(root: HTMLElement) {
-	const title = el("input", { type: "text", placeholder: "Board title (e.g. Summer 2026)", maxlength: "120" });
+	const title = el("input", {
+		type: "text",
+		placeholder: "Summer 2026",
+		maxlength: "120",
+		id: "board-title",
+	});
 	const password = el("input", {
 		type: "password",
-		placeholder: "Create password",
+		placeholder: "Shared create password",
 		autocomplete: "off",
 		spellcheck: "false",
+		id: "board-password",
 	});
 	const status = el("p", { class: "muted" });
 	const urlBox = el("p", { class: "board-url" });
-	const copyBtn = el("button", { type: "button" }, "Copy URL");
-	copyBtn.hidden = true;
-	const ack = el("label", { class: "ack" });
+	const copyBtn = el("button", { type: "button", class: "btn secondary" }, "Copy URL");
 	const ackBox = el("input", { type: "checkbox" });
-	ack.append(ackBox, document.createTextNode(" I have copied this URL. Losing it loses the board."));
-	ack.hidden = true;
+	const ack = el("label", { class: "ack" }, ackBox, el("span", {}, "I have copied this URL. Losing it loses the board."));
 	const go = el("a", { href: "#", class: "btn" }, "Open board");
 	go.hidden = true;
+	const result = el("div", { class: "create-result" }, urlBox, copyBtn, ack, go);
+	result.hidden = true;
 
 	const form = el("form", { class: "create-form" });
-	const submit = el("button", { type: "submit" }, "Create a board");
-	form.append(title, password, submit, status, urlBox, copyBtn, ack, go);
+	const submit = el("button", { type: "submit", class: "btn" }, "Create a board");
+	form.append(
+		el("label", { class: "field" }, el("span", {}, "Title"), title),
+		el("label", { class: "field" }, el("span", {}, "Create password"), password),
+		submit,
+		status,
+		result,
+	);
 	form.addEventListener("submit", async (ev) => {
 		ev.preventDefault();
 		submit.disabled = true;
@@ -102,8 +113,7 @@ export function mountCreate(root: HTMLElement) {
 				body: JSON.stringify({ title: title.value, password: password.value }),
 			})) as { url: string };
 			urlBox.textContent = body.url;
-			copyBtn.hidden = false;
-			ack.hidden = false;
+			result.hidden = false;
 			copyBtn.onclick = async () => {
 				try {
 					await navigator.clipboard.writeText(body.url);
@@ -115,7 +125,9 @@ export function mountCreate(root: HTMLElement) {
 				go.hidden = !ackBox.checked;
 				go.setAttribute("href", body.url);
 			});
+			go.hidden = true;
 			status.textContent = "Copy this URL. It is the only way back.";
+			submit.hidden = true;
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : "failed";
 			status.textContent =
@@ -201,7 +213,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			field("Note", board.note || "", (v) => patchBoard({ note: v })),
 		);
 		const actions = el("div", { class: "board-actions" });
-		const copy = el("button", { type: "button" }, "Copy URL");
+		const copy = el("button", { type: "button", class: "btn secondary" }, "Copy URL");
 		copy.addEventListener("click", async () => {
 			try {
 				await navigator.clipboard.writeText(location.href);
@@ -209,7 +221,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				/* ignore */
 			}
 		});
-		const dl = el("button", { type: "button" }, "Download catalog.json");
+		const dl = el("button", { type: "button", class: "btn secondary" }, "Download catalog.json");
 		dl.addEventListener("click", async () => {
 			const res = await fetch(`/api/boards/${id}/catalog.json`, {
 				method: "POST",
@@ -225,7 +237,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			a.click();
 			URL.revokeObjectURL(a.href);
 		});
-		const del = el("button", { type: "button", class: "danger" }, "Delete board");
+		const del = el("button", { type: "button", class: "btn danger" }, "Delete board");
 		del.addEventListener("click", async () => {
 			const typed = prompt('Type "delete" to destroy this board');
 			if (typed !== "delete") return;
@@ -307,7 +319,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				await patchEntry(e.id, { note: note.value }, false);
 			});
 
-			const rm = el("button", { type: "button" }, "Drop");
+			const rm = el("button", { type: "button", class: "btn secondary" }, "Drop");
 			rm.addEventListener("click", async () => {
 				if (!confirm("Drop this row?")) return;
 				await api(`/api/boards/${id}/entries/${e.id}`, { method: "DELETE" });
@@ -335,7 +347,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const advanced = el("details");
 		const inc = el("input", { type: "text", placeholder: "include globs, comma-separated" });
 		advanced.append(el("summary", {}, "subset / include"), inc);
-		const addBtn = el("button", { type: "submit" }, "Add source");
+		const addBtn = el("button", { type: "submit", class: "btn" }, "Add source");
 		const addErr = el("p", { class: "muted" });
 		add.append(source, d, rev, advanced, addBtn, addErr);
 		add.addEventListener("submit", async (ev) => {

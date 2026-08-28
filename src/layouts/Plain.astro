@@ -15,10 +15,10 @@ const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 		<title>{title}</title>
 		<link rel="icon" href="/favicon.svg" />
 	</head>
-	<body style="background:#0b1220;margin:0;">
-		<header class="plain" style="padding-bottom:0;">
+	<body>
+		<header class="site-header">
 			<nav class="site-nav">
-				<a href="/">darsay</a>
+				<a class="site-wordmark" href="/">darsay</a>
 				<a href="/docs/getting-started/">Docs</a>
 				{boards && <a href="/boards">Boards</a>}
 				<a href="https://github.com/darsay-io/darsay" rel="noreferrer">GitHub</a>

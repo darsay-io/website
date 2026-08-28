@@ -1,10 +1,11 @@
 ---
 import Layout from "../layouts/Plain.astro";
+import logo from "../assets/darsay-logo.png";
 const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 ---
 <Layout title="darsay — Keep a model forever. Run it tomorrow.">
 	<main class="hero-plain">
-		<p class="muted">darsay</p>
+		<img class="wordmark" src={logo.src} alt="darsay — the genesis machine of archives" />
 		<h1>Keep a model forever. Run it tomorrow.</h1>
 		<p class="lede">
 			A vault is a folder of bundles. A bundle is a pinned snapshot whose payload never changes.
