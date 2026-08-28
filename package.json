@@ -23,13 +23,12 @@
   },
   "allowScripts": {
     "esbuild": true,
-    "workerd@1.20260825.1": true,
-    "fsevents@2.3.3": true
+    "workerd@1.20260828.1": true
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
-    "wrangler": "^4.126.0"
+    "wrangler": "^4.127.1"
   }
 }
