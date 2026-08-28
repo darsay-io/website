@@ -15,3 +15,4 @@ coverage/
 *.sqlite-*
 *.dump
 darsay.io.txt
+.ci-darsay/

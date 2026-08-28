@@ -5,12 +5,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DARSAY_DOCS_ROOT: ${{ github.workspace }}/.ci-darsay
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
+      - name: Read docs.lock.json
+        id: lock
+        run: |
+          echo "repo=$(jq -r .repo docs.lock.json)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .sha docs.lock.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.lock.outputs.repo }}
+          ref: ${{ steps.lock.outputs.sha }}
+          path: .ci-darsay
       - run: npm ci
       - run: npm test
       - run: npm run check:docs
