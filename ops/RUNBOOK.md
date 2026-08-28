@@ -62,6 +62,29 @@ Dashboard: D1 rows written / read, Worker requests. Alert at 50% and 80% of Free
 - 10 000 entry mutations / UTC day
 - 50 000 board-id lookups / UTC day
 
+## Public repo
+
+This repository is public. Treat every committed file as world-readable.
+
+**Commit these (identifiers, not credentials):**
+
+- D1 `database_id` UUIDs in `wrangler.jsonc`
+- Worker names, routes, schema SQL, `PUBLIC_BOARDS_ENABLED`
+
+A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing or querying it still requires Wrangler OAuth or a Cloudflare API token, which never go in git. Someone who already has your Cloudflare login can `wrangler d1 list` anyway.
+
+**Never commit:**
+
+- Wrangler OAuth (`~/Library/Preferences/.wrangler/` on this Mac)
+- `CLOUDFLARE_API_TOKEN`
+- `.dev.vars`, `.env` (except `.env.example`)
+- D1 exports (`*.sql` dumps) — they contain board ids
+- Local `.wrangler/state/` SQLite
+- Board URLs (`/b/<32-hex>`) and catalog GET URLs
+- Zone file dumps (`darsay.io.txt`)
+
+**Already public and expected:** git author email, `NOTICE` copyright name.
+
 ## Docs lock
 
 When the CLI tags a release, bump `docs.lock.json` `ref` + `sha` and run `npm run sync-docs`. Commit the generated `src/content/docs/docs/**`.

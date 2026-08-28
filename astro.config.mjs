@@ -7,7 +7,10 @@ export default defineConfig({
 	site: 'https://darsay.io',
 	integrations: [
 		sitemap({
-			filter: (page) => !page.includes('/b') && !page.includes('/boards'),
+			filter: (page) => {
+				const path = new URL(page).pathname;
+				return path !== "/b" && !path.startsWith("/b/") && path !== "/boards" && !path.startsWith("/boards/");
+			},
 		}),
 		starlight({
 			title: 'darsay',

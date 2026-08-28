@@ -16,6 +16,7 @@
     {
       "binding": "DB",
       "database_name": "darsay-io",
+      // Identifier, not a credential. Querying D1 still needs account auth.
       "database_id": "6b9bb710-36c3-42fa-b80c-44935397042c",
       "migrations_dir": "migrations"
     }
@@ -42,6 +43,7 @@
         {
           "binding": "DB",
           "database_name": "darsay-io-preview",
+          // Identifier, not a credential. Querying D1 still needs account auth.
           "database_id": "c1354c9a-aa8f-43ba-9b8a-4a3fe3b2ff6c",
           "migrations_dir": "migrations"
         }
