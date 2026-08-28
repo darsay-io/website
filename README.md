@@ -13,7 +13,7 @@ npx wrangler d1 migrations apply darsay-io --local
 npx wrangler dev     # API + local D1 (after build)
 ```
 
-Board URLs look like `https://darsay.io/b/<32-hex>`. The URL is the password. Anyone with it can edit.
+Board URLs look like `https://darsay.io/b/<32-hex>`. The URL is the password. Anyone with it can edit. Creating a board currently also needs a shared `CREATE_PASSWORD` Wrangler secret (not in this repo).
 
 Catalog export is a `catalog.json` the CLI already understands:
 

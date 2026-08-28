@@ -311,8 +311,18 @@ class FakeD1 {
 	}
 }
 
-function env(db = new FakeD1()): { db: FakeD1; env: Env } {
-	return { db, env: { DB: db as unknown as D1Database } };
+const CREATE_SECRET = "test-create";
+
+function env(db = new FakeD1(), extra: Partial<Env> = {}): { db: FakeD1; env: Env } {
+	return { db, env: { DB: db as unknown as D1Database, CREATE_PASSWORD: CREATE_SECRET, ...extra } };
+}
+
+function postBoard(over: Record<string, unknown> = {}) {
+	return {
+		method: "POST" as const,
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ title: "x", password: CREATE_SECRET, ...over }),
+	};
 }
 
 const HDR = {
@@ -345,11 +355,7 @@ afterEach(() => {
 describe("boards API", () => {
 	it("creates a board and slugs catalog_id from the title", async () => {
 		const { env: e } = env();
-		const res = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Summer 2026" }),
-		});
+		const res = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
 		expect(res.status).toBe(201);
 		expectHeaders(res);
 		const body = (await res.json()) as { id: string; url: string; catalog_id: string };
@@ -364,13 +370,30 @@ describe("boards API", () => {
 		expect(patched.status).toBe(200);
 	});
 
-	it("rejects an explicit catalog_id that fails SLUG_RE", async () => {
-		const { env: e } = env();
-		const res = await req(e, "/api/boards", {
+	it("rejects create without the shared password", async () => {
+		const { db, env: e } = env();
+		const missing = await req(e, "/api/boards", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "x", catalog_id: "Nope Space" }),
+			body: JSON.stringify({ title: "x" }),
 		});
+		expect(missing.status).toBe(401);
+		expect(await missing.json()).toEqual({ error: "unauthorized" });
+		const wrong = await req(e, "/api/boards", postBoard({ password: "nope" }));
+		expect(wrong.status).toBe(401);
+		expect(Number(db.meta.creates_n)).toBe(0);
+	});
+
+	it("disables create when CREATE_PASSWORD is not configured", async () => {
+		const { env: e } = env(new FakeD1(), { CREATE_PASSWORD: "" });
+		const res = await req(e, "/api/boards", postBoard());
+		expect(res.status).toBe(503);
+		expect(await res.json()).toEqual({ error: "create_disabled" });
+	});
+
+	it("rejects an explicit catalog_id that fails SLUG_RE", async () => {
+		const { env: e } = env();
+		const res = await req(e, "/api/boards", postBoard({ catalog_id: "Nope Space" }));
 		expect(res.status).toBe(400);
 		expectHeaders(res);
 	});
@@ -405,22 +428,14 @@ describe("boards API", () => {
 		const { db, env: e } = env();
 		db.meta.creates_utc = utcDay();
 		db.meta.creates_n = String(CREATE_CAP);
-		const res = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "x" }),
-		});
+		const res = await req(e, "/api/boards", postBoard());
 		expect(res.status).toBe(429);
 		expect(await res.json()).toEqual({ error: "create_cap" });
 	});
 
 	it("canonicalizes HF sources, upserts identity, and exports catalog 1.0.0 without holders", async () => {
 		const { env: e } = env();
-		const created = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Summer 2026" }),
-		});
+		const created = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
 		const { id } = (await created.json()) as { id: string };
 
 		const add = await req(e, `/api/boards/${id}/entries`, {
@@ -467,11 +482,7 @@ describe("boards API", () => {
 
 	it("stores opaque scheme:locator rows and 400s unknown https hosts", async () => {
 		const { env: e } = env();
-		const created = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "x" }),
-		});
+		const created = await req(e, "/api/boards", postBoard());
 		const { id } = (await created.json()) as { id: string };
 		const ok = await req(e, `/api/boards/${id}/entries`, {
 			method: "POST",
@@ -489,11 +500,7 @@ describe("boards API", () => {
 
 	it("returns 409 when a PATCH identity collides", async () => {
 		const { env: e } = env();
-		const created = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "x" }),
-		});
+		const created = await req(e, "/api/boards", postBoard());
 		const { id } = (await created.json()) as { id: string };
 		const a = await req(e, `/api/boards/${id}/entries`, {
 			method: "POST",
@@ -518,11 +525,7 @@ describe("boards API", () => {
 
 	it("refuses a 201st row", async () => {
 		const { db, env: e } = env();
-		const created = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "x" }),
-		});
+		const created = await req(e, "/api/boards", postBoard());
 		const { id } = (await created.json()) as { id: string };
 		for (let i = 0; i < MAX_ENTRIES; i++) {
 			db.entries.push({
@@ -573,11 +576,7 @@ describe("boards API", () => {
 
 	it("requires confirm delete and counts lookups", async () => {
 		const { db, env: e } = env();
-		const created = await req(e, "/api/boards", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "x" }),
-		});
+		const created = await req(e, "/api/boards", postBoard());
 		const { id } = (await created.json()) as { id: string };
 		const denied = await req(e, `/api/boards/${id}`, {
 			method: "DELETE",

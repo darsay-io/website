@@ -4,6 +4,7 @@ import {
 	includeKey,
 	parseCatalogId,
 	parseDesire,
+	secretEqual,
 	slugifyTitle,
 	utcNow,
 } from "./validate.ts";
@@ -43,5 +44,15 @@ describe("desire", () => {
 describe("utcNow", () => {
 	it("emits +00:00 not Z", () => {
 		expect(utcNow()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$/);
+	});
+});
+
+describe("secretEqual", () => {
+	it("accepts only the exact string", () => {
+		expect(secretEqual("abc", "abc")).toBe(true);
+		expect(secretEqual("abd", "abc")).toBe(false);
+		expect(secretEqual("ab", "abc")).toBe(false);
+		expect(secretEqual(null, "abc")).toBe(false);
+		expect(secretEqual("abc", "")).toBe(false);
 	});
 });

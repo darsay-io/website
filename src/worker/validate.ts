@@ -95,3 +95,17 @@ export function newBoardId(): string {
 export function isBoardId(id: string): boolean {
 	return /^[0-9a-f]{32}$/.test(id);
 }
+
+/** Constant-time-ish compare so length and first-byte mismatches do not short-circuit. */
+export function secretEqual(given: unknown, expected: string): boolean {
+	if (typeof given !== "string" || !expected) return false;
+	const enc = new TextEncoder();
+	const a = enc.encode(given);
+	const b = enc.encode(expected);
+	const n = Math.max(a.length, b.length);
+	let mismatch = a.length ^ b.length;
+	for (let i = 0; i < n; i++) {
+		mismatch |= (a[i] ?? 0) ^ (b[i] ?? 0);
+	}
+	return mismatch === 0;
+}

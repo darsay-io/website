@@ -72,6 +72,12 @@ async function api(path: string, init?: RequestInit) {
 
 export function mountCreate(root: HTMLElement) {
 	const title = el("input", { type: "text", placeholder: "Board title (e.g. Summer 2026)", maxlength: "120" });
+	const password = el("input", {
+		type: "password",
+		placeholder: "Create password",
+		autocomplete: "off",
+		spellcheck: "false",
+	});
 	const status = el("p", { class: "muted" });
 	const urlBox = el("p", { class: "board-url" });
 	const copyBtn = el("button", { type: "button" }, "Copy URL");
@@ -85,7 +91,7 @@ export function mountCreate(root: HTMLElement) {
 
 	const form = el("form", { class: "create-form" });
 	const submit = el("button", { type: "submit" }, "Create a board");
-	form.append(title, submit, status, urlBox, copyBtn, ack, go);
+	form.append(title, password, submit, status, urlBox, copyBtn, ack, go);
 	form.addEventListener("submit", async (ev) => {
 		ev.preventDefault();
 		submit.disabled = true;
@@ -93,7 +99,7 @@ export function mountCreate(root: HTMLElement) {
 		try {
 			const body = (await api("/api/boards", {
 				method: "POST",
-				body: JSON.stringify({ title: title.value }),
+				body: JSON.stringify({ title: title.value, password: password.value }),
 			})) as { url: string };
 			urlBox.textContent = body.url;
 			copyBtn.hidden = false;
@@ -111,7 +117,9 @@ export function mountCreate(root: HTMLElement) {
 			});
 			status.textContent = "Copy this URL. It is the only way back.";
 		} catch (e) {
-			status.textContent = e instanceof Error ? e.message : "failed";
+			const msg = e instanceof Error ? e.message : "failed";
+			status.textContent =
+				msg === "unauthorized" ? "Wrong create password." : msg === "create_disabled" ? "Board create is off." : msg;
 			submit.disabled = false;
 		}
 	});

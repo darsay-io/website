@@ -25,11 +25,14 @@ import {
 	parseInclude,
 	utcDay,
 	utcNow,
+	secretEqual,
 } from "./validate.ts";
 
 export type Env = {
 	DB: D1Database;
 	ASSETS?: Fetcher;
+	/** Wrangler secret. Required for POST /api/boards. Never commit this value. */
+	CREATE_PASSWORD?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>().basePath("/api");
@@ -143,6 +146,11 @@ async function loadEntries(db: D1Database, boardId: string): Promise<EntryRow[]>
 app.post("/boards", async (c) => {
 	const parsed = await readJson(c);
 	if (!parsed.ok) return jsonError(c, parsed.error, parsed.status);
+	const expected = c.env.CREATE_PASSWORD;
+	if (!expected) return jsonError(c, "create_disabled", 503);
+	if (!secretEqual(parsed.body.password, expected)) {
+		return jsonError(c, "unauthorized", 401);
+	}
 	const title = clampStr(parsed.body.title ?? "", MAX_TITLE);
 	const curator = clampStr(parsed.body.curator ?? "", MAX_CURATOR);
 	const note = clampStr(parsed.body.note ?? "", MAX_BOARD_NOTE);

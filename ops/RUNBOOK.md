@@ -41,7 +41,18 @@ npx wrangler dev    # Worker + local D1 + static assets after `npm run build`
 5. `npx wrangler d1 migrations apply darsay-io-preview --env preview --remote`
 6. Apex `darsay.io` is already in `wrangler.jsonc` `routes`. Deploy attaches it. Keep `workers_dev: false`. Preview must set `"routes": []` so it does not inherit the apex custom domain.
 7. Cloudflare Access on preview URLs (dashboard; before sharing a preview link).
-8. `PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy`
+8. `PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy --env=""`
+9. Shared create password (POST `/api/boards` only). Pick a phrase, do not commit it:
+
+   ```bash
+   npx wrangler secret put CREATE_PASSWORD --env=""
+   ```
+
+   Local: put `CREATE_PASSWORD=…` in `.dev.vars` (gitignored). If the secret is unset, create returns 503. Board view/edit still uses the URL only.
+
+## Create password
+
+`CREATE_PASSWORD` is a Wrangler **secret**, not `wrangler.jsonc` `vars` (those are visible in the dashboard and would land in git). The Worker compares the JSON body field `password` on create and discards it. It never writes the phrase to D1. To rotate: `secret put` again and tell friends. To remove the gate: delete the secret and the check in `src/worker/index.ts`.
 
 ## Backups
 
