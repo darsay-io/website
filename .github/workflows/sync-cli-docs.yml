@@ -1,0 +1,111 @@
+name: Sync CLI docs
+
+# Production /docs/ tracks the latest CLI GitHub Release, not main.
+# This opens a PR; it does not deploy darsay.io. Merge, then wrangler.
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: CLI tag (default: latest GitHub Release)
+        required: false
+
+concurrency:
+  group: sync-cli-docs
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      DARSAY_DOCS_ROOT: ${{ github.workspace }}/.ci-darsay
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Resolve CLI tag
+        id: cli
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+          else
+            TAG=$(gh api repos/darsay-io/darsay/releases/latest --jq .tag_name)
+          fi
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "ref $TAG is not a vX.Y.Z tag" >&2; exit 1 ;;
+          esac
+          SHA=$(gh api "repos/darsay-io/darsay/commits/${TAG}" --jq .sha)
+          LOCK_REF=$(jq -r .ref docs.lock.json)
+          LOCK_SHA=$(jq -r .sha docs.lock.json)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [ "$LOCK_REF" = "$TAG" ] && [ "$LOCK_SHA" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+            echo "docs.lock.json already at $TAG"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "bump $LOCK_REF ($LOCK_SHA) -> $TAG ($SHA)"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.cli.outputs.current != 'true'
+        with:
+          repository: darsay-io/darsay
+          ref: ${{ steps.cli.outputs.sha }}
+          path: .ci-darsay
+
+      - name: Bump lock and regenerate
+        if: steps.cli.outputs.current != 'true'
+        run: |
+          npm ci
+          node scripts/bump-docs-lock.mjs "${{ steps.cli.outputs.tag }}" --force
+          npm test
+          npm run check:docs
+
+      - name: Open or update PR
+        if: steps.cli.outputs.current != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cli.outputs.tag }}
+          SHA: ${{ steps.cli.outputs.sha }}
+        run: |
+          set -euo pipefail
+          BRANCH="docs/cli-${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add docs.lock.json src/content/docs/docs scripts/snapshots public/darsay-logo.png src/assets/darsay-logo.png
+          if git diff --cached --quiet; then
+            echo "no file changes"
+            exit 0
+          fi
+          git commit -m "docs: pin CLI docs to ${TAG}"
+          git push --force-with-lease origin "$BRANCH"
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            echo "updated existing PR for $BRANCH"
+          else
+            gh pr create --title "docs: pin CLI docs to ${TAG}" --body "$(cat <<EOF
+          Pins \`docs.lock.json\` to CLI \`${TAG}\` (\`${SHA}\`) and regenerates \`src/content/docs/docs/**\`.
+
+          Production docs follow the latest CLI GitHub Release so \`/docs/\` matches \`pipx install darsay\`. This PR does not deploy. After merge:
+
+          \`\`\`bash
+          PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy --env=""
+          \`\`\`
+          EOF
+          )"
+          fi

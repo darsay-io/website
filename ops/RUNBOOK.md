@@ -143,4 +143,17 @@ A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing
 
 ## Docs lock
 
-When the CLI tags a release, bump `docs.lock.json` `ref` + `sha` and run `npm run sync-docs`. Commit the generated `src/content/docs/docs/**`.
+Production `/docs/` tracks the latest **CLI GitHub Release**, not `main`. `docs.lock.json` holds that tag and commit.
+
+The `Sync CLI docs` workflow (hourly, and `workflow_dispatch`) compares the lock to `darsay-io/darsay`'s latest release. If they differ it regenerates `src/content/docs/docs/**` and opens a PR. It does not deploy. After merge:
+
+```bash
+PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy --env=""
+```
+
+Manual bump from a sibling CLI checkout:
+
+```bash
+npm run bump-docs-lock           # latest GitHub Release
+npm run bump-docs-lock -- v0.10.0
+```

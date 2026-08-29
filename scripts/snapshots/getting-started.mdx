@@ -43,9 +43,13 @@ are about to spend disk.
 darsay estimate sshleifer/tiny-gpt2
 ```
 
-You get a pinned revision, a file count, a size, a disk verdict, and the
-exact `archive` command to run next. If free space is short, the command
-exits non-zero — it is a script-friendly guard, not just a printout.
+You get a pinned revision, a file count, a size, a download bar (styled
+like the live archive panel), a disk verdict, and the exact `archive`
+command to run next. If you already hold part of this source — a
+budget-stopped archive, an interrupted download — the bar shows how much
+is banked and only the remaining bytes count against your free space. If
+free space is short, the command exits non-zero — it is a script-friendly
+guard, not just a printout.
 
 ## 3. Keep it
 
@@ -55,7 +59,10 @@ darsay archive sshleifer/tiny-gpt2
 
 That pins `main` to a commit, copies every file, hashes them, checks the
 hashes against upstream, captures the license, and writes a bundle under
-`~/darsay` (override with `--vault` or `$DARSAY_HOME`). When it finishes:
+`~/darsay` (override with `--vault` or `$DARSAY_HOME`). On a real model the
+live panel is percent of the whole payload, bytes in / total, rate, and
+time remaining — archives are large enough that a per-file bar is the
+wrong unit. When it finishes:
 
 ```
 Bundle ready: ~/darsay/sshleifer--tiny-gpt2/<rev>
@@ -156,7 +163,8 @@ If a later source is gated, set `$HF_TOKEN` or run
 | Situation | What to do |
 |---|---|
 | The download is huge | `darsay archive … --max-gb 10` — exits 10, rerun to resume |
-| You hit Ctrl-C | Rerun the same `archive` command. Completed files are kept |
+| The disk is filling up | `archive` pauses at 2 GiB free by default (exit 10). Clear space, rerun. `darsay config` shows the floor; `--min-free 10G` raises it |
+| You hit Ctrl-C | Once stops cleanly, twice aborts now. Rerun the same `archive` command; completed files are kept |
 | You only want one GGUF from a pack | `darsay archive REPO --include '*Q4_K_M*'` — prices first with `estimate --include` |
 | It is a dataset, not a model | `darsay archive datasets/owner/name` — payload lands in `data/` |
 | You want one file for a USB drive | `darsay export <bundle> -o /backups` |

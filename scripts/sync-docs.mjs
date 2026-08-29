@@ -205,6 +205,15 @@ export function runSync({ check = false } = {}) {
 	return written;
 }
 
+export function writeSnapshots(written) {
+	fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+	for (const name of fs.readdirSync(SNAPSHOT_DIR)) {
+		if (!name.endsWith(".mdx")) continue;
+		if (written[name] === undefined) continue;
+		fs.writeFileSync(path.join(SNAPSHOT_DIR, name), written[name]);
+	}
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
 	const check = process.argv.includes("--check");

@@ -45,7 +45,7 @@ These match the list in `CLAUDE.md` / `CONTRIBUTING.md`:
 - `transfer.json` is relocatable: no source-machine absolute paths, a copied
   partial resumes in another vault, a copied lock is reclaimed.
 - The same bundle state exports to a byte-identical `.mvb.tar` (marker first,
-  volatile files excluded).
+  volatile files excluded, `darsay-verify.py` always the canonical copy).
 - Manifests record what was established; unknown is `null`; query caps are
   stored as `query_limit`.
 - `import` re-hashes before registering; a failed import writes nothing.
@@ -87,9 +87,27 @@ The existing `release.yml` workflow is unchanged: it publishes artifacts on
 ## Adding tests
 
 - New pure helpers go in `tests/unit/test_<module>.py`.
+- Transfer progress: formatters, the meter, and the TTY panel live in
+  `tests/unit/test_progress.py` — including the panel's defenses: fixed-width
+  columns across digit rollovers, sparkline cadence, stray-output capture
+  (`_LineProxy`), the interrupt notice, and the final record line. The
+  Ctrl-C ladder and stop plumbing are in `tests/unit/test_transfer.py`;
+  `test_sigint_escalates_across_presses` delivers real SIGINTs and skips
+  itself off the main thread. The Hub `tqdm_class` wrapper is in
+  `tests/unit/test_huggingface.py`. Integration drives `archive` against
+  `TestProvider` and asserts log lines (`DARSAY_PROGRESS=line` so a TTY
+  does not flip the test into live mode). The live Hub `tqdm` path is the
+  e2e archive of `sshleifer/tiny-gpt2`.
 - Anything that needs a bundle uses `TestProvider.add_repo(...)` and
   `archive_quiet` from `tests/integration/conftest.py`. Synthetic payloads
   live in `tests/payloads.py`.
+- Config files and the free-space floor: an autouse fixture in
+  `tests/conftest.py` points `$XDG_CONFIG_HOME` at a nonexistent directory
+  and sets `$DARSAY_MIN_FREE=0`, so this machine's
+  `~/.config/darsay/config.toml` and its real free disk never reach a test.
+  Floor tests opt back in — `min_free=` on `archive`, a vault
+  `config.toml`, or a `no_env_floor`-style `delenv` — and fake
+  `darsay.transfer.shutil.disk_usage` rather than filling a disk.
 - `run` / `hydrate` (non-dry-run) must not install torch. Stub
   `darsay.hydrate._invoke_runner` and write a fake `hydration.json` whose
   `python_executable` exists (`sys.executable`).

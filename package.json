@@ -12,7 +12,8 @@
     "astro": "astro",
     "test": "vitest run",
     "sync-docs": "node scripts/sync-docs.mjs",
-    "check:docs": "node scripts/sync-docs.mjs --check"
+    "check:docs": "node scripts/sync-docs.mjs --check",
+    "bump-docs-lock": "node scripts/bump-docs-lock.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.3",

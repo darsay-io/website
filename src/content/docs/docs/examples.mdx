@@ -16,6 +16,7 @@ This page is the cookbook you return to.
 | Keep a model and talk to it | [First bundle](#first-bundle) |
 | Know the size before I commit | [Estimate first](#estimate-first) |
 | Stop at 10 GB and continue tomorrow | [Pause and resume](#pause-and-resume-a-large-archive) |
+| Keep an unattended box from filling its disk | [Leave room on the disk](#leave-room-on-the-disk) |
 | Price one quant in a huge GGUF pack | [Price one quant](#price-one-quant-from-a-pack-repo) |
 | Archive a dataset | [Dataset](#archive-a-dataset) |
 | Load the payload myself | [Use the files directly](#use-the-files-directly) |
@@ -70,10 +71,17 @@ Typical output:
 Qwen/Qwen3.8-27B @ main -> 1d4bf0f2ff60
   parameters:   27.78B BF16
   payload:      32 files, 51.8 GiB
+  download:     ░░░░░░░░░░░░░░░░░░░░░░░░    0.0%   0 B / 51.8 GiB
+                nothing banked yet — full 51.8 GiB in 32 files to fetch
   disk:         needs ~55.5 GiB, free 1022.6 GiB — OK
 
 To archive: darsay archive Qwen/Qwen3.8-27B
 ```
+
+Re-estimating a source you have already partially archived prices the
+resume instead: the download bar shows how much is banked (verified,
+partial, and unverified-but-adoptable bytes) and the disk verdict counts
+only what still has to cross the network.
 
 Useful flags:
 
@@ -104,12 +112,44 @@ darsay archive Qwen/Qwen3.8-27B                 # finish, verify, register
 ```
 
 Ctrl-C is the same idea: rerun the command. Completed files are trusted;
-partial files resume with HTTP Range.
+partial files resume with HTTP Range. While it runs, a TTY shows percent
+of the whole payload, bytes in / total, rate, and time remaining — not
+a per-file bar that resets on every shard.
 
 Also valid: `--max-bytes 20G`, `--max-minutes 45`.
 
 The pin is frozen on the first run. Later runs do not chase a new
 `main`. Design: [Incremental transfer](/docs/incremental/).
+
+---
+
+## Leave room on the disk
+
+An unattended archive should never wedge a partition full. `archive`
+pauses cleanly — exit 10, bytes kept — when the destination's free
+space drops below a floor. The default floor is 2 GiB.
+
+```bash
+darsay archive Qwen/Qwen3.8-27B --min-free 10G   # this run: pause below 10 GiB free
+# exit code 10 — disk: … 9.9 GiB free < 10.0 GiB floor; free space, rerun
+
+darsay config                                    # which floor applies here, and why
+```
+
+Set it once per vault so an archive drive carries its own limit, or once
+per machine for every vault:
+
+```toml
+# <vault>/config.toml   (or ~/.config/darsay/config.toml)
+[transfer]
+min_free = "10G"
+```
+
+`--min-free 0` disables the floor for one run; `$DARSAY_MIN_FREE` overrides
+per shell. The plan line and `estimate` price the floor in —
+`needs 40.0 GiB, free 45.0 GiB (10.0 GiB floor) — INSUFFICIENT` — so a
+run that cannot finish says so before the first byte. Design:
+[Incremental transfer](/docs/incremental/#6-session-budgets).
 
 ---
 
@@ -205,8 +245,16 @@ darsay --vault /other/vault import /Volumes/USB/backups/qwen--qwen3-0.6b@<rev>.m
 `import` streams the marker, unpacks to staging, **re-hashes the
 payload**, and only then registers. Failures write nothing.
 
-The file is plain uncompressed tar. Manual recovery without darsay:
-[MVB format](/docs/mvb-format/).
+The file is plain uncompressed tar. It includes `darsay-verify.py` (stdlib
+only) so a reader without darsay can still check the payload:
+
+```bash
+python3 darsay-verify.py qwen--qwen3-0.6b@<rev>.mvb.tar
+tar -xf qwen--qwen3-0.6b@<rev>.mvb.tar
+python3 qwen--qwen3-0.6b@<rev>/darsay-verify.py qwen--qwen3-0.6b@<rev>
+```
+
+Manual recovery without even that script: [MVB format](/docs/mvb-format/).
 
 ---
 
@@ -281,6 +329,10 @@ darsay verify qwen--qwen3-0.6b
 Re-hashes every payload file, diffs against the manifest. Modified,
 missing, or extra files flip integrity to `compromised` and the command
 exits non-zero.
+
+A 2040 reader without darsay uses the stdlib script shipped in every
+export: `python3 darsay-verify.py <bundle-or-tar>`. That check is
+read-only — it does not write `verification.json`.
 
 ```cron
 # nightly, mail on failure
