@@ -49,6 +49,7 @@ npx wrangler dev    # Worker + local D1 + static assets after `npm run build`
    ```
 
    Local: put `CREATE_PASSWORD=…` in `.dev.vars` (gitignored). If the secret is unset, create returns 503. Board view/edit still uses the URL only.
+10. AI crawler dashboard policy: see [AI crawlers](#ai-crawlers). Product docs Allow; boards stay unlisted via origin `robots.txt` only.
 
 ## Create password
 
@@ -56,24 +57,25 @@ npx wrangler dev    # Worker + local D1 + static assets after `npm run build`
 
 ## AI crawlers
 
-Product pages (`/`, `/docs/**`) should be fetchable by AI search, chat agents, and training crawlers so people can ask an assistant about darsay. Boards stay unlisted.
+Product pages (`/`, `/docs/**`) should be fetchable by AI search, chat agents, and training crawlers so people can ask an assistant about darsay. Boards stay unlisted. Verified live 2026-08-29: origin-only `robots.txt` (no Cloudflare managed prepend), HTTP 200 for GPTBot / ChatGPT-User / ClaudeBot / Claude-User / OAI-SearchBot / PerplexityBot.
 
-**Origin file** (`public/robots.txt`, in git): `Disallow` `/b/`, `/api/`, `/boards` only. Do not add `GPTBot` / `ClaudeBot` / other AI-crawler `Disallow`s here.
+**Origin file** (`public/robots.txt`, in git): `Disallow` `/b/`, `/api/`, `/boards` only. Do not add `GPTBot` / `ClaudeBot` / other AI-crawler `Disallow`s here. Do not delete this file; it is not the Cloudflare injector.
 
-**Dashboard** (not in git). Zone `darsay.io` → **Security** → **Settings**, filter **Bot traffic**:
+**Dashboard** (not in git). Select the **darsay.io zone**, not account home and not Workers.
 
-| Setting | Value |
-| --- | --- |
-| Search | Allow |
-| Agent | Allow |
-| Training | Allow |
-| Managed robots.txt / Bot Preference Sync / “block training in robots.txt” | Off |
-| Display Content Signals Policy (zone **Overview** → Control AI Crawlers) | Off |
-| Block AI Bots (legacy) | Off |
-| AI Labyrinth | Off |
-| AI Crawl Control | Allow (do not Block) GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot, Claude-User, PerplexityBot |
+| Setting | Value | Where |
+| --- | --- | --- |
+| Search / Agent / Training | Allow (do not block) | **Security** → **Settings**, filter **Bot traffic**, or **Configure AI bot policies** |
+| Managed robots.txt | Off | **AI Crawl Control** → **Overview** / **Signals** / **Directives** / **Robots.txt** (card: Managed robots.txt). Same toggle may appear as **Set your preference to block training in robots.txt** or **Instruct AI bot traffic with robots.txt** |
+| Bot Preference Sync | Off | Same Bot traffic / AI bot policies card |
+| Display Content Signals Policy | Off | Zone **Overview** → **Control AI Crawlers** |
+| Block AI Bots (legacy) | Off | **Security** → **Settings**, filter **Bot traffic** |
+| AI Labyrinth | Off | Same |
+| Per-crawler actions | Allow | **AI Crawl Control** → **Crawlers** / **Security** (GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot, Claude-User, PerplexityBot) |
 
-A browser load of `https://darsay.io/robots.txt` is **not** sufficient. Cloudflare prepends managed `robots.txt` for some crawler user-agents only, and **Block AI Bots** returns `403 Your request was blocked.` independently of `robots.txt`.
+Keep origin `robots.txt`. The Cloudflare “robots.txt configuration” / “block training” toggle is the edge prepend (`# BEGIN Cloudflare Managed content`); turning that off does not disable your board `Disallow`s.
+
+A browser load of `https://darsay.io/robots.txt` can look clean while identified AI clients still get the managed prepend. Re-check after dashboard changes:
 
 ```bash
 # Must be origin-only: no "BEGIN Cloudflare Managed content", no GPTBot Disallow
@@ -81,7 +83,7 @@ curl -s https://darsay.io/robots.txt
 curl -s -A "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)" \
   https://darsay.io/robots.txt
 
-# Must be HTTP 200, not 403
+# Must be HTTP 200, not 403 "Your request was blocked."
 for ua in \
   "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)" \
   "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot" \
