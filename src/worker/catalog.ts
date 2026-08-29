@@ -1,3 +1,5 @@
+import { artifactTypeFromSource } from "./sources.ts";
+
 export const CATALOG_TOP_KEYS = [
 	"catalog_schema_version",
 	"kind",
@@ -117,6 +119,7 @@ export function entryToApi(e: EntryRow) {
 			include = null;
 		}
 	}
+	const est = parseEstimate(e.estimate_json);
 	return {
 		id: e.id,
 		source: e.source,
@@ -128,5 +131,6 @@ export function entryToApi(e: EntryRow) {
 		holders: e.holders || "",
 		added: e.added,
 		payload_bytes: e.payload_bytes,
+		artifact_type: est?.artifact_type ?? artifactTypeFromSource(e.source),
 	};
 }

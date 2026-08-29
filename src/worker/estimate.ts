@@ -1,8 +1,10 @@
 import type { EstimateDigest } from "./catalog.ts";
 import type { HfCanonical } from "./sources.ts";
+import { asDatasetCanonical } from "./sources.ts";
 import { utcNow } from "./validate.ts";
 
 const TIMEOUT_MS = 5000;
+const NOT_FOUND = new Set([401, 404]);
 
 type HubInfo = {
 	sha?: string;
@@ -13,14 +15,48 @@ type HubInfo = {
 	license?: string;
 };
 
-export async function fetchEstimate(
-	parsed: HfCanonical,
-	revision: string | null,
-	fetchImpl: typeof fetch = fetch,
-): Promise<EstimateDigest | null> {
-	const kind = parsed.artifactType === "dataset" ? "datasets" : "models";
-	const rev = revision && revision.length > 0 ? revision : "main";
-	const url = `https://huggingface.co/api/${kind}/${parsed.locator}/revision/${encodeURIComponent(rev)}?blobs=true`;
+export type EstimateHit = {
+	parsed: HfCanonical;
+	digest: EstimateDigest;
+};
+
+function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string): EstimateDigest {
+	const siblings = Array.isArray(info.siblings) ? info.siblings : [];
+	let payload = 0;
+	let unknown = 0;
+	for (const s of siblings) {
+		if (typeof s.size === "number") payload += s.size;
+		else unknown += 1;
+	}
+	const byDtype = info.safetensors?.parameters ?? {};
+	const keys = Object.keys(byDtype);
+	let dominant: string | null = null;
+	if (keys.length) {
+		dominant = keys.reduce((a, b) => (byDtype[a] >= byDtype[b] ? a : b));
+	}
+	const gated = info.gated === true || info.gated === "auto" || info.gated === "manual";
+	return {
+		as_of: utcNow(),
+		artifact_type: parsed.artifactType,
+		revision: info.sha ?? null,
+		revision_ref: revisionRef,
+		payload_bytes: siblings.length ? payload : null,
+		file_count: siblings.length || null,
+		license: info.cardData?.license ?? info.license ?? null,
+		gated,
+		parameters: typeof info.safetensors?.total === "number" ? info.safetensors.total : null,
+		dominant_dtype: dominant,
+		unknown_size_count: unknown,
+	};
+}
+
+async function hubInfo(
+	kind: "models" | "datasets",
+	locator: string,
+	revisionRef: string,
+	fetchImpl: typeof fetch,
+): Promise<{ ok: true; info: HubInfo } | { ok: false; status: number }> {
+	const url = `https://huggingface.co/api/${kind}/${locator}/revision/${encodeURIComponent(revisionRef)}?blobs=true`;
 	const ac = new AbortController();
 	const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
 	try {
@@ -28,38 +64,32 @@ export async function fetchEstimate(
 			signal: ac.signal,
 			headers: { Accept: "application/json" },
 		});
-		if (!res.ok) return null;
+		if (!res.ok) return { ok: false, status: res.status };
 		const info = (await res.json()) as HubInfo;
-		const siblings = Array.isArray(info.siblings) ? info.siblings : [];
-		let payload = 0;
-		let unknown = 0;
-		for (const s of siblings) {
-			if (typeof s.size === "number") payload += s.size;
-			else unknown += 1;
-		}
-		const byDtype = info.safetensors?.parameters ?? {};
-		const keys = Object.keys(byDtype);
-		let dominant: string | null = null;
-		if (keys.length) {
-			dominant = keys.reduce((a, b) => (byDtype[a] >= byDtype[b] ? a : b));
-		}
-		const gated = info.gated === true || info.gated === "auto" || info.gated === "manual";
-		return {
-			as_of: utcNow(),
-			artifact_type: parsed.artifactType,
-			revision: info.sha ?? null,
-			revision_ref: rev,
-			payload_bytes: siblings.length ? payload : null,
-			file_count: siblings.length || null,
-			license: info.cardData?.license ?? info.license ?? null,
-			gated,
-			parameters: typeof info.safetensors?.total === "number" ? info.safetensors.total : null,
-			dominant_dtype: dominant,
-			unknown_size_count: unknown,
-		};
+		return { ok: true, info };
 	} catch {
-		return null;
+		return { ok: false, status: 0 };
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+export async function fetchEstimate(
+	parsed: HfCanonical,
+	revision: string | null,
+	fetchImpl: typeof fetch = fetch,
+): Promise<EstimateHit | null> {
+	const rev = revision && revision.length > 0 ? revision : "main";
+	if (parsed.artifactType === "dataset") {
+		const hit = await hubInfo("datasets", parsed.locator, rev, fetchImpl);
+		if (!hit.ok) return null;
+		return { parsed, digest: digestFrom(parsed, hit.info, rev) };
+	}
+	const model = await hubInfo("models", parsed.locator, rev, fetchImpl);
+	if (model.ok) return { parsed, digest: digestFrom(parsed, model.info, rev) };
+	if (!NOT_FOUND.has(model.status)) return null;
+	const dataset = await hubInfo("datasets", parsed.locator, rev, fetchImpl);
+	if (!dataset.ok) return null;
+	const retargeted = asDatasetCanonical(parsed);
+	return { parsed: retargeted, digest: digestFrom(retargeted, dataset.info, rev) };
 }

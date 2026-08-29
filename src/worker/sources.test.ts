@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalizeSource } from "./sources.ts";
+import { artifactTypeFromSource, canonicalizeSource } from "./sources.ts";
 import fixtures from "./source-fixtures.json";
 
 describe("canonicalizeSource", () => {
@@ -38,5 +38,13 @@ describe("canonicalizeSource", () => {
 			expect(b.canonical).toBe("huggingface:qwen/qwen3-0.6B");
 			expect(a.canonical).not.toBe(b.canonical);
 		}
+	});
+});
+
+describe("artifactTypeFromSource", () => {
+	it("reads type from the Hub address grammar", () => {
+		expect(artifactTypeFromSource("huggingface:Qwen/Qwen3-0.6B")).toBe("model");
+		expect(artifactTypeFromSource("huggingface:datasets/saidutta69/fable-5-premium")).toBe("dataset");
+		expect(artifactTypeFromSource("modelscope:qwen/Qwen-7B")).toBeNull();
 	});
 });

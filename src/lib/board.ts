@@ -1,4 +1,4 @@
-import { hfUrlFromCanonical } from "../worker/sources.ts";
+import { artifactTypeFromSource, hfUrlFromCanonical } from "../worker/sources.ts";
 
 type Entry = {
 	id: number;
@@ -11,6 +11,7 @@ type Entry = {
 	holders: string;
 	added: string;
 	payload_bytes: number | null;
+	artifact_type?: string | null;
 };
 
 type Board = {
@@ -138,7 +139,12 @@ export function mountCreate(root: HTMLElement) {
 	root.append(form);
 }
 
-type SortKey = "source" | "desire" | "size" | "status";
+type SortKey = "source" | "type" | "desire" | "size" | "status";
+
+export function entryArtifactType(e: Pick<Entry, "source" | "artifact_type">): string {
+	if (e.artifact_type === "dataset" || e.artifact_type === "model") return e.artifact_type;
+	return artifactTypeFromSource(e.source) ?? "—";
+}
 
 export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "desc"): number {
 	let cmp = 0;
@@ -151,6 +157,8 @@ export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "d
 		else cmp = av - bv;
 	} else if (key === "source") {
 		cmp = a.source.localeCompare(b.source);
+	} else if (key === "type") {
+		cmp = entryArtifactType(a).localeCompare(entryArtifactType(b));
 	} else {
 		cmp = (a.status === "have" ? 1 : 0) - (b.status === "have" ? 1 : 0);
 	}
@@ -255,6 +263,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const thead = el("thead");
 		const sortCols: { label: string; key: SortKey | null }[] = [
 			{ label: "Source", key: "source" },
+			{ label: "Type", key: "type" },
 			{ label: "Desire", key: "desire" },
 			{ label: "Size", key: "size" },
 			{ label: "Have", key: "status" },
@@ -326,8 +335,17 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				await reload();
 			});
 
+			const kind = entryArtifactType(e);
+			const typeCell = el("td");
+			if (kind === "model" || kind === "dataset") {
+				typeCell.append(el("span", { class: `type-tag type-tag-${kind}` }, kind));
+			} else {
+				typeCell.append(el("span", { class: "muted" }, "—"));
+			}
+
 			tr.append(
 				srcCell,
+				typeCell,
 				el("td", {}, desire),
 				el("td", {}, humanSize(e.payload_bytes)),
 				el("td", {}, have),
@@ -341,7 +359,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const wrap = el("div", { class: "board-wrap" }, table);
 
 		const add = el("form", { class: "add-row" });
-		const source = el("input", { type: "text", placeholder: "huggingface:Qwen/Qwen3-0.6B", required: "true" });
+		const source = el("input", {
+			type: "text",
+			placeholder: "huggingface:Qwen/Qwen3-0.6B or datasets/owner/name",
+			required: "true",
+		});
 		const d = el("input", { type: "number", min: "1", max: "9", placeholder: "desire" });
 		const rev = el("input", { type: "text", placeholder: "revision (optional)", maxlength: "64" });
 		const advanced = el("details");

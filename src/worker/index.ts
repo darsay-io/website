@@ -278,7 +278,6 @@ app.post("/boards/:id/entries", async (c) => {
 	}
 	const src = canonicalizeSource(parsed.body.source);
 	if (src.kind === "error") return jsonError(c, src.error, 400);
-	const canonical = src.canonical;
 	const revIn = parsed.body.revision === undefined || parsed.body.revision === null ? "" : parsed.body.revision;
 	if (typeof revIn !== "string" || revIn.length > MAX_REVISION) return jsonError(c, "invalid revision", 400);
 	const inc = parseInclude(parsed.body.include);
@@ -293,23 +292,38 @@ app.post("/boards/:id/entries", async (c) => {
 		return jsonError(c, "invalid status", 400);
 	}
 
+	let canonical = src.canonical;
+	let estimateJson: string | null = null;
+	let payloadBytes: number | null = null;
+	if (src.kind === "hf") {
+		const hit = await fetchEstimate(src as HfCanonical, revIn || null);
+		if (hit) {
+			canonical = hit.parsed.canonical;
+			estimateJson = JSON.stringify(hit.digest);
+			payloadBytes = hit.digest.payload_bytes;
+		}
+	}
+
 	const key = includeKey(inc.include);
 	const json = includeJson(inc.include);
-	const existing = await c.env.DB
+	let existing = await c.env.DB
 		.prepare(
 			`SELECT * FROM entries WHERE board_id = ? AND source = ? AND revision = ? AND include_key = ?`,
 		)
 		.bind(boardId, canonical, revIn, key)
 		.first<EntryRow>();
+	if (!existing && src.kind === "hf" && canonical !== src.canonical) {
+		existing = await c.env.DB
+			.prepare(
+				`SELECT * FROM entries WHERE board_id = ? AND source = ? AND revision = ? AND include_key = ?`,
+			)
+			.bind(boardId, src.canonical, revIn, key)
+			.first<EntryRow>();
+	}
 
-	let estimateJson: string | null = existing?.estimate_json ?? null;
-	let payloadBytes: number | null = existing?.payload_bytes ?? null;
-	if (src.kind === "hf") {
-		const est = await fetchEstimate(src as HfCanonical, revIn || null);
-		if (est) {
-			estimateJson = JSON.stringify(est);
-			payloadBytes = est.payload_bytes;
-		}
+	if (existing && estimateJson === null) {
+		estimateJson = existing.estimate_json;
+		payloadBytes = existing.payload_bytes;
 	}
 
 	const { n: mutN, today } = await readCap(c.env.DB, "mutates");
@@ -323,9 +337,18 @@ app.post("/boards/:id/entries", async (c) => {
 				c.env.DB
 					.prepare(
 						`UPDATE entries SET desire = ?, note = ?, status = ?, holders = ?,
-             payload_bytes = ?, estimate_json = ? WHERE id = ?`,
+             payload_bytes = ?, estimate_json = ?, source = ? WHERE id = ?`,
 					)
-					.bind(des.desire, note || null, status, holders, payloadBytes, estimateJson, existing.id),
+					.bind(
+						des.desire,
+						note || null,
+						status,
+						holders,
+						payloadBytes,
+						estimateJson,
+						canonical,
+						existing.id,
+					),
 				c.env.DB.prepare("UPDATE boards SET updated = ? WHERE id = ?").bind(now, boardId),
 			]);
 			const row = await c.env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(existing.id).first<EntryRow>();
@@ -444,14 +467,6 @@ app.patch("/boards/:id/entries/:eid", async (c) => {
 
 	const key = includeKey(include);
 	const json = includeJson(include);
-	const collision = await c.env.DB
-		.prepare(
-			`SELECT id FROM entries WHERE board_id = ? AND source = ? AND revision = ? AND include_key = ? AND id != ?`,
-		)
-		.bind(boardId, canonical, rev, key, eid)
-		.first<{ id: number }>();
-	if (collision) return jsonError(c, "conflict", 409);
-
 	let estimateJson = existing.estimate_json;
 	let payloadBytes = existing.payload_bytes;
 	const identityChanged =
@@ -459,14 +474,28 @@ app.patch("/boards/:id/entries/:eid", async (c) => {
 	if (identityChanged) {
 		const parsedSrc = srcKind ?? canonicalizeSource(canonical);
 		if (parsedSrc.kind === "hf") {
-			const est = await fetchEstimate(parsedSrc, rev || null);
-			estimateJson = est ? JSON.stringify(est) : null;
-			payloadBytes = est?.payload_bytes ?? null;
+			const hit = await fetchEstimate(parsedSrc, rev || null);
+			if (hit) {
+				canonical = hit.parsed.canonical;
+				estimateJson = JSON.stringify(hit.digest);
+				payloadBytes = hit.digest.payload_bytes;
+			} else {
+				estimateJson = null;
+				payloadBytes = null;
+			}
 		} else {
 			estimateJson = null;
 			payloadBytes = null;
 		}
 	}
+
+	const collision = await c.env.DB
+		.prepare(
+			`SELECT id FROM entries WHERE board_id = ? AND source = ? AND revision = ? AND include_key = ? AND id != ?`,
+		)
+		.bind(boardId, canonical, rev, key, eid)
+		.first<{ id: number }>();
+	if (collision) return jsonError(c, "conflict", 409);
 
 	const { n: mutN, today } = await readCap(c.env.DB, "mutates");
 	if (mutN >= MUTATE_CAP) return jsonError(c, "mutate_cap", 429);

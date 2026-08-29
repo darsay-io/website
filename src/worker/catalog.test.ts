@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG_TOP_KEYS, DIGEST_KEYS, exportCatalog } from "./catalog.ts";
+import { CATALOG_TOP_KEYS, DIGEST_KEYS, entryToApi, exportCatalog } from "./catalog.ts";
 
 describe("exportCatalog", () => {
 	it("emits schema 1.0.0 without holders, status, or board id", () => {
@@ -52,5 +52,32 @@ describe("exportCatalog", () => {
 		const est = entry.estimate as Record<string, unknown>;
 		for (const k of Object.keys(est)) expect(DIGEST_KEYS).toContain(k);
 		expect(est.extra).toBeUndefined();
+		expect("artifact_type" in entry).toBe(false);
+	});
+});
+
+describe("entryToApi", () => {
+	it("exposes artifact_type from the estimate, else the source grammar", () => {
+		const base = {
+			id: 1,
+			source: "huggingface:datasets/acme/reviews",
+			revision: "",
+			include_json: null,
+			desire: 3,
+			note: null,
+			status: "want",
+			holders: "",
+			added: "2026-08-26T18:04:11+00:00",
+			payload_bytes: 10,
+			estimate_json: null,
+		};
+		expect(entryToApi(base).artifact_type).toBe("dataset");
+		expect(
+			entryToApi({
+				...base,
+				source: "huggingface:acme/reviews",
+				estimate_json: JSON.stringify({ artifact_type: "dataset" }),
+			}).artifact_type,
+		).toBe("dataset");
 	});
 });

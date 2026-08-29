@@ -115,3 +115,21 @@ export function hfUrlFromCanonical(canonical: string): string | null {
 	if (!canonical.startsWith("huggingface:")) return null;
 	return `https://huggingface.co/${canonical.slice("huggingface:".length)}`;
 }
+
+export function asDatasetCanonical(parsed: HfCanonical): HfCanonical {
+	if (parsed.artifactType === "dataset") return parsed;
+	const path = `datasets/${parsed.locator}`;
+	return {
+		kind: "hf",
+		canonical: `huggingface:${path}`,
+		url: `https://huggingface.co/${path}`,
+		artifactType: "dataset",
+		locator: parsed.locator,
+	};
+}
+
+export function artifactTypeFromSource(canonical: string): "model" | "dataset" | null {
+	const parsed = canonicalizeSource(canonical);
+	if (parsed.kind === "hf") return parsed.artifactType;
+	return null;
+}

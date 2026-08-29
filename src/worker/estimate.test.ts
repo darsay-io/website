@@ -10,6 +10,14 @@ const hf: HfCanonical = {
 	locator: "Qwen/Qwen3-0.6B",
 };
 
+const datasetShaped: HfCanonical = {
+	kind: "hf",
+	canonical: "huggingface:saidutta69/fable-5-premium",
+	url: "https://huggingface.co/saidutta69/fable-5-premium",
+	artifactType: "model",
+	locator: "saidutta69/fable-5-premium",
+};
+
 describe("fetchEstimate", () => {
 	it("returns null when the Hub misses", async () => {
 		const got = await fetchEstimate(hf, null, async () => new Response("no", { status: 404 }));
@@ -17,13 +25,13 @@ describe("fetchEstimate", () => {
 	});
 
 	it("pins the Hub request at the given revision", async () => {
-		let url = "";
+		const urls: string[] = [];
 		await fetchEstimate(hf, "abc123", async (input) => {
-			url = String(input);
+			urls.push(String(input));
 			return new Response("no", { status: 404 });
 		});
-		expect(url).toContain("/models/Qwen/Qwen3-0.6B/revision/abc123");
-		expect(url).toContain("blobs=true");
+		expect(urls[0]).toContain("/models/Qwen/Qwen3-0.6B/revision/abc123");
+		expect(urls[0]).toContain("blobs=true");
 	});
 
 	it("projects DIGEST_KEYS and does not invent sizes", async () => {
@@ -39,7 +47,8 @@ describe("fetchEstimate", () => {
 				{ headers: { "Content-Type": "application/json" } },
 			),
 		);
-		expect(got).toMatchObject({
+		expect(got?.parsed.canonical).toBe("huggingface:Qwen/Qwen3-0.6B");
+		expect(got?.digest).toMatchObject({
 			artifact_type: "model",
 			revision: "deadbeef",
 			revision_ref: "main",
@@ -51,6 +60,44 @@ describe("fetchEstimate", () => {
 			dominant_dtype: "BF16",
 			unknown_size_count: 1,
 		});
-		expect(got?.as_of).toMatch(/\+00:00$/);
+		expect(got?.digest.as_of).toMatch(/\+00:00$/);
+	});
+
+	it("retargets a model-shaped dataset-only id", async () => {
+		const urls: string[] = [];
+		const got = await fetchEstimate(datasetShaped, null, async (input) => {
+			const url = String(input);
+			urls.push(url);
+			if (url.includes("/models/")) {
+				return new Response(JSON.stringify({ error: "Invalid username or password." }), { status: 401 });
+			}
+			return new Response(
+				JSON.stringify({
+					sha: "abc",
+					gated: false,
+					siblings: [{ rfilename: "train.parquet", size: 2340 }],
+					cardData: { license: "mit" },
+				}),
+				{ headers: { "Content-Type": "application/json" } },
+			);
+		});
+		expect(urls.some((u) => u.includes("/models/saidutta69/fable-5-premium"))).toBe(true);
+		expect(urls.some((u) => u.includes("/datasets/saidutta69/fable-5-premium"))).toBe(true);
+		expect(got?.parsed.canonical).toBe("huggingface:datasets/saidutta69/fable-5-premium");
+		expect(got?.parsed.artifactType).toBe("dataset");
+		expect(got?.digest.artifact_type).toBe("dataset");
+		expect(got?.digest.payload_bytes).toBe(2340);
+	});
+
+	it("does not probe datasets when the model exists", async () => {
+		const urls: string[] = [];
+		await fetchEstimate(hf, null, async (input) => {
+			urls.push(String(input));
+			return new Response(JSON.stringify({ sha: "x", siblings: [{ rfilename: "a", size: 1 }] }), {
+				headers: { "Content-Type": "application/json" },
+			});
+		});
+		expect(urls).toHaveLength(1);
+		expect(urls[0]).toContain("/models/");
 	});
 });

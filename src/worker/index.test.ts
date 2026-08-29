@@ -231,17 +231,20 @@ class FakeD1 {
 			return { success: true, meta: { changes: e ? 1 : 0 } };
 		}
 		if (s.startsWith("UPDATE entries SET desire")) {
-			const [desire, note, status, holders, payload_bytes, estimate_json, eid] = binds as [
+			const [desire, note, status, holders, payload_bytes, estimate_json, source, eid] = binds as [
 				number | null,
 				string | null,
 				string,
 				string,
 				number | null,
 				string | null,
+				string,
 				number,
 			];
 			const e = this.entries.find((row) => row.id === eid);
-			if (e) Object.assign(e, { desire, note, status, holders, payload_bytes, estimate_json });
+			if (e) {
+				Object.assign(e, { desire, note, status, holders, payload_bytes, estimate_json, source });
+			}
 			return { success: true, meta: { changes: e ? 1 : 0 } };
 		}
 		if (s.startsWith("DELETE FROM entries")) {
@@ -478,6 +481,85 @@ describe("boards API", () => {
 		const entries = cat.entries as Array<Record<string, unknown>>;
 		expect(entries[0].include).toEqual(["*.gguf", "tokenizer*"]);
 		expect(entries[0].desire).toBe(8);
+	});
+
+	it("retargets a model-shaped dataset-only Hub id", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url.includes("/api/models/")) {
+					return new Response(JSON.stringify({ error: "Invalid username or password." }), { status: 401 });
+				}
+				if (url.includes("/api/datasets/")) {
+					return new Response(
+						JSON.stringify({
+							sha: "abc",
+							gated: false,
+							siblings: [{ rfilename: "train.parquet", size: 42 }],
+							cardData: { license: "mit" },
+						}),
+						{ headers: { "Content-Type": "application/json" } },
+					);
+				}
+				return new Response("no", { status: 404 });
+			}),
+		);
+		const { env: e } = env();
+		const created = await req(e, "/api/boards", postBoard());
+		const { id } = (await created.json()) as { id: string };
+		const add = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "huggingface:saidutta69/fable-5-premium", desire: 3 }),
+		});
+		expect(add.status).toBe(201);
+		const entry = (await add.json()) as { source: string; artifact_type: string; payload_bytes: number };
+		expect(entry.source).toBe("huggingface:datasets/saidutta69/fable-5-premium");
+		expect(entry.artifact_type).toBe("dataset");
+		expect(entry.payload_bytes).toBe(42);
+	});
+
+	it("rewrites a previously stored model-shaped dataset id on re-add", async () => {
+		const { env: e } = env();
+		const created = await req(e, "/api/boards", postBoard());
+		const { id } = (await created.json()) as { id: string };
+		const first = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "huggingface:saidutta69/fable-5-premium", desire: 3 }),
+		});
+		expect(first.status).toBe(201);
+		const stored = (await first.json()) as { id: number; source: string };
+		expect(stored.source).toBe("huggingface:saidutta69/fable-5-premium");
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url.includes("/api/models/")) {
+					return new Response("no", { status: 401 });
+				}
+				return new Response(
+					JSON.stringify({
+						sha: "abc",
+						siblings: [{ rfilename: "train.parquet", size: 42 }],
+						cardData: { license: "mit" },
+					}),
+					{ headers: { "Content-Type": "application/json" } },
+				);
+			}),
+		);
+		const again = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "huggingface:saidutta69/fable-5-premium", desire: 3 }),
+		});
+		expect(again.status).toBe(200);
+		const updated = (await again.json()) as { id: number; source: string; artifact_type: string };
+		expect(updated.id).toBe(stored.id);
+		expect(updated.source).toBe("huggingface:datasets/saidutta69/fable-5-premium");
+		expect(updated.artifact_type).toBe("dataset");
 	});
 
 	it("stores opaque scheme:locator rows and 400s unknown https hosts", async () => {
