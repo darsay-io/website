@@ -2,8 +2,9 @@
 import "../styles/site.css";
 interface Props {
 	title: string;
+	wide?: boolean;
 }
-const { title } = Astro.props;
+const { title, wide = false } = Astro.props;
 const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 ---
 <!doctype html>
@@ -16,7 +17,7 @@ const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 		<link rel="icon" href="/favicon.svg" />
 	</head>
 	<body>
-		<header class="site-header">
+		<header class:list={["site-header", { wide }]}>
 			<nav class="site-nav">
 				<a class="site-wordmark" href="/">darsay</a>
 				<a href="/docs/getting-started/">Docs</a>

@@ -1,4 +1,19 @@
 import { artifactTypeFromSource, hfUrlFromCanonical } from "../worker/sources.ts";
+import {
+	DEFAULT_DIAL_INDICES,
+	GAUGE_META,
+	INSTALL_COMMANDS,
+	archiveCaption,
+	archiveCommand,
+	catalogArg,
+	dialsFromIndices,
+	gaugeFillPct,
+	gaugeReadout,
+	gaugeStepCount,
+	type DialIndices,
+	type GaugeKind,
+	type InstallFlavor,
+} from "./archive-cmd.ts";
 
 type Entry = {
 	id: number;
@@ -50,6 +65,38 @@ function humanSize(n: number | null): string {
 		i += 1;
 	}
 	return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+}
+
+function fitTextarea(n: HTMLTextAreaElement) {
+	n.style.height = "auto";
+	n.style.height = `${Math.max(n.scrollHeight, 44)}px`;
+}
+
+function area(attrs: Record<string, string>, value: string): HTMLTextAreaElement {
+	const n = el("textarea", attrs);
+	n.value = value;
+	n.addEventListener("input", () => fitTextarea(n));
+	queueMicrotask(() => fitTextarea(n));
+	return n;
+}
+
+async function copyText(text: string): Promise<boolean> {
+	try {
+		await navigator.clipboard.writeText(text);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function flashCopied(btn: HTMLButtonElement) {
+	const prev = btn.textContent;
+	btn.textContent = "Copied";
+	btn.classList.add("is-copied");
+	window.setTimeout(() => {
+		btn.textContent = prev;
+		btn.classList.remove("is-copied");
+	}, 1600);
 }
 
 async function api(path: string, init?: RequestInit) {
@@ -166,6 +213,14 @@ export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "d
 	return a.id - b.id;
 }
 
+type GaugeRef = {
+	kind: GaugeKind;
+	face: HTMLElement;
+	value: HTMLElement;
+	unit: HTMLElement;
+	input: HTMLInputElement;
+};
+
 export async function mountBoard(root: HTMLElement, id: string) {
 	root.replaceChildren(el("p", {}, "Loading…"));
 	let board: Board;
@@ -179,12 +234,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	let sortKey: SortKey = "desire";
 	let sortDir: "asc" | "desc" = "desc";
 	let message = "";
-
-	function field(label: string, value: string, onSave: (v: string) => void) {
-		const input = el("input", { type: "text", value });
-		input.addEventListener("change", () => onSave(input.value));
-		return el("label", { class: "meta-field" }, el("span", {}, label), input);
-	}
+	let dials: DialIndices = { ...DEFAULT_DIAL_INDICES };
+	let installFlavor: InstallFlavor = "pipx";
+	let howOpen = true;
+	let archiveLive: { cmd: HTMLElement; caption: HTMLElement; gauges: GaugeRef[] } | null = null;
+	let installLive: HTMLElement | null = null;
 
 	async function patchBoard(body: Record<string, unknown>) {
 		try {
@@ -213,161 +267,420 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		render();
 	}
 
+	async function downloadCatalog() {
+		const res = await fetch(`/api/boards/${id}/catalog.json`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
+		});
+		if (!res.ok) return;
+		const blob = await res.blob();
+		const a = document.createElement("a");
+		a.href = URL.createObjectURL(blob);
+		a.download = `${board.catalog_id}.json`;
+		a.rel = "noreferrer";
+		a.click();
+		URL.revokeObjectURL(a.href);
+	}
+
+	function currentCommand(): string {
+		return archiveCommand(catalogArg(board.catalog_id), dialsFromIndices(dials));
+	}
+
+	function paintArchive() {
+		if (!archiveLive) return;
+		const d = dialsFromIndices(dials);
+		archiveLive.cmd.textContent = archiveCommand(catalogArg(board.catalog_id), d);
+		archiveLive.caption.textContent = archiveCaption(d);
+		for (const g of archiveLive.gauges) {
+			const idx = dials[g.kind];
+			const r = gaugeReadout(g.kind, idx);
+			g.value.textContent = r.value;
+			g.unit.textContent = r.unit;
+			g.face.style.setProperty("--pct", String(gaugeFillPct(idx, gaugeStepCount(g.kind))));
+			g.input.setAttribute("aria-valuetext", r.aria);
+			if (g.input.value !== String(idx)) g.input.value = String(idx);
+		}
+		if (installLive) installLive.textContent = INSTALL_COMMANDS[installFlavor];
+	}
+
+	function makeGauge(kind: GaugeKind): { root: HTMLElement; ref: GaugeRef } {
+		const meta = GAUGE_META[kind];
+		const steps = gaugeStepCount(kind);
+		const idx = dials[kind];
+		const r = gaugeReadout(kind, idx);
+		const value = el("span", { class: "gauge-value" }, r.value);
+		const unit = el("span", { class: "gauge-unit" }, r.unit);
+		const face = el(
+			"div",
+			{ class: "gauge-face", "aria-hidden": "true" },
+			el("div", { class: "gauge-core" }, value, unit),
+		);
+		face.style.setProperty("--pct", String(gaugeFillPct(idx, steps)));
+		const input = el("input", {
+			type: "range",
+			min: "0",
+			max: String(steps - 1),
+			step: "1",
+			value: String(idx),
+			"aria-label": meta.label,
+			"aria-valuetext": r.aria,
+		});
+		input.addEventListener("input", () => {
+			dials = { ...dials, [kind]: Number(input.value) };
+			paintArchive();
+		});
+		const root = el(
+			"label",
+			{ class: "gauge" },
+			el("span", { class: "gauge-kicker" }, meta.label),
+			face,
+			input,
+		);
+		return { root, ref: { kind, face, value, unit, input } };
+	}
+
+	function renderBringHome(): HTMLElement {
+		const section = el("section", { class: "bring-home", "aria-labelledby": "bring-title" });
+		section.append(
+			el("p", { class: "bring-kicker" }, "From this list → your vault"),
+			el("h2", { id: "bring-title" }, "Bring it home"),
+			el(
+				"p",
+				{ class: "bring-lede" },
+				"This site never holds weights. Save the catalog, then let darsay archive the next unfinished source onto your machine.",
+			),
+		);
+
+		const cmd = el("code", { class: "cmd-text", "aria-live": "polite" }, currentCommand());
+		const copy = el("button", { type: "button", class: "btn compact cmd-copy" }, "Copy");
+		copy.addEventListener("click", async () => {
+			if (await copyText(currentCommand())) flashCopied(copy);
+		});
+		const chrome = el(
+			"div",
+			{ class: "cmd-chrome" },
+			el(
+				"span",
+				{ class: "cmd-dots", "aria-hidden": "true" },
+				el("span"),
+				el("span"),
+				el("span"),
+			),
+			el("span", { class: "cmd-label" }, "tonight’s fetch"),
+			copy,
+		);
+		const stage = el("div", { class: "cmd-stage" }, chrome, el("pre", {}, cmd));
+
+		const dl = el("button", { type: "button", class: "btn bring-download" });
+		dl.append(
+			el("span", { class: "bring-dl-kicker" }, "Download catalog"),
+			el("span", { class: "bring-dl-file" }, `${board.catalog_id}.json`),
+		);
+		dl.addEventListener("click", () => downloadCatalog());
+
+		const cmdRow = el("div", { class: "cmd-row" }, stage, dl);
+		const caption = el("p", { class: "cmd-caption" }, archiveCaption(dialsFromIndices(dials)));
+
+		const gauges: GaugeRef[] = [];
+		const gaugeRow = el("div", { class: "gauges" });
+		for (const kind of ["maxGb", "minFree", "maxRate", "maxMinutes"] as GaugeKind[]) {
+			const g = makeGauge(kind);
+			gauges.push(g.ref);
+			gaugeRow.append(g.root);
+		}
+
+		archiveLive = { cmd, caption, gauges };
+
+		const details = el("details", { class: "bring-how" });
+		details.open = howOpen;
+		details.addEventListener("toggle", () => {
+			howOpen = details.open;
+		});
+		const summary = el("summary", {}, "How this works");
+
+		const flavors = el("div", { class: "install-switch", role: "group", "aria-label": "Install method" });
+		const installCode = el("code", {}, INSTALL_COMMANDS[installFlavor]);
+		installLive = installCode;
+		for (const flavor of ["pipx", "brew", "uvx"] as InstallFlavor[]) {
+			const b = el("button", { type: "button", class: "install-pill" }, flavor);
+			if (flavor === installFlavor) b.setAttribute("aria-pressed", "true");
+			else b.setAttribute("aria-pressed", "false");
+			b.addEventListener("click", () => {
+				installFlavor = flavor;
+				for (const child of flavors.querySelectorAll("button")) {
+					child.setAttribute("aria-pressed", child === b ? "true" : "false");
+				}
+				installCode.textContent = INSTALL_COMMANDS[flavor];
+			});
+			flavors.append(b);
+		}
+
+		const steps = el("ol", { class: "bring-steps" });
+		const step1 = el(
+			"li",
+			{},
+			el("span", { class: "step-n" }, "1"),
+			el(
+				"div",
+				{},
+				el("strong", {}, "Install darsay"),
+				flavors,
+				el("pre", { class: "install-cmd" }, installCode),
+			),
+		);
+		const step2 = el(
+			"li",
+			{},
+			el("span", { class: "step-n" }, "2"),
+			el(
+				"div",
+				{},
+				el("strong", {}, "Save the catalog"),
+				el(
+					"p",
+					{},
+					"A catalog.json the CLI already understands. Download it — do not paste the board URL into a terminal.",
+				),
+			),
+		);
+		const step3 = el(
+			"li",
+			{},
+			el("span", { class: "step-n" }, "3"),
+			el(
+				"div",
+				{},
+				el("strong", {}, "Run it where you saved the file"),
+				el(
+					"p",
+					{},
+					"In that folder, paste the command above. The dials rewrite the flags. Rerun the same line to resume.",
+				),
+			),
+		);
+		steps.append(step1, step2, step3);
+
+		const more = el(
+			"p",
+			{ class: "bring-more muted" },
+			"The catalog is the want-list, not the weights. Upstream is Hugging Face. ",
+		);
+		const docs = el("a", { href: "/docs/getting-started/" }, "Full walkthrough");
+		more.append(docs, " · ");
+		more.append(el("a", { href: "/docs/examples/#share-a-catalog" }, "Share a catalog"));
+
+		details.append(summary, steps, more);
+		section.append(cmdRow, caption, gaugeRow, details);
+		return section;
+	}
+
+	function renderEntry(e: Entry): HTMLElement {
+		const card = el("article", { class: "work-card" });
+		const src = el("div", { class: "work-id" });
+		const href = hfUrlFromCanonical(e.source);
+		if (href) {
+			src.append(el("a", { href, rel: "noreferrer", target: "_blank" }, e.source));
+		} else {
+			src.append(el("span", {}, e.source));
+		}
+		if (e.revision) src.append(el("div", { class: "muted" }, e.revision));
+		if (e.include?.length) src.append(el("div", { class: "muted" }, e.include.join(", ")));
+
+		const kind = entryArtifactType(e);
+		const facts = el("div", { class: "work-facts" });
+		if (kind === "model" || kind === "dataset") {
+			facts.append(el("span", { class: `type-tag type-tag-${kind}` }, kind));
+		} else {
+			facts.append(el("span", { class: "muted" }, "—"));
+		}
+		facts.append(el("span", { class: "work-size" }, humanSize(e.payload_bytes)));
+
+		const note = area(
+			{
+				class: "work-note",
+				rows: "2",
+				maxlength: "500",
+				placeholder: "A sentence for why this one.",
+				"aria-label": `Note for ${e.source}`,
+			},
+			e.note || "",
+		);
+		note.addEventListener("change", () => {
+			void patchEntry(e.id, { note: note.value }, false);
+		});
+
+		const desire = el("input", {
+			type: "number",
+			min: "1",
+			max: "9",
+			value: e.desire ? String(e.desire) : "",
+			"aria-label": `Desire for ${e.source}`,
+		});
+		desire.addEventListener("change", async () => {
+			const v = desire.value === "" ? null : Number(desire.value);
+			await patchEntry(e.id, { desire: v });
+		});
+
+		const have = el("input", { type: "checkbox" });
+		if (e.status === "have") have.checked = true;
+		have.addEventListener("change", async () => {
+			await patchEntry(e.id, { status: have.checked ? "have" : "want" });
+		});
+
+		const who = el("input", {
+			type: "text",
+			placeholder: "Maya, USB in Berlin",
+			value: e.holders || "",
+			maxlength: "500",
+			"aria-label": `Who holds ${e.source}`,
+		});
+		who.addEventListener("change", async () => {
+			await patchEntry(e.id, { holders: who.value }, false);
+		});
+
+		const rm = el("button", { type: "button", class: "btn compact secondary" }, "Drop");
+		rm.addEventListener("click", async () => {
+			if (!confirm("Drop this row?")) return;
+			await api(`/api/boards/${id}/entries/${e.id}`, { method: "DELETE" });
+			await reload();
+		});
+
+		const bar = el(
+			"div",
+			{ class: "work-bar" },
+			el("label", { class: "work-desire" }, el("span", {}, "Desire"), desire),
+			el("label", { class: "work-have" }, have, el("span", {}, "Have")),
+			el("label", { class: "work-who" }, el("span", {}, "Who"), who),
+			rm,
+		);
+
+		card.append(
+			el("div", { class: "work-top" }, src, facts),
+			el("label", { class: "work-note-wrap" }, el("span", { class: "work-note-kicker" }, "Note"), note),
+			bar,
+		);
+		return card;
+	}
+
 	function render() {
 		const header = el("header", { class: "board-head" });
-		header.append(
-			field("Title", board.title || "", (v) => patchBoard({ title: v })),
-			field("Curator", board.curator || "", (v) => patchBoard({ curator: v })),
-			field("Note", board.note || "", (v) => patchBoard({ note: v })),
-		);
-		const actions = el("div", { class: "board-actions" });
-		const copy = el("button", { type: "button", class: "btn secondary" }, "Copy URL");
+		const title = el("input", {
+			type: "text",
+			class: "board-title",
+			value: board.title || "",
+			maxlength: "120",
+			"aria-label": "Board title",
+		});
+		title.addEventListener("change", () => patchBoard({ title: title.value }));
+
+		const copy = el("button", { type: "button", class: "btn compact secondary" }, "Copy URL");
 		copy.addEventListener("click", async () => {
-			try {
-				await navigator.clipboard.writeText(location.href);
-			} catch {
-				/* ignore */
-			}
+			if (await copyText(location.href)) flashCopied(copy);
 		});
-		const dl = el("button", { type: "button", class: "btn secondary" }, "Download catalog.json");
-		dl.addEventListener("click", async () => {
-			const res = await fetch(`/api/boards/${id}/catalog.json`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: "{}",
-			});
-			if (!res.ok) return;
-			const blob = await res.blob();
-			const a = document.createElement("a");
-			a.href = URL.createObjectURL(blob);
-			a.download = `${board.catalog_id}.json`;
-			a.rel = "noreferrer";
-			a.click();
-			URL.revokeObjectURL(a.href);
-		});
-		const del = el("button", { type: "button", class: "btn danger" }, "Delete board");
+		const del = el("button", { type: "button", class: "btn compact danger" }, "Delete board");
 		del.addEventListener("click", async () => {
 			const typed = prompt('Type "delete" to destroy this board');
 			if (typed !== "delete") return;
 			await api(`/api/boards/${id}`, { method: "DELETE", body: JSON.stringify({ confirm: "delete" }) });
 			location.href = "/";
 		});
-		actions.append(copy, dl, del);
+		const actions = el("div", { class: "board-actions" }, copy, del);
+
+		const curator = el("input", {
+			type: "text",
+			value: board.curator || "",
+			maxlength: "120",
+			placeholder: "Who is curating",
+			"aria-label": "Curator",
+		});
+		curator.addEventListener("change", () => patchBoard({ curator: curator.value }));
+
+		const boardNote = area(
+			{
+				class: "board-note",
+				rows: "2",
+				maxlength: "2000",
+				placeholder: "What is this list for? A short sentence is enough.",
+				"aria-label": "Board note",
+			},
+			board.note || "",
+		);
+		boardNote.addEventListener("change", () => patchBoard({ note: boardNote.value }));
+
 		header.append(
-			el("p", { class: "muted" }, `catalog id ${board.catalog_id} · created ${board.created} · updated ${board.updated}`),
-			actions,
+			el("div", { class: "board-title-row" }, title, actions),
+			el("label", { class: "meta-field curator-field" }, el("span", {}, "Curator"), curator),
+			el("label", { class: "board-note-wrap" }, el("span", { class: "work-note-kicker" }, "About this list"), boardNote),
+			el(
+				"p",
+				{ class: "muted board-ids" },
+				`catalog id ${board.catalog_id} · created ${board.created} · updated ${board.updated}`,
+			),
 		);
 		if (message) header.append(el("p", { class: "flash" }, message));
 
-		const table = el("table", { class: "board-table" });
-		const thead = el("thead");
-		const sortCols: { label: string; key: SortKey | null }[] = [
+		const toolbar = el("div", { class: "ledger-toolbar" });
+		const n = board.entries.length;
+		toolbar.append(el("span", { class: "ledger-count" }, n === 1 ? "1 source" : `${n} sources`));
+		const sorts = el("div", { class: "sort-pills" });
+		const sortCols: { label: string; key: SortKey }[] = [
+			{ label: "Desire", key: "desire" },
 			{ label: "Source", key: "source" },
 			{ label: "Type", key: "type" },
-			{ label: "Desire", key: "desire" },
 			{ label: "Size", key: "size" },
 			{ label: "Have", key: "status" },
-			{ label: "Who", key: null },
-			{ label: "Note", key: null },
-			{ label: "", key: null },
 		];
-		const headRow = el("tr");
 		for (const col of sortCols) {
-			if (!col.key) {
-				headRow.append(el("th", {}, col.label));
-				continue;
-			}
-			const key = col.key;
-			const mark = sortKey === key ? (sortDir === "desc" ? " ▾" : " ▴") : "";
-			const btn = el("button", { type: "button", class: "th-sort" }, col.label + mark);
+			const mark = sortKey === col.key ? (sortDir === "desc" ? " ▾" : " ▴") : "";
+			const btn = el(
+				"button",
+				{
+					type: "button",
+					class: sortKey === col.key ? "sort-btn is-active" : "sort-btn",
+				},
+				col.label + mark,
+			);
 			btn.addEventListener("click", () => {
-				if (sortKey === key) sortDir = sortDir === "desc" ? "asc" : "desc";
+				if (sortKey === col.key) sortDir = sortDir === "desc" ? "asc" : "desc";
 				else {
-					sortKey = key;
-					sortDir = key === "source" ? "asc" : "desc";
+					sortKey = col.key;
+					sortDir = col.key === "source" ? "asc" : "desc";
 				}
 				render();
 			});
-			headRow.append(el("th", {}, btn));
+			sorts.append(btn);
 		}
-		thead.append(headRow);
-		const tbody = el("tbody");
+		toolbar.append(sorts);
+
+		const ledger = el("div", { class: "ledger" });
 		const rows = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
-		for (const e of rows) {
-			const tr = el("tr");
-			const srcCell = el("td");
-			const href = hfUrlFromCanonical(e.source);
-			if (href) {
-				const a = el("a", { href, rel: "noreferrer", target: "_blank" }, e.source);
-				srcCell.append(a);
-			} else {
-				srcCell.append(e.source);
-			}
-			if (e.revision) srcCell.append(el("div", { class: "muted" }, e.revision));
-			if (e.include?.length) srcCell.append(el("div", { class: "muted" }, e.include.join(", ")));
-
-			const desire = el("input", { type: "number", min: "1", max: "9", value: e.desire ? String(e.desire) : "" });
-			desire.addEventListener("change", async () => {
-				const v = desire.value === "" ? null : Number(desire.value);
-				await patchEntry(e.id, { desire: v });
-			});
-
-			const have = el("input", { type: "checkbox" });
-			if (e.status === "have") have.checked = true;
-			have.addEventListener("change", async () => {
-				await patchEntry(e.id, { status: have.checked ? "have" : "want" });
-			});
-
-			const who = el("input", { type: "text", placeholder: "Maya, USB in Berlin", value: e.holders || "" });
-			who.addEventListener("change", async () => {
-				await patchEntry(e.id, { holders: who.value }, false);
-			});
-
-			const note = el("input", { type: "text", value: e.note || "" });
-			note.addEventListener("change", async () => {
-				await patchEntry(e.id, { note: note.value }, false);
-			});
-
-			const rm = el("button", { type: "button", class: "btn secondary" }, "Drop");
-			rm.addEventListener("click", async () => {
-				if (!confirm("Drop this row?")) return;
-				await api(`/api/boards/${id}/entries/${e.id}`, { method: "DELETE" });
-				await reload();
-			});
-
-			const kind = entryArtifactType(e);
-			const typeCell = el("td");
-			if (kind === "model" || kind === "dataset") {
-				typeCell.append(el("span", { class: `type-tag type-tag-${kind}` }, kind));
-			} else {
-				typeCell.append(el("span", { class: "muted" }, "—"));
-			}
-
-			tr.append(
-				srcCell,
-				typeCell,
-				el("td", {}, desire),
-				el("td", {}, humanSize(e.payload_bytes)),
-				el("td", {}, have),
-				el("td", {}, who),
-				el("td", {}, note),
-				el("td", {}, rm),
-			);
-			tbody.append(tr);
+		if (rows.length === 0) {
+			ledger.append(el("p", { class: "muted" }, "Add a source to start the list."));
+		} else {
+			for (const e of rows) ledger.append(renderEntry(e));
 		}
-		table.append(thead, tbody);
-		const wrap = el("div", { class: "board-wrap" }, table);
 
-		const add = el("form", { class: "add-row" });
+		const add = el("form", { class: "add-row add-card" });
 		const source = el("input", {
 			type: "text",
 			placeholder: "huggingface:Qwen/Qwen3-0.6B or datasets/owner/name",
 			required: "true",
+			"aria-label": "Source",
 		});
-		const d = el("input", { type: "number", min: "1", max: "9", placeholder: "desire" });
-		const rev = el("input", { type: "text", placeholder: "revision (optional)", maxlength: "64" });
+		const d = el("input", { type: "number", min: "1", max: "9", placeholder: "desire", "aria-label": "Desire" });
+		const rev = el("input", {
+			type: "text",
+			placeholder: "revision (optional)",
+			maxlength: "64",
+			"aria-label": "Revision",
+		});
 		const advanced = el("details");
-		const inc = el("input", { type: "text", placeholder: "include globs, comma-separated" });
+		const inc = el("input", {
+			type: "text",
+			placeholder: "include globs, comma-separated",
+			"aria-label": "Include globs",
+		});
 		advanced.append(el("summary", {}, "subset / include"), inc);
 		const addBtn = el("button", { type: "submit", class: "btn" }, "Add source");
 		const addErr = el("p", { class: "muted" });
@@ -397,7 +710,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			}
 		});
 
-		root.replaceChildren(header, wrap, add);
+		root.replaceChildren(header, renderBringHome(), toolbar, ledger, add);
+		paintArchive();
 	}
 
 	render();
