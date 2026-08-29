@@ -10,3 +10,4 @@ Astro + Starlight + a Cloudflare Worker for anonymous want-list boards.
 - Tests: `npm test`. Build: `PUBLIC_BOARDS_ENABLED=true npm run build`.
 - Do not put a Node toolchain in `darsay/darsay` (the Python CLI repo).
 - Provisioning is Wrangler + `ops/RUNBOOK.md`. Do not add Terraform, Ansible, or D1 auto-provision (omit `database_id`).
+- `public/robots.txt` may only Disallow `/b/`, `/api/`, `/boards`. Do not add GPTBot/ClaudeBot (or other AI crawler) Disallows; product docs should stay fetchable. Cloudflare dashboard AI-bot policy lives in `ops/RUNBOOK.md`.

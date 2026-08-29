@@ -54,6 +54,49 @@ npx wrangler dev    # Worker + local D1 + static assets after `npm run build`
 
 `CREATE_PASSWORD` is a Wrangler **secret**, not `wrangler.jsonc` `vars` (those are visible in the dashboard and would land in git). The Worker compares the JSON body field `password` on create and discards it. It never writes the phrase to D1. To rotate: `secret put` again and tell friends. To remove the gate: delete the secret and the check in `src/worker/index.ts`.
 
+## AI crawlers
+
+Product pages (`/`, `/docs/**`) should be fetchable by AI search, chat agents, and training crawlers so people can ask an assistant about darsay. Boards stay unlisted.
+
+**Origin file** (`public/robots.txt`, in git): `Disallow` `/b/`, `/api/`, `/boards` only. Do not add `GPTBot` / `ClaudeBot` / other AI-crawler `Disallow`s here.
+
+**Dashboard** (not in git). Zone `darsay.io` → **Security** → **Settings**, filter **Bot traffic**:
+
+| Setting | Value |
+| --- | --- |
+| Search | Allow |
+| Agent | Allow |
+| Training | Allow |
+| Managed robots.txt / Bot Preference Sync / “block training in robots.txt” | Off |
+| Display Content Signals Policy (zone **Overview** → Control AI Crawlers) | Off |
+| Block AI Bots (legacy) | Off |
+| AI Labyrinth | Off |
+| AI Crawl Control | Allow (do not Block) GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot, Claude-User, PerplexityBot |
+
+A browser load of `https://darsay.io/robots.txt` is **not** sufficient. Cloudflare prepends managed `robots.txt` for some crawler user-agents only, and **Block AI Bots** returns `403 Your request was blocked.` independently of `robots.txt`.
+
+```bash
+# Must be origin-only: no "BEGIN Cloudflare Managed content", no GPTBot Disallow
+curl -s https://darsay.io/robots.txt
+curl -s -A "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)" \
+  https://darsay.io/robots.txt
+
+# Must be HTTP 200, not 403
+for ua in \
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)" \
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot" \
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)" \
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com)" \
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)" \
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot)"
+do
+  printf '%s -> ' "$ua"
+  curl -sI -A "$ua" https://darsay.io/ | awk 'NR==1{print}'
+done
+```
+
+GitHub org `darsay-io` needs nothing extra: public repos are already public. `github.com/robots.txt` is GitHub-wide (file trees / raw are restricted for `User-agent: *`). There is no org toggle that opens that up for third-party AIs.
+
 ## Backups
 
 ```bash
