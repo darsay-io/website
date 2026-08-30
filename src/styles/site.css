@@ -36,6 +36,7 @@ html[data-theme="dark"] {
 	--sl-color-hairline: rgba(212, 176, 106, 0.22);
 	--sl-color-text: #f3ead8;
 	--sl-color-text-accent: #f0d9a0;
+	--sl-color-text-invert: var(--d-ink);
 }
 
 html {
@@ -55,6 +56,14 @@ body {
 
 a {
 	color: var(--d-gold-hi);
+}
+
+/* Unlayered: Starlight's current-item color is layered and loses to `a` above. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+	color: var(--d-ink);
+	background-color: var(--d-gold);
 }
 
 .site-header {
