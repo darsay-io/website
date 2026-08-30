@@ -145,7 +145,27 @@ A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing
 
 Production `/docs/` tracks the latest **CLI GitHub Release**, not `main`. `docs.lock.json` holds that tag and commit.
 
-The `Sync CLI docs` workflow (hourly, and `workflow_dispatch`) compares the lock to `darsay-io/darsay`'s latest release. If they differ it regenerates `src/content/docs/docs/**` and opens a PR. It does not deploy. After merge:
+A CLI release flows to production with no hands, in three workflows:
+
+1. The CLI repo's `Release` workflow dispatches `Sync CLI docs` here after
+   publishing (secret `WEBSITE_DISPATCH_TOKEN` in `darsay-io/darsay`; the
+   hourly cron is the fallback for missed dispatches).
+2. `Sync CLI docs` (dispatch, hourly cron, and `workflow_dispatch` with an
+   optional tag) compares the lock to `darsay-io/darsay`'s latest release.
+   If they differ it regenerates `src/content/docs/docs/**`, verifies
+   (test / `check:docs` / build — any failure pushes nothing), and commits
+   straight to `main`; no PR. The push uses the `DOCS_PUSH_TOKEN` secret —
+   the same fine-grained PAT as the dispatch token — because a push by the
+   default `github.token` triggers no workflows, so Deploy would not fire.
+3. `Deploy` runs on `main` pushes touching the lock, `src/content/docs/**`,
+   or the logo (and on `workflow_dispatch` for anything else): test,
+   `check:docs`, build, `wrangler deploy` (secrets `CLOUDFLARE_API_TOKEN`,
+   `CLOUDFLARE_ACCOUNT_ID`).
+
+Any missing secret degrades a step, never the pipeline's safety: without
+`DOCS_PUSH_TOKEN` the pin still lands on `main` but Deploy must be run by
+hand (`workflow_dispatch`); without the Cloudflare secrets Deploy fails
+visibly. The manual flow always works:
 
 ```bash
 PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy --env=""

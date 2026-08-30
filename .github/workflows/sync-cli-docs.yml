@@ -1,14 +1,19 @@
 name: Sync CLI docs
 
 # Production /docs/ tracks the latest CLI GitHub Release, not main.
-# This opens a PR; it does not deploy darsay.io. Merge, then wrangler.
+# When the lock is behind, this regenerates the docs, verifies (test,
+# check:docs, build), and commits straight to main — no PR — which triggers
+# the Deploy workflow. The push needs the DOCS_PUSH_TOKEN secret: a push by
+# the default github.token triggers no workflows, so Deploy would not fire.
+# The CLI's release workflow dispatches this on each release; the hourly
+# cron is the fallback for releases the dispatch missed.
 on:
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       tag:
-        description: CLI tag (default: latest GitHub Release)
+        description: "CLI tag (default: latest GitHub Release)"
         required: false
 
 concurrency:
@@ -17,7 +22,6 @@ concurrency:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   sync:
@@ -25,7 +29,12 @@ jobs:
     env:
       DARSAY_DOCS_ROOT: ${{ github.workspace }}/.ci-darsay
     steps:
+      # With the PAT, the push to main acts as the token's owner and so
+      # triggers the Deploy workflow — events from the default github.token
+      # trigger no workflows at all.
       - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.DOCS_PUSH_TOKEN || github.token }}
 
       - uses: actions/setup-node@v5
         with:
@@ -70,42 +79,36 @@ jobs:
 
       - name: Bump lock and regenerate
         if: steps.cli.outputs.current != 'true'
+        env:
+          PUBLIC_BOARDS_ENABLED: "true"
         run: |
           npm ci
           node scripts/bump-docs-lock.mjs "${{ steps.cli.outputs.tag }}" --force
           npm test
           npm run check:docs
+          npm run build
 
-      - name: Open or update PR
+      - name: Commit to main and push
         if: steps.cli.outputs.current != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          HAS_PUSH_TOKEN: ${{ secrets.DOCS_PUSH_TOKEN != '' }}
           TAG: ${{ steps.cli.outputs.tag }}
-          SHA: ${{ steps.cli.outputs.sha }}
         run: |
           set -euo pipefail
-          BRANCH="docs/cli-${TAG}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$BRANCH"
           git add docs.lock.json src/content/docs/docs scripts/snapshots public/darsay-logo.png src/assets/darsay-logo.png
           if git diff --cached --quiet; then
             echo "no file changes"
             exit 0
           fi
           git commit -m "docs: pin CLI docs to ${TAG}"
-          git push --force-with-lease origin "$BRANCH"
-          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
-            echo "updated existing PR for $BRANCH"
-          else
-            gh pr create --title "docs: pin CLI docs to ${TAG}" --body "$(cat <<EOF
-          Pins \`docs.lock.json\` to CLI \`${TAG}\` (\`${SHA}\`) and regenerates \`src/content/docs/docs/**\`.
-
-          Production docs follow the latest CLI GitHub Release so \`/docs/\` matches \`pipx install darsay\`. This PR does not deploy. After merge:
-
-          \`\`\`bash
-          PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy --env=""
-          \`\`\`
-          EOF
-          )"
+          # The retry absorbs a push that landed on main between checkout and
+          # now; the generated files depend only on the lock, so the rebase
+          # conflicts only if another docs pin raced this one — then this run
+          # fails and the next cron run starts over from fresh main.
+          git push origin main || { git pull --rebase origin main && git push origin main; }
+          if [ "$HAS_PUSH_TOKEN" != "true" ]; then
+            echo "pushed with github.token: Deploy will not auto-trigger;" \
+              "set DOCS_PUSH_TOKEN, or run the Deploy workflow by hand"
           fi
