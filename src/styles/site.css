@@ -1114,3 +1114,340 @@ button.btn.bring-download {
 		padding: 0.25rem 0.65rem;
 	}
 }
+
+/* ── Recipe cards: a grimoire page that unfolds beneath a source ─────────── */
+
+.grim-toggle {
+	appearance: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	min-height: 0;
+	padding: 0.3rem 0.85rem 0.3rem 0.7rem;
+	border: 1px solid var(--d-gold);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--d-gold-hi);
+	font: inherit;
+	font-size: 0.76rem;
+	font-weight: 650;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background-color 0.18s ease,
+		color 0.18s ease,
+		box-shadow 0.18s ease;
+}
+
+.grim-toggle:hover,
+.grim-toggle:focus-visible {
+	background: var(--d-gold-dim);
+	outline: none;
+	box-shadow: 0 0 0 3px rgba(212, 176, 106, 0.18);
+}
+
+.grim-toggle[aria-expanded="true"] {
+	background: var(--d-gold);
+	color: var(--d-ink);
+}
+
+.grim-glyph {
+	display: inline-block;
+	color: var(--d-gold);
+	transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.grim-toggle[aria-expanded="true"] .grim-glyph {
+	color: var(--d-ink);
+	transform: rotate(135deg);
+}
+
+.grim-wrap {
+	display: grid;
+	grid-template-rows: 0fr;
+	margin-top: -0.7rem; /* swallow the card's flex gap while folded */
+	transition:
+		grid-template-rows 0.45s cubic-bezier(0.2, 0.7, 0.2, 1),
+		margin-top 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.grim-wrap.is-open {
+	grid-template-rows: 1fr;
+	margin-top: 0.1rem;
+}
+
+.grim-clip {
+	overflow: hidden;
+	min-height: 0;
+}
+
+.grimoire {
+	position: relative;
+	margin: 0.5rem 0.4rem 0.45rem;
+	padding: 1.35rem 1.4rem 1.3rem;
+	border: 1px solid var(--d-gold);
+	border-radius: 10px;
+	background:
+		radial-gradient(ellipse 70% 55% at 0% 0%, rgba(212, 176, 106, 0.12), transparent 55%),
+		radial-gradient(ellipse 45% 45% at 100% 100%, rgba(90, 70, 160, 0.16), transparent 52%),
+		#0a090f;
+	box-shadow:
+		0 0 0 4px var(--d-bg-raised),
+		0 0 0 5px var(--d-border),
+		0 24px 48px -28px rgba(212, 176, 106, 0.45);
+	opacity: 0;
+	transform: translateY(-8px);
+	transition:
+		opacity 0.35s ease,
+		transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.grim-wrap.is-open .grimoire {
+	opacity: 1;
+	transform: none;
+	transition-delay: 0.08s;
+}
+
+.grimoire::before,
+.grimoire::after {
+	content: "✦";
+	position: absolute;
+	padding: 0 0.35rem;
+	background: var(--d-bg-raised);
+	color: var(--d-gold);
+	font-size: 0.78rem;
+	line-height: 1;
+}
+
+.grimoire::before {
+	top: -0.45rem;
+	left: 1.1rem;
+}
+
+.grimoire::after {
+	bottom: -0.45rem;
+	right: 1.1rem;
+}
+
+.grim-head {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	margin: 0 0 1.1rem;
+	padding: 0 0 0.9rem;
+	border-bottom: 1px solid var(--d-border);
+}
+
+.grim-kicker {
+	margin: 0;
+	font-size: 0.7rem;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--d-gold);
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.grim-source {
+	font-family: var(--d-mono);
+	font-size: 0.8rem;
+	letter-spacing: 0;
+	text-transform: none;
+	color: var(--d-gold-hi);
+}
+
+.grim-title {
+	margin: 0.1rem 0 0;
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-weight: 600;
+	font-size: clamp(1.4rem, 2.6vw, 1.8rem);
+	letter-spacing: -0.015em;
+	line-height: 1.15;
+	color: var(--d-fg);
+}
+
+.grim-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem 0;
+	margin: 0.3rem 0 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.76rem;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+	color: var(--d-muted);
+}
+
+.grim-facts li + li::before {
+	content: "·";
+	margin: 0 0.55rem;
+	color: var(--d-gold);
+}
+
+.grim-verdict {
+	margin: 0.55rem 0 0;
+	font-family: var(--d-serif);
+	font-size: 1.1rem;
+	line-height: 1.45;
+	color: var(--d-fg);
+	max-width: 52rem;
+}
+
+.spells {
+	display: grid;
+	gap: 1.15rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.spell {
+	display: grid;
+	grid-template-columns: 2.4rem minmax(0, 1fr);
+	column-gap: 0.9rem;
+	row-gap: 0.25rem;
+	min-width: 0;
+}
+
+.spell-n {
+	grid-column: 1;
+	grid-row: 1 / -1;
+	align-self: stretch;
+	padding-top: 0.2rem;
+	border-right: 1px solid var(--d-border);
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 1.1rem;
+	color: var(--d-gold);
+	text-align: center;
+}
+
+.spell > :not(.spell-n) {
+	grid-column: 2;
+	min-width: 0;
+}
+
+.spell h4 {
+	margin: 0;
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-weight: 600;
+	font-size: 1.2rem;
+	letter-spacing: -0.01em;
+	color: var(--d-gold-hi);
+}
+
+.spell-why {
+	margin: 0 0 0.5rem;
+	color: var(--d-muted);
+	font-size: 0.93rem;
+	max-width: 52rem;
+}
+
+.spell .cmd-stage {
+	background: #08070c;
+}
+
+.spell .cmd-stage pre {
+	overflow-x: auto;
+	white-space: pre;
+	scrollbar-width: thin;
+	scrollbar-color: var(--d-border) transparent;
+}
+
+.spell .cmd-text {
+	font-size: 0.88rem;
+	white-space: pre;
+	word-break: normal;
+}
+
+.cmd-comment {
+	color: var(--d-muted);
+	opacity: 0.8;
+}
+
+.spell-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.6rem 1rem;
+	margin: 0.5rem 0 0;
+	font-size: 0.84rem;
+}
+
+.spell-doc {
+	color: var(--d-gold);
+	text-decoration: none;
+	letter-spacing: 0.02em;
+}
+
+.spell-doc:hover {
+	color: var(--d-gold-hi);
+	text-decoration: underline;
+}
+
+.grim-more {
+	margin-top: 1.15rem;
+	padding-top: 0.8rem;
+	border-top: 1px solid var(--d-border);
+}
+
+.grim-more summary {
+	cursor: pointer;
+	list-style: none;
+	color: var(--d-gold-hi);
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 1.02rem;
+	letter-spacing: 0.02em;
+}
+
+.grim-more summary::-webkit-details-marker {
+	display: none;
+}
+
+.grim-more summary::before {
+	content: "▸ ";
+	color: var(--d-gold);
+}
+
+.grim-more[open] summary::before {
+	content: "▾ ";
+}
+
+.grim-more .spells {
+	margin-top: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.grim-wrap,
+	.grimoire,
+	.grim-glyph,
+	.grim-toggle {
+		transition: none;
+	}
+}
+
+@media (max-width: 40rem) {
+	.work-facts {
+		flex-wrap: wrap;
+	}
+
+	.grimoire {
+		margin: 0.4rem 0.35rem 0.4rem;
+		padding: 1.1rem 0.9rem 1rem;
+	}
+
+	.spell {
+		grid-template-columns: 1.7rem minmax(0, 1fr);
+		column-gap: 0.6rem;
+	}
+
+	.spell .cmd-text {
+		font-size: 0.82rem;
+	}
+}

@@ -80,4 +80,37 @@ describe("entryToApi", () => {
 			}).artifact_type,
 		).toBe("dataset");
 	});
+
+	it("exposes gated, parameters, and dominant_dtype from the digest, null when unknown", () => {
+		const base = {
+			id: 1,
+			source: "huggingface:meta-llama/Llama-3.1-8B",
+			revision: "",
+			include_json: null,
+			desire: 3,
+			note: null,
+			status: "want",
+			holders: "",
+			added: "2026-08-26T18:04:11+00:00",
+			payload_bytes: 10,
+			estimate_json: null,
+		};
+		const bare = entryToApi(base);
+		expect(bare.gated).toBeNull();
+		expect(bare.parameters).toBeNull();
+		expect(bare.dominant_dtype).toBeNull();
+		const rich = entryToApi({
+			...base,
+			estimate_json: JSON.stringify({
+				artifact_type: "model",
+				gated: true,
+				parameters: 8_030_261_248,
+				dominant_dtype: "BF16",
+				as_of: "2026-08-26T18:04:11+00:00",
+			}),
+		});
+		expect(rich.gated).toBe(true);
+		expect(rich.parameters).toBe(8_030_261_248);
+		expect(rich.dominant_dtype).toBe("BF16");
+	});
 });

@@ -132,5 +132,10 @@ export function entryToApi(e: EntryRow) {
 		added: e.added,
 		payload_bytes: e.payload_bytes,
 		artifact_type: est?.artifact_type ?? artifactTypeFromSource(e.source),
+		// Digest facts the board reads to pick recipes for a row. Same fetch as
+		// the board itself; the catalog.json export is unchanged.
+		gated: typeof est?.gated === "boolean" ? est.gated : null,
+		parameters: typeof est?.parameters === "number" ? est.parameters : null,
+		dominant_dtype: typeof est?.dominant_dtype === "string" ? est.dominant_dtype : null,
 	};
 }

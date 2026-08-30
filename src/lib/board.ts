@@ -1,4 +1,5 @@
 import { artifactTypeFromSource, hfUrlFromCanonical } from "../worker/sources.ts";
+import { deriveRecipes, humanSize, type Recipe } from "./recipes.ts";
 import {
 	DEFAULT_DIAL_INDICES,
 	GAUGE_META,
@@ -27,6 +28,9 @@ type Entry = {
 	added: string;
 	payload_bytes: number | null;
 	artifact_type?: string | null;
+	gated?: boolean | null;
+	parameters?: number | null;
+	dominant_dtype?: string | null;
 };
 
 type Board = {
@@ -54,18 +58,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
 	return n;
 }
 
-function humanSize(n: number | null): string {
-	if (n === null || n === undefined) return "—";
-	if (n < 1024) return `${n} B`;
-	const units = ["KiB", "MiB", "GiB", "TiB"];
-	let v = n / 1024;
-	let i = 0;
-	while (v >= 1024 && i < units.length - 1) {
-		v /= 1024;
-		i += 1;
-	}
-	return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
-}
 
 function fitTextarea(n: HTMLTextAreaElement) {
 	n.style.height = "auto";
@@ -97,6 +89,57 @@ function flashCopied(btn: HTMLButtonElement) {
 		btn.textContent = prev;
 		btn.classList.remove("is-copied");
 	}, 1600);
+}
+
+function selectContents(node: Node) {
+	const sel = window.getSelection();
+	if (!sel) return;
+	const range = document.createRange();
+	range.selectNodeContents(node);
+	sel.removeAllRanges();
+	sel.addRange(range);
+}
+
+function isMac(): boolean {
+	return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+}
+
+/** Copy; where the clipboard is unavailable, select the text and name the key instead. */
+async function copyOrSelect(btn: HTMLButtonElement, text: string, node: Node) {
+	if (await copyText(text)) {
+		flashCopied(btn);
+		return;
+	}
+	selectContents(node);
+	const prev = btn.textContent;
+	btn.textContent = isMac() ? "Selected · ⌘C" : "Selected · Ctrl+C";
+	btn.classList.add("is-copied");
+	window.setTimeout(() => {
+		btn.textContent = prev;
+		btn.classList.remove("is-copied");
+	}, 2400);
+}
+
+const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
+
+function termDots(): HTMLElement {
+	return el("span", { class: "cmd-dots", "aria-hidden": "true" }, el("span"), el("span"), el("span"));
+}
+
+/** Shell lines as text nodes; a trailing `# comment` gets a dimmer span. Never HTML. */
+function codeLines(lines: string[]): HTMLElement {
+	const code = el("code", { class: "cmd-text" });
+	lines.forEach((line, i) => {
+		if (i > 0) code.append("\n");
+		const m = /^(\s*)(#.*)$/.exec(line) ?? /^(.*?\S)(\s+#.*)$/.exec(line);
+		if (m) {
+			if (m[1]) code.append(m[1]);
+			code.append(el("span", { class: "cmd-comment" }, m[2]));
+		} else if (line) {
+			code.append(line);
+		}
+	});
+	return code;
 }
 
 async function api(path: string, init?: RequestInit) {
@@ -239,6 +282,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	let howOpen = true;
 	let archiveLive: { cmd: HTMLElement; caption: HTMLElement; gauges: GaugeRef[] } | null = null;
 	let installLive: HTMLElement | null = null;
+	const openRecipes = new Set<number>();
 
 	async function patchBoard(body: Record<string, unknown>) {
 		try {
@@ -354,9 +398,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 		const cmd = el("code", { class: "cmd-text", "aria-live": "polite" }, currentCommand());
 		const copy = el("button", { type: "button", class: "btn compact cmd-copy" }, "Copy");
-		copy.addEventListener("click", async () => {
-			if (await copyText(currentCommand())) flashCopied(copy);
-		});
+		copy.addEventListener("click", () => void copyOrSelect(copy, currentCommand(), cmd));
 		const chrome = el(
 			"div",
 			{ class: "cmd-chrome" },
@@ -475,6 +517,79 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		return section;
 	}
 
+	function spellList(recipes: Recipe[], offset: number): HTMLElement {
+		const ol = el("ol", { class: "spells" });
+		recipes.forEach((r, i) => {
+			const text = r.lines.join("\n");
+			const code = codeLines(r.lines);
+			const copy = el("button", { type: "button", class: "btn compact cmd-copy" }, "Copy");
+			copy.addEventListener("click", () => void copyOrSelect(copy, text, code));
+			const stage = el(
+				"div",
+				{ class: "cmd-stage" },
+				el("div", { class: "cmd-chrome" }, termDots(), el("span", { class: "cmd-label" }, r.label), copy),
+				el("pre", {}, code),
+			);
+			const foot = el("p", { class: "spell-foot" });
+			if (r.doc) {
+				foot.append(
+					el("a", { class: "spell-doc", href: r.doc.href, target: "_blank", rel: "noreferrer" }, r.doc.label),
+				);
+			}
+			if (r.download) {
+				const dl = el(
+					"button",
+					{ type: "button", class: "btn compact secondary spell-dl" },
+					`Download ${board.catalog_id}.json`,
+				);
+				dl.addEventListener("click", () => downloadCatalog());
+				foot.append(dl);
+			}
+			const li = el(
+				"li",
+				{ class: "spell" },
+				el("span", { class: "spell-n", "aria-hidden": "true" }, ROMAN[offset + i] ?? String(offset + i + 1)),
+				el("h4", {}, r.title),
+				el("p", { class: "spell-why" }, r.why),
+				stage,
+			);
+			if (foot.childNodes.length) li.append(foot);
+			ol.append(li);
+		});
+		return ol;
+	}
+
+	/** The recipe card for one entry. Static: derived from the row's fields, no fetch. */
+	function buildGrimoire(e: Entry): Node[] {
+		const set = deriveRecipes(e, board.catalog_id);
+		const facts = el("ul", { class: "grim-facts" });
+		for (const f of set.facts) facts.append(el("li", {}, f));
+		const head = el(
+			"header",
+			{ class: "grim-head" },
+			el(
+				"p",
+				{ class: "grim-kicker" },
+				el("span", { "aria-hidden": "true" }, "✦ "),
+				"Recipes for ",
+				el("span", { class: "grim-source" }, e.source),
+			),
+			el("h3", { class: "grim-title" }, set.headline),
+			facts,
+			el("p", { class: "grim-verdict" }, set.verdict),
+		);
+		const out: Node[] = [head, spellList(set.hero, 0)];
+		if (set.more.length) {
+			const more = el("details", { class: "grim-more" });
+			more.append(
+				el("summary", {}, set.more.length === 1 ? "One more way" : `${set.more.length} more ways`),
+				spellList(set.more, set.hero.length),
+			);
+			out.push(more);
+		}
+		return out;
+	}
+
 	function renderEntry(e: Entry): HTMLElement {
 		const card = el("article", { class: "work-card" });
 		const src = el("div", { class: "work-id" });
@@ -495,6 +610,51 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			facts.append(el("span", { class: "muted" }, "—"));
 		}
 		facts.append(el("span", { class: "work-size" }, humanSize(e.payload_bytes)));
+
+		const open = openRecipes.has(e.id);
+		const region = el("section", {
+			class: "grimoire",
+			id: `grim-${e.id}`,
+			"aria-label": `Recipes for ${e.source}`,
+		});
+		const wrap = el(
+			"div",
+			{ class: open ? "grim-wrap is-open" : "grim-wrap" },
+			el("div", { class: "grim-clip" }, region),
+		);
+		if (!open) wrap.setAttribute("inert", "");
+		let built = false;
+		const ensureBuilt = () => {
+			if (built) return;
+			built = true;
+			region.append(...buildGrimoire(e));
+		};
+		if (open) ensureBuilt();
+		const toggle = el(
+			"button",
+			{
+				type: "button",
+				class: "grim-toggle",
+				"aria-expanded": open ? "true" : "false",
+				"aria-controls": region.id,
+			},
+			el("span", { class: "grim-glyph", "aria-hidden": "true" }, "✦"),
+			el("span", {}, "Recipes"),
+		);
+		toggle.addEventListener("click", () => {
+			const now = !openRecipes.has(e.id);
+			if (now) {
+				openRecipes.add(e.id);
+				ensureBuilt();
+				wrap.removeAttribute("inert");
+			} else {
+				openRecipes.delete(e.id);
+				wrap.setAttribute("inert", "");
+			}
+			toggle.setAttribute("aria-expanded", now ? "true" : "false");
+			wrap.classList.toggle("is-open", now);
+		});
+		facts.append(toggle);
 
 		const note = area(
 			{
@@ -559,6 +719,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			el("div", { class: "work-top" }, src, facts),
 			el("label", { class: "work-note-wrap" }, el("span", { class: "work-note-kicker" }, "Note"), note),
 			bar,
+			wrap,
 		);
 		return card;
 	}
