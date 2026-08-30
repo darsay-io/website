@@ -26,11 +26,8 @@ export const DOCS = {
 		href: "/docs/examples/#pause-and-resume-a-large-archive",
 		label: "Cookbook → Pause and resume",
 	},
-	// `assemble --move` shipped in the CLI after the docs pin in docs.lock.json.
-	// Point at main until /docs/incremental/ carries the section, then switch to
-	// "/docs/incremental/#across-disks-assemble---move-and-skeletons".
 	halves: {
-		href: "https://github.com/darsay-io/darsay/blob/main/docs/INCREMENTAL.md#across-disks-assemble---move-and-skeletons",
+		href: "/docs/incremental/#across-disks-assemble---move-and-skeletons",
 		label: "Design → assemble --move and skeletons",
 	},
 	subset: {

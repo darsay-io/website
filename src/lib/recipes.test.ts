@@ -192,7 +192,7 @@ describe("deriveRecipes", () => {
 		expect(halves.lines).toContain("darsay archive huggingface:Qwen/Qwen3-235B-A22B --max-gb 220");
 		expect(halves.lines).toContain("darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3-235b-a22b/<rev> --move");
 		expect(halves.lines.filter((l) => l.includes("--move"))).toHaveLength(2);
-		expect(halves.doc?.href).toContain("INCREMENTAL.md#across-disks-assemble---move-and-skeletons");
+		expect(halves.doc?.href).toBe("/docs/incremental/#across-disks-assemble---move-and-skeletons");
 		const shards = set.hero[3];
 		expect(text([shards])).toContain("--shard 1/2 --max-gb 20");
 		expect(text([shards])).toContain("--shard 2/2 --max-gb 20");
