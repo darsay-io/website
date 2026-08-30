@@ -39,7 +39,8 @@ unique prefix. `darsay du` is disk use of bundles and `.runtime` only
 The vault is yours to rsync, restic, or put on a shelf.
 
 `config.toml` is operator preference, not archival fact — for example the
-free-space floor an archive pauses at. A vault-level file travels with an
+free-space floor an archive pauses at, a bandwidth cap, or how long to
+wait for a lost network. A vault-level file travels with an
 archive drive; `~/.config/darsay/config.toml` applies to every vault on a
 machine. `darsay config` shows what applies and why.
 [Incremental transfer](/docs/incremental/#6-session-budgets).
@@ -101,6 +102,14 @@ chase a moving `main`. To take a new snapshot, `--force` pins again.
 
 That is why resume works without a special subcommand, and why a 50 GB
 job can be ten evenings of `--max-gb 10`.
+
+A **skeleton** is a partial pin whose verified bytes have been handed to
+another vault (`assemble --move`): the pin and every recorded hash stay,
+the payload does not. It is how one pin crosses two disks that never mount
+together — fetch a half where there is bandwidth, hand it to the disk with
+the room, then fetch the rest without re-downloading what you carried over.
+The next `archive` fetches only what no vault has yet.
+[Incremental transfer](/docs/incremental/#across-disks-assemble---move-and-skeletons).
 
 ## Payload vs metadata
 
