@@ -31,6 +31,17 @@ type Entry = {
 	gated?: boolean | null;
 	parameters?: number | null;
 	dominant_dtype?: string | null;
+	hints?: string[];
+	policy?: string | null;
+	claim?: {
+		client: string;
+		state: "archiving" | "paused" | "done";
+		percent: number | null;
+		banked_bytes: number | null;
+		total_bytes: number | null;
+		claimed_at: string;
+		updated: string;
+	} | null;
 };
 
 type Board = {
@@ -590,6 +601,41 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		return out;
 	}
 
+	/** The % complete gauge for a row a client has claimed and is fetching. */
+	function renderClaim(e: Entry): HTMLElement | null {
+		const claim = e.claim;
+		if (!claim || claim.state === "done") return null;
+		let pct = typeof claim.percent === "number" ? claim.percent : null;
+		if (pct === null && claim.banked_bytes !== null && claim.total_bytes) {
+			pct = Math.floor((claim.banked_bytes / claim.total_bytes) * 100);
+		}
+		const clamped = pct === null ? null : Math.max(0, Math.min(100, pct));
+		const fill = el("div", { class: "claim-fill" });
+		fill.style.width = `${clamped ?? 4}%`;
+		const track = el(
+			"div",
+			{
+				class: clamped === null ? "claim-track claim-indeterminate" : "claim-track",
+				role: "progressbar",
+				"aria-label": `Archive progress for ${e.source}`,
+				...(clamped === null ? {} : { "aria-valuenow": String(clamped), "aria-valuemin": "0", "aria-valuemax": "100" }),
+			},
+			fill,
+		);
+		const verb = claim.state === "paused" ? "paused at" : "fetching";
+		const bytes =
+			claim.banked_bytes !== null && claim.total_bytes
+				? ` · ${humanSize(claim.banked_bytes)} of ${humanSize(claim.total_bytes)}`
+				: "";
+		const label = el(
+			"div",
+			{ class: "claim-label" },
+			el("span", { class: "claim-client" }, claim.client),
+			el("span", {}, ` ${verb}${clamped === null ? "" : ` ${clamped}%`}${bytes}`),
+		);
+		return el("div", { class: "claim-gauge" }, track, label);
+	}
+
 	function renderEntry(e: Entry): HTMLElement {
 		const card = el("article", { class: "work-card" });
 		const src = el("div", { class: "work-id" });
@@ -610,6 +656,12 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			facts.append(el("span", { class: "muted" }, "—"));
 		}
 		facts.append(el("span", { class: "work-size" }, humanSize(e.payload_bytes)));
+		if (e.policy) {
+			facts.append(el("span", { class: "policy-chip", title: "Priced as the masters-first acquisition" }, e.policy));
+		}
+		for (const hint of e.hints ?? []) {
+			facts.append(el("span", { class: "hint-chip" }, hint));
+		}
 
 		const open = openRecipes.has(e.id);
 		const region = el("section", {
@@ -715,8 +767,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			rm,
 		);
 
+		const claimRow = renderClaim(e);
 		card.append(
 			el("div", { class: "work-top" }, src, facts),
+			...(claimRow ? [claimRow] : []),
 			el("label", { class: "work-note-wrap" }, el("span", { class: "work-note-kicker" }, "Note"), note),
 			bar,
 			wrap,

@@ -12,6 +12,12 @@ export const MAX_INCLUDE_GLOB = 80;
 export const MAX_INCLUDES = 8;
 export const MAX_ENTRIES = 200;
 export const MAX_BODY = 64 * 1024;
+// A pushed catalog carries digests for up to MAX_ENTRIES rows.
+export const MAX_IMPORT_BODY = 256 * 1024;
+export const MAX_CLIENT = 80;
+// An active claim by another client blocks a new claim until it goes
+// stale (no progress report inside the TTL) or reports done.
+export const CLAIM_TTL_MS = 24 * 60 * 60 * 1000;
 export const CREATE_CAP = 100;
 export const MUTATE_CAP = 10_000;
 export const LOOKUP_CAP = 50_000;

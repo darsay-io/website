@@ -1,11 +1,14 @@
 import { Hono } from "hono";
-import { exportCatalog, entryToApi, type BoardRow, type EntryRow } from "./catalog.ts";
+import { exportCatalog, entryToApi, parseClaim, sanitizeDigest, type BoardRow, type EntryRow } from "./catalog.ts";
 import { fetchEstimate } from "./estimate.ts";
 import { canonicalizeSource, type HfCanonical } from "./sources.ts";
 import {
+	CLAIM_TTL_MS,
 	CREATE_CAP,
 	LOOKUP_CAP,
 	MAX_BODY,
+	MAX_CLIENT,
+	MAX_IMPORT_BODY,
 	MAX_BOARD_NOTE,
 	MAX_CURATOR,
 	MAX_ENTRIES,
@@ -16,6 +19,7 @@ import {
 	MAX_TITLE,
 	MUTATE_CAP,
 	clampStr,
+	foldSlug,
 	includeJson,
 	includeKey,
 	isBoardId,
@@ -73,7 +77,7 @@ function idPrefix(id: string): string {
 	return id.slice(0, 8);
 }
 
-async function readJson(c: { req: { raw: Request } }): Promise<
+async function readJson(c: { req: { raw: Request } }, max = MAX_BODY): Promise<
 	{ ok: true; body: Record<string, unknown> } | { ok: false; status: number; error: string }
 > {
 	const ct = c.req.raw.headers.get("content-type") || "";
@@ -84,7 +88,7 @@ async function readJson(c: { req: { raw: Request } }): Promise<
 		return { ok: false, status: 415, error: "json required" };
 	}
 	const buf = await c.req.raw.arrayBuffer();
-	if (buf.byteLength > MAX_BODY) return { ok: false, status: 413, error: "body too large" };
+	if (buf.byteLength > max) return { ok: false, status: 413, error: "body too large" };
 	if (buf.byteLength === 0) return { ok: true, body: {} };
 	let parsed: unknown;
 	try {
@@ -265,7 +269,156 @@ async function catalogResponse(c: { env: Env; req: { param: (k: string) => strin
 }
 
 app.get("/boards/:id/catalog.json", catalogResponse);
-app.post("/boards/:id/catalog.json", catalogResponse);
+
+// The CLI round trip: darsay fetches catalog.json, refreshes it with
+// classification (the part only the CLI can compute), and POSTs the
+// refreshed document back. Import is authoritative for catalog facts —
+// entries, desire, note, digests — and never touches the board-only
+// claims; status and holders survive on rows the import keeps.
+app.post("/boards/:id/catalog.json", async (c) => {
+	const boardId = c.req.param("id");
+	const board = await loadBoard(c.env.DB, boardId);
+	if (!board) return jsonError(c, "not_found", 404);
+	const parsed = await readJson(c, MAX_IMPORT_BODY);
+	if (!parsed.ok) return jsonError(c, parsed.error, parsed.status);
+	const body = parsed.body;
+	if (body.kind !== "darsay.catalog") return jsonError(c, "not a catalog", 400);
+	const version = String(body.catalog_schema_version ?? "");
+	if (!/^1\./.test(version)) return jsonError(c, "unsupported catalog schema", 400);
+	if (typeof body.id === "string" && foldSlug(body.id) !== board.catalog_id) {
+		return jsonError(c, "catalog_id mismatch", 409);
+	}
+	const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+	if (rawEntries.length > MAX_ENTRIES) return jsonError(c, "entry_cap", 400);
+	const title = clampStr(body.title ?? board.title, MAX_TITLE);
+	const curator = clampStr(body.curator ?? "", MAX_CURATOR);
+	const note = clampStr(body.note ?? "", MAX_BOARD_NOTE);
+	if (title === null || curator === null || note === null) {
+		return jsonError(c, "field too long", 400);
+	}
+
+	type Incoming = {
+		canonical: string;
+		revision: string;
+		includeJson: string | null;
+		includeKey: string;
+		desire: number | null;
+		note: string | null;
+		digest: string | null;
+		payloadBytes: number | null;
+	};
+	const incoming: Incoming[] = [];
+	const seen = new Set<string>();
+	for (const raw of rawEntries) {
+		if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+			return jsonError(c, "invalid entry", 400);
+		}
+		const entry = raw as Record<string, unknown>;
+		if (typeof entry.source !== "string" || entry.source.length > MAX_SOURCE) {
+			return jsonError(c, "invalid source", 400);
+		}
+		const src = canonicalizeSource(entry.source);
+		if (src.kind === "error") return jsonError(c, src.error, 400);
+		const revIn = entry.revision === undefined || entry.revision === null ? "" : entry.revision;
+		if (typeof revIn !== "string" || revIn.length > MAX_REVISION) {
+			return jsonError(c, "invalid revision", 400);
+		}
+		const inc = parseInclude(entry.include);
+		if (!inc.ok) return jsonError(c, inc.error, 400);
+		const des = parseDesire(entry.desire);
+		if (!des.ok) return jsonError(c, des.error, 400);
+		const entryNote = clampStr(entry.note ?? "", MAX_ENTRY_NOTE);
+		if (entryNote === null) return jsonError(c, "field too long", 400);
+		const digest = sanitizeDigest(entry.estimate);
+		const payloadBytes =
+			digest && typeof digest.payload_bytes === "number" ? digest.payload_bytes : null;
+		const key = includeKey(inc.include);
+		const identity = `${src.canonical}\u0000${revIn}\u0000${key}`;
+		if (seen.has(identity)) return jsonError(c, "duplicate entry", 400);
+		seen.add(identity);
+		incoming.push({
+			canonical: src.canonical,
+			revision: revIn,
+			includeJson: includeJson(inc.include),
+			includeKey: key,
+			desire: des.desire,
+			note: entryNote || null,
+			digest: digest ? JSON.stringify(digest) : null,
+			payloadBytes,
+		});
+	}
+
+	const { n: mutN, today } = await readCap(c.env.DB, "mutates");
+	if (mutN >= MUTATE_CAP) return jsonError(c, "mutate_cap", 429);
+	const now = utcNow();
+	const existing = await loadEntries(c.env.DB, boardId);
+	const byIdentity = new Map<string, EntryRow>();
+	for (const e of existing) {
+		byIdentity.set(`${e.source}\u0000${e.revision}\u0000${e.include_key}`, e);
+	}
+
+	let added = 0;
+	let updated = 0;
+	const keep = new Set<number>();
+	const stmts = [
+		...capStmts(c.env.DB, "mutates", today, mutN + 1),
+		c.env.DB
+			.prepare("UPDATE boards SET title = ?, curator = ?, note = ?, catalog_id = ?, updated = ? WHERE id = ?")
+			.bind(title || board.title, curator || null, note || null, board.catalog_id, now, boardId),
+	];
+	for (const row of incoming) {
+		const identity = `${row.canonical}\u0000${row.revision}\u0000${row.includeKey}`;
+		const match = byIdentity.get(identity);
+		if (match) {
+			keep.add(match.id);
+			updated += 1;
+			stmts.push(
+				c.env.DB
+					.prepare(
+						"UPDATE entries SET note = ?, desire = ?, payload_bytes = ?, estimate_json = ? WHERE id = ?",
+					)
+					.bind(row.note, row.desire, row.payloadBytes, row.digest ?? match.estimate_json, match.id),
+			);
+		} else {
+			added += 1;
+			stmts.push(
+				c.env.DB
+					.prepare(
+						`INSERT INTO entries (board_id, source, revision, include_json, include_key, desire, note, status, holders, added, payload_bytes, estimate_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					)
+					.bind(
+						boardId,
+						row.canonical,
+						row.revision,
+						row.includeJson,
+						row.includeKey,
+						row.desire,
+						row.note,
+						"want",
+						"",
+						now,
+						row.payloadBytes,
+						row.digest,
+					),
+			);
+		}
+	}
+	let removed = 0;
+	for (const e of existing) {
+		if (!keep.has(e.id)) {
+			removed += 1;
+			stmts.push(c.env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(e.id));
+		}
+	}
+	try {
+		await c.env.DB.batch(stmts);
+	} catch (err) {
+		if (/UNIQUE/i.test(String(err))) return jsonError(c, "conflict", 409);
+		return jsonError(c, "quota", 503);
+	}
+	return c.json({ ok: true, added, updated, removed, entries: incoming.length });
+});
 
 app.post("/boards/:id/entries", async (c) => {
 	const boardId = c.req.param("id");
@@ -527,6 +680,101 @@ app.patch("/boards/:id/entries/:eid", async (c) => {
 	} catch {
 		return jsonError(c, "quota", 503);
 	}
+	const row = await c.env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(eid).first<EntryRow>();
+	return c.json(entryToApi(row!));
+});
+
+// A claim is board-side coordination, like status and holders: "this
+// client is fetching this row". The CLI claims before archiving and
+// reports progress at boundaries; the board renders the gauge. A live
+// claim by another client blocks a new one until it goes stale
+// (CLAIM_TTL_MS without a report) or reports done; force overrides.
+app.post("/boards/:id/entries/:eid/claim", async (c) => {
+	const boardId = c.req.param("id");
+	const eid = Number(c.req.param("eid"));
+	if (!Number.isInteger(eid)) return jsonError(c, "not_found", 404);
+	const board = await loadBoard(c.env.DB, boardId);
+	if (!board) return jsonError(c, "not_found", 404);
+	const existing = await c.env.DB
+		.prepare("SELECT * FROM entries WHERE id = ? AND board_id = ?")
+		.bind(eid, boardId)
+		.first<EntryRow>();
+	if (!existing) return jsonError(c, "not_found", 404);
+	const parsed = await readJson(c);
+	if (!parsed.ok) return jsonError(c, parsed.error, parsed.status);
+	const client = clampStr(parsed.body.client, MAX_CLIENT, false);
+	if (!client) return jsonError(c, "client required", 400);
+	const state =
+		parsed.body.state === "paused" || parsed.body.state === "done"
+			? parsed.body.state
+			: "archiving";
+	const num = (v: unknown) =>
+		typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null;
+	const percentRaw = num(parsed.body.percent);
+	const percent = percentRaw === null ? null : Math.min(100, percentRaw);
+
+	const current = parseClaim(existing.claim_json);
+	const now = utcNow();
+	if (current && current.client !== client && current.state !== "done" && parsed.body.force !== true) {
+		const updatedAt = Date.parse(current.updated || current.claimed_at);
+		const live = Number.isFinite(updatedAt) && Date.now() - updatedAt < CLAIM_TTL_MS;
+		if (live) return c.json({ error: "claimed", claim: current }, 409);
+	}
+	const claim = {
+		client,
+		state,
+		percent,
+		banked_bytes: num(parsed.body.banked_bytes),
+		total_bytes: num(parsed.body.total_bytes),
+		claimed_at: current && current.client === client ? current.claimed_at || now : now,
+		updated: now,
+	};
+	// Reporting done is the one place the client writes the human columns:
+	// the row flips to have, and an empty holders field learns the client.
+	const status = state === "done" ? "have" : existing.status;
+	const holders = state === "done" && !existing.holders ? client : existing.holders;
+
+	const { n: mutN, today } = await readCap(c.env.DB, "mutates");
+	if (mutN >= MUTATE_CAP) return jsonError(c, "mutate_cap", 429);
+	await c.env.DB.batch([
+		...capStmts(c.env.DB, "mutates", today, mutN + 1),
+		c.env.DB
+			.prepare("UPDATE entries SET claim_json = ?, status = ?, holders = ? WHERE id = ?")
+			.bind(JSON.stringify(claim), status, holders, eid),
+		c.env.DB.prepare("UPDATE boards SET updated = ? WHERE id = ?").bind(now, boardId),
+	]);
+	const row = await c.env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(eid).first<EntryRow>();
+	return c.json(entryToApi(row!));
+});
+
+app.delete("/boards/:id/entries/:eid/claim", async (c) => {
+	const boardId = c.req.param("id");
+	const eid = Number(c.req.param("eid"));
+	if (!Number.isInteger(eid)) return jsonError(c, "not_found", 404);
+	const board = await loadBoard(c.env.DB, boardId);
+	if (!board) return jsonError(c, "not_found", 404);
+	const existing = await c.env.DB
+		.prepare("SELECT * FROM entries WHERE id = ? AND board_id = ?")
+		.bind(eid, boardId)
+		.first<EntryRow>();
+	if (!existing) return jsonError(c, "not_found", 404);
+	const parsed = await readJson(c);
+	if (!parsed.ok) return jsonError(c, parsed.error, parsed.status);
+	const client = clampStr(parsed.body.client, MAX_CLIENT, false);
+	const current = parseClaim(existing.claim_json);
+	if (current && client !== current.client && parsed.body.force !== true) {
+		return c.json({ error: "claimed", claim: current }, 409);
+	}
+	const { n: mutN, today } = await readCap(c.env.DB, "mutates");
+	if (mutN >= MUTATE_CAP) return jsonError(c, "mutate_cap", 429);
+	const now = utcNow();
+	await c.env.DB.batch([
+		...capStmts(c.env.DB, "mutates", today, mutN + 1),
+		c.env.DB
+			.prepare("UPDATE entries SET claim_json = ?, status = ?, holders = ? WHERE id = ?")
+			.bind(null, existing.status, existing.holders, eid),
+		c.env.DB.prepare("UPDATE boards SET updated = ? WHERE id = ?").bind(now, boardId),
+	]);
 	const row = await c.env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(eid).first<EntryRow>();
 	return c.json(entryToApi(row!));
 });

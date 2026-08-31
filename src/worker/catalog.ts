@@ -24,6 +24,10 @@ export const DIGEST_KEYS = [
 	"parameters",
 	"dominant_dtype",
 	"unknown_size_count",
+	// Since catalog schema 1.2.0 (darsay 0.14.4): the closed hint
+	// vocabulary and the masters-policy marker, written by the CLI.
+	"hints",
+	"policy",
 ] as const;
 
 export type EstimateDigest = {
@@ -38,6 +42,18 @@ export type EstimateDigest = {
 	parameters: number | null;
 	dominant_dtype: string | null;
 	unknown_size_count: number | null;
+	hints?: string[];
+	policy?: string | null;
+};
+
+export type Claim = {
+	client: string;
+	state: "archiving" | "paused" | "done";
+	percent: number | null;
+	banked_bytes: number | null;
+	total_bytes: number | null;
+	claimed_at: string;
+	updated: string;
 };
 
 export type BoardRow = {
@@ -62,7 +78,58 @@ export type EntryRow = {
 	added: string;
 	payload_bytes: number | null;
 	estimate_json: string | null;
+	claim_json: string | null;
 };
+
+const MAX_DIGEST_STRING = 200;
+const MAX_HINTS = 16;
+const MAX_HINT = 40;
+
+/** A digest from an untrusted import: project DIGEST_KEYS, drop bad leaves. */
+export function sanitizeDigest(raw: unknown): EstimateDigest | null {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const obj = raw as Record<string, unknown>;
+	const out: Record<string, unknown> = {};
+	for (const k of DIGEST_KEYS) {
+		if (!(k in obj)) continue;
+		const v = obj[k];
+		if (v === null) {
+			out[k] = null;
+		} else if (k === "hints") {
+			if (Array.isArray(v)) {
+				out[k] = v
+					.filter((h): h is string => typeof h === "string" && h.length > 0 && h.length <= MAX_HINT)
+					.slice(0, MAX_HINTS);
+			}
+		} else if (typeof v === "boolean" || typeof v === "number") {
+			out[k] = v;
+		} else if (typeof v === "string" && v.length <= MAX_DIGEST_STRING) {
+			out[k] = v;
+		}
+	}
+	return Object.keys(out).length ? (out as EstimateDigest) : null;
+}
+
+export function parseClaim(raw: string | null): Claim | null {
+	if (!raw) return null;
+	try {
+		const obj = JSON.parse(raw) as Record<string, unknown>;
+		if (typeof obj.client !== "string" || !obj.client) return null;
+		const state = obj.state === "paused" || obj.state === "done" ? obj.state : "archiving";
+		const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+		return {
+			client: obj.client,
+			state,
+			percent: num(obj.percent),
+			banked_bytes: num(obj.banked_bytes),
+			total_bytes: num(obj.total_bytes),
+			claimed_at: typeof obj.claimed_at === "string" ? obj.claimed_at : "",
+			updated: typeof obj.updated === "string" ? obj.updated : "",
+		};
+	} catch {
+		return null;
+	}
+}
 
 function parseEstimate(raw: string | null): EstimateDigest | null {
 	if (!raw) return null;
@@ -80,7 +147,7 @@ function parseEstimate(raw: string | null): EstimateDigest | null {
 
 export function exportCatalog(board: BoardRow, entries: EntryRow[]): Record<string, unknown> {
 	return {
-		catalog_schema_version: "1.0.0",
+		catalog_schema_version: "1.2.0",
 		kind: "darsay.catalog",
 		id: board.catalog_id,
 		title: board.title || board.catalog_id,
@@ -137,5 +204,8 @@ export function entryToApi(e: EntryRow) {
 		gated: typeof est?.gated === "boolean" ? est.gated : null,
 		parameters: typeof est?.parameters === "number" ? est.parameters : null,
 		dominant_dtype: typeof est?.dominant_dtype === "string" ? est.dominant_dtype : null,
+		hints: Array.isArray(est?.hints) ? est.hints : [],
+		policy: typeof est?.policy === "string" ? est.policy : null,
+		claim: parseClaim(e.claim_json),
 	};
 }

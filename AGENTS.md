@@ -6,7 +6,8 @@ Astro + Starlight + a Cloudflare Worker for anonymous want-list boards.
 - The site never stores model bytes. JSON API only. No R2.
 - Board URL is the capability. No accounts. No Turnstile in v1.
 - `CREATE_PASSWORD` is a Wrangler secret for POST `/api/boards` only. Never put it in git, `wrangler.jsonc` vars, or client JS.
-- `catalog.json` export must stay schema 1.0.0 (no holders/status/GUID).
+- `catalog.json` export is schema 1.2.0 and still carries no holders/status/claims/GUID. POST of the same path imports a catalog document (the darsay CLI round trip): authoritative for entries/desire/note/digests, upsert+prune by (source, revision, include set); board-side fields survive on kept rows.
+- Claims (`claim_json`, `POST/DELETE /api/boards/:id/entries/:eid/claim`) are board-side coordination like holders/status — never exported in catalog.json. Reporting `done` is the one client write to human columns (status→have; empty holders learns the client).
 - Tests: `npm test`. Build: `PUBLIC_BOARDS_ENABLED=true npm run build`.
 - Do not put a Node toolchain in `darsay/darsay` (the Python CLI repo).
 - Provisioning is Wrangler + `ops/RUNBOOK.md`. Do not add Terraform, Ansible, or D1 auto-provision (omit `database_id`).

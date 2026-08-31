@@ -26,6 +26,7 @@ type Entry = {
 	added: string;
 	payload_bytes: number | null;
 	estimate_json: string | null;
+	claim_json: string | null;
 };
 
 class FakeD1 {
@@ -247,6 +248,29 @@ class FakeD1 {
 			}
 			return { success: true, meta: { changes: e ? 1 : 0 } };
 		}
+		if (s.startsWith("UPDATE entries SET note")) {
+			const [note, desire, payload_bytes, estimate_json, eid] = binds as [
+				string | null,
+				number | null,
+				number | null,
+				string | null,
+				number,
+			];
+			const e = this.entries.find((row) => row.id === eid);
+			if (e) Object.assign(e, { note, desire, payload_bytes, estimate_json });
+			return { success: true, meta: { changes: e ? 1 : 0 } };
+		}
+		if (s.startsWith("UPDATE entries SET claim_json")) {
+			const [claim_json, status, holders, eid] = binds as [
+				string | null,
+				string,
+				string,
+				number,
+			];
+			const e = this.entries.find((row) => row.id === eid);
+			if (e) Object.assign(e, { claim_json, status, holders });
+			return { success: true, meta: { changes: e ? 1 : 0 } };
+		}
 		if (s.startsWith("DELETE FROM entries")) {
 			const before = this.entries.length;
 			this.entries = this.entries.filter((e) => e.id !== Number(binds[0]));
@@ -308,6 +332,7 @@ class FakeD1 {
 			added,
 			payload_bytes,
 			estimate_json,
+			claim_json: null,
 		};
 		this.entries.push(row);
 		return { success: true, meta: { changes: 1, last_row_id: row.id } };
@@ -436,7 +461,7 @@ describe("boards API", () => {
 		expect(await res.json()).toEqual({ error: "create_cap" });
 	});
 
-	it("canonicalizes HF sources, upserts identity, and exports catalog 1.0.0 without holders", async () => {
+	it("canonicalizes HF sources, upserts identity, and exports catalog 1.2.0 without holders", async () => {
 		const { env: e } = env();
 		const created = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
 		const { id } = (await created.json()) as { id: string };
@@ -466,15 +491,11 @@ describe("boards API", () => {
 		expect(upserted.id).toBe(entry.id);
 		expect(upserted.desire).toBe(8);
 
-		const catRes = await req(e, `/api/boards/${id}/catalog.json`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: "{}",
-		});
+		const catRes = await req(e, `/api/boards/${id}/catalog.json`);
 		expect(catRes.status).toBe(200);
 		expect(catRes.headers.get("Content-Disposition")).toBe('attachment; filename="summer-2026.json"');
 		const cat = (await catRes.json()) as Record<string, unknown>;
-		expect(cat.catalog_schema_version).toBe("1.0.0");
+		expect(cat.catalog_schema_version).toBe("1.2.0");
 		expect(JSON.stringify(cat)).not.toContain("holders");
 		expect(JSON.stringify(cat)).not.toContain(id);
 		expect(JSON.stringify(cat)).not.toMatch(/"status"/);
@@ -674,5 +695,198 @@ describe("boards API", () => {
 		expect(ok.status).toBe(200);
 		expect(Number(db.meta.lookups_n)).toBeGreaterThan(0);
 		expect(Number(db.meta.lookups_n)).toBeLessThan(LOOKUP_CAP);
+	});
+});
+
+
+describe("catalog import (the CLI round trip)", () => {
+	async function boardWithRows(e: Env) {
+		const created = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
+		const { id } = (await created.json()) as { id: string };
+		const one = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "hf:acme/one", desire: 9, status: "have", holders: "external SSD (2TB)" }),
+		});
+		expect(one.status).toBe(201);
+		const two = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "hf:acme/two", desire: 2 }),
+		});
+		expect(two.status).toBe(201);
+		return id;
+	}
+
+	function importDoc(over: Record<string, unknown> = {}) {
+		return {
+			method: "POST" as const,
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				catalog_schema_version: "1.2.0",
+				kind: "darsay.catalog",
+				id: "summer-2026",
+				title: "Summer 2026",
+				entries: [
+					{
+						source: "huggingface:acme/one",
+						revision: null,
+						include: null,
+						desire: 5,
+						note: "reclassified",
+						estimate: {
+							as_of: "2026-09-01T00:00:00+00:00",
+							artifact_type: "model",
+							payload_bytes: 111_140_000_000,
+							gated: false,
+							parameters: 27_781_427_952,
+							dominant_dtype: "BF16",
+							hints: ["large", "redundant"],
+							policy: "masters",
+							extra: "drop me",
+						},
+					},
+					{ source: "huggingface:acme/three", desire: 7 },
+				],
+				...over,
+			}),
+		};
+	}
+
+	it("upserts by identity, prunes, keeps board-side fields, stores CLI digests", async () => {
+		const { env: e } = env();
+		const id = await boardWithRows(e);
+		const res = await req(e, `/api/boards/${id}/catalog.json`, importDoc());
+		expect(res.status).toBe(200);
+		const out = (await res.json()) as Record<string, unknown>;
+		expect(out).toMatchObject({ ok: true, added: 1, updated: 1, removed: 1, entries: 2 });
+
+		const board = (await (await req(e, `/api/boards/${id}`)).json()) as {
+			entries: Array<Record<string, unknown>>;
+		};
+		const sources = board.entries.map((x) => x.source).sort();
+		expect(sources).toEqual(["huggingface:acme/one", "huggingface:acme/three"]);
+		const one = board.entries.find((x) => x.source === "huggingface:acme/one")!;
+		// Catalog facts came from the import; board-side facts survived.
+		expect(one.desire).toBe(5);
+		expect(one.note).toBe("reclassified");
+		expect(one.payload_bytes).toBe(111_140_000_000);
+		expect(one.hints).toEqual(["large", "redundant"]);
+		expect(one.policy).toBe("masters");
+		expect(one.status).toBe("have");
+		expect(one.holders).toBe("external SSD (2TB)");
+		const three = board.entries.find((x) => x.source === "huggingface:acme/three")!;
+		expect(three.status).toBe("want");
+	});
+
+	it("rejects a catalog_id mismatch and non-catalog bodies", async () => {
+		const { env: e } = env();
+		const id = await boardWithRows(e);
+		const wrong = await req(e, `/api/boards/${id}/catalog.json`, importDoc({ id: "someone-elses" }));
+		expect(wrong.status).toBe(409);
+		const notCat = await req(e, `/api/boards/${id}/catalog.json`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
+		});
+		expect(notCat.status).toBe(400);
+	});
+});
+
+describe("claims", () => {
+	async function boardWithEntry(e: Env) {
+		const created = await req(e, "/api/boards", postBoard({ title: "x" }));
+		const { id } = (await created.json()) as { id: string };
+		const add = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "hf:acme/one" }),
+		});
+		const entry = (await add.json()) as { id: number };
+		return { id, eid: entry.id };
+	}
+
+	function claim(body: Record<string, unknown>) {
+		return {
+			method: "POST" as const,
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		};
+	}
+
+	it("claims, reports progress, and flips have on done", async () => {
+		const { env: e } = env();
+		const { id, eid } = await boardWithEntry(e);
+		const first = await req(e, `/api/boards/${id}/entries/${eid}/claim`, claim({ client: "jeremy-mbp" }));
+		expect(first.status).toBe(200);
+		let row = (await first.json()) as Record<string, any>;
+		expect(row.claim.client).toBe("jeremy-mbp");
+		expect(row.claim.state).toBe("archiving");
+
+		const progress = await req(
+			e,
+			`/api/boards/${id}/entries/${eid}/claim`,
+			claim({ client: "jeremy-mbp", percent: 62, banked_bytes: 62, total_bytes: 100 }),
+		);
+		row = (await progress.json()) as Record<string, any>;
+		expect(row.claim.percent).toBe(62);
+		expect(row.claim.banked_bytes).toBe(62);
+
+		const done = await req(
+			e,
+			`/api/boards/${id}/entries/${eid}/claim`,
+			claim({ client: "jeremy-mbp", state: "done", percent: 100 }),
+		);
+		row = (await done.json()) as Record<string, any>;
+		expect(row.claim.state).toBe("done");
+		expect(row.status).toBe("have");
+		expect(row.holders).toBe("jeremy-mbp");
+	});
+
+	it("blocks a live claim by another client; stale and done claims yield", async () => {
+		const { env: e } = env();
+		const { id, eid } = await boardWithEntry(e);
+		await req(e, `/api/boards/${id}/entries/${eid}/claim`, claim({ client: "jeremy-mbp" }));
+		const blocked = await req(e, `/api/boards/${id}/entries/${eid}/claim`, claim({ client: "usb-carrier" }));
+		expect(blocked.status).toBe(409);
+		const body = (await blocked.json()) as Record<string, any>;
+		expect(body.error).toBe("claimed");
+		expect(body.claim.client).toBe("jeremy-mbp");
+
+		const forced = await req(
+			e,
+			`/api/boards/${id}/entries/${eid}/claim`,
+			claim({ client: "usb-carrier", force: true }),
+		);
+		expect(forced.status).toBe(200);
+
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1000);
+			const stale = await req(e, `/api/boards/${id}/entries/${eid}/claim`, claim({ client: "third" }));
+			expect(stale.status).toBe(200);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("release clears the claim for the claimant only", async () => {
+		const { env: e } = env();
+		const { id, eid } = await boardWithEntry(e);
+		await req(e, `/api/boards/${id}/entries/${eid}/claim`, claim({ client: "jeremy-mbp" }));
+		const wrong = await req(e, `/api/boards/${id}/entries/${eid}/claim`, {
+			method: "DELETE",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ client: "usb-carrier" }),
+		});
+		expect(wrong.status).toBe(409);
+		const ok = await req(e, `/api/boards/${id}/entries/${eid}/claim`, {
+			method: "DELETE",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ client: "jeremy-mbp" }),
+		});
+		expect(ok.status).toBe(200);
+		const row = (await ok.json()) as Record<string, any>;
+		expect(row.claim).toBeNull();
 	});
 });

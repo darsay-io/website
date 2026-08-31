@@ -1451,3 +1451,63 @@ button.btn.bring-download {
 		font-size: 0.82rem;
 	}
 }
+
+/* Digest chips: the CLI's closed hint vocabulary and the masters marker. */
+.hint-chip,
+.policy-chip {
+	font-family: var(--d-mono);
+	font-size: 0.68rem;
+	letter-spacing: 0.04em;
+	padding: 0.12rem 0.45rem;
+	border-radius: 999px;
+	border: 1px solid var(--d-border);
+	color: var(--d-muted);
+	background: rgba(212, 176, 106, 0.06);
+	white-space: nowrap;
+}
+.policy-chip {
+	color: var(--d-ink);
+	background: var(--d-gold);
+	border-color: var(--d-gold-hi);
+	font-weight: 600;
+}
+
+/* The claim gauge: a client is fetching this row; the CLI reports, we glow. */
+.claim-gauge {
+	display: grid;
+	gap: 0.3rem;
+	margin: 0.35rem 0 0.15rem;
+}
+.claim-track {
+	position: relative;
+	height: 8px;
+	border-radius: 999px;
+	border: 1px solid var(--d-border);
+	background: var(--d-bg-raised);
+	overflow: hidden;
+}
+.claim-fill {
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, var(--d-gold) 0%, var(--d-gold-hi) 100%);
+	box-shadow: 0 0 10px rgba(212, 176, 106, 0.45);
+	transition: width 0.6s ease;
+}
+.claim-indeterminate .claim-fill {
+	animation: claim-sweep 1.8s ease-in-out infinite alternate;
+}
+@keyframes claim-sweep {
+	from { margin-left: 0; }
+	to { margin-left: 88%; }
+}
+.claim-label {
+	font-size: 0.74rem;
+	color: var(--d-muted);
+	display: flex;
+	gap: 0.25rem;
+	align-items: baseline;
+}
+.claim-client {
+	font-family: var(--d-mono);
+	color: var(--d-gold);
+}
