@@ -51,6 +51,23 @@ npx wrangler dev    # Worker + local D1 + static assets after `npm run build`
    Local: put `CREATE_PASSWORD=…` in `.dev.vars` (gitignored). If the secret is unset, create returns 503. Board view/edit still uses the URL only.
 10. AI crawler dashboard policy: see [AI crawlers](#ai-crawlers). Product docs Allow; boards stay unlisted via origin `robots.txt` only.
 
+## API clients and bot protection
+
+`/api/**` is a JSON API for non-browser clients: the darsay CLI does its
+board round trip (fetch → classify → push) and claim reports here,
+identifying itself as `User-Agent: darsay/<version> (+https://darsay.io)`.
+Cloudflare's Browser Integrity Check bans the bare `Python-urllib`
+signature (403, error 1010) — darsay ≥ 0.14.6 sends its own UA, verified
+live 2026-08-31. Keep it that way:
+
+- Do **not** enable Bot Fight Mode or Super Bot Fight Mode; they
+  fingerprint scripted TLS clients regardless of User-Agent and would
+  block the CLI. If bot protection is ever needed, add a WAF custom rule
+  that **skips** Browser Integrity Check and bot mitigation for
+  `(http.host eq "darsay.io" and starts_with(http.request.uri.path, "/api/"))`.
+- The board URL is the capability and the worker enforces its own body
+  caps and daily mutate caps; the API needs no browser challenge.
+
 ## Create password
 
 `CREATE_PASSWORD` is a Wrangler **secret**, not `wrangler.jsonc` `vars` (those are visible in the dashboard and would land in git). The Worker compares the JSON body field `password` on create and discards it. It never writes the phrase to D1. To rotate: `secret put` again and tell friends. To remove the gate: delete the secret and the check in `src/worker/index.ts`.
