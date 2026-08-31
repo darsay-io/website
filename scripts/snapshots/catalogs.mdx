@@ -51,7 +51,7 @@ writable.
 
 | Field | Meaning |
 |---|---|
-| `catalog_schema_version` | `"1.1.0"`. Major = breaking; 1.1 added `estimate.hints`. |
+| `catalog_schema_version` | `"1.2.0"`. Major = breaking; 1.1 added `estimate.hints`; 1.2 added the `redundant` hint and the digest `policy` key. |
 | `kind` | Always `"darsay.catalog"`. |
 | `id` | Slug. Matches the directory name when stored at `catalogs/<id>/`. Lowercase letter, then letters, digits, `.`, `_`, `-` (max 64). |
 | `title` | Human title. Defaults to `id`. |
@@ -94,6 +94,7 @@ Stale after 7 days (`*` on SIZE in `list`).
 | `dominant_dtype` | `est["parameters"]["dominant_dtype"]` if dict, else `null` |
 | `unknown_size_count` | `est["payload"]["unknown_size_count"]` |
 | `hints` | Derived once, by `hints_for(est)` — see [Hints](#hints). Since 1.1.0. |
+| `policy` | `"masters"` when the stored price is the default masters-first acquisition ([Quantization §4](/docs/quantization/#mechanics)); `null` for full-repo and explicit-include prices. Since 1.2.0. |
 
 Never stored: `disk.*`, `bundle.dir`, engines, completeness, variants,
 vault status, bundle ids.
@@ -111,7 +112,8 @@ Empty (`[]`) means *nothing notable*; a missing digest still means
 | `gated` | Upstream is gated (`source.gated`). Archiving needs an accepted license and `hf auth login`. |
 | `large` | The priced payload is ≥ 20 GiB (`LARGE_PAYLOAD_BYTES`) — more than one sitting, often more than one disk. With `--include`, the priced payload is the subset. An unknown size is never large. |
 | `quant` | A published quantized artifact ([Quantization](/docs/quantization/)): the weight bytes are mostly GGUF, or the dominant safetensors dtype is not F64 / F32 / F16 / BF16. |
-| `subset` | The entry was priced with `--include`. |
+| `redundant` | The priced weight bytes are ≥ 1.75× one copy at the published per-dtype parameter counts — the repo likely ships several weight sets (`darsay classify` shows them). Live estimates only; never re-derived from a stored digest. Since 1.2.0. |
+| `subset` | The entry was priced with an explicit `--include`. A masters-policy price sets the digest's `policy` key instead. |
 
 A 1.0.0 file carries no `hints`. Readers derive `large`, `gated`, and
 `subset` from the digest and the entry's `include` on the fly; `quant`
@@ -124,7 +126,10 @@ writes `hints`; `catalog adopt` copies it verbatim.
 
 `darsay list CATALOG` matches each entry against this vault’s
 `bundle_records` by canonical source address + optional revision + include
-set.
+set. An entry with `include: null` means *the default acquisition*: it is
+satisfied by a masters-policy bundle (what `archive <source>` produces)
+or by a full-repo bundle (a superset). An entry with explicit include
+globs matches only its globs.
 
 | Status | Meaning |
 |---|---|
@@ -155,6 +160,39 @@ Unknown bytes print as `+ ?`, never as zero. A partial that is a
 counts those moved bytes as done, not as remaining: its `remaining_network`
 is only what is still to fetch here.
 
+## Boards (darsay.io)
+
+A board on darsay.io is a catalog with a URL, and that URL is a
+**catalog address** — the third form after a vault slug and a
+filesystem path:
+
+```text
+darsay estimate https://darsay.io/b/<board-id>     # fetch → classify → push back
+darsay list     https://darsay.io/b/<board-id>     # overlay against this vault (read-only)
+darsay archive --next https://darsay.io/b/<board-id>
+darsay catalog add  <board-url> huggingface:owner/name --desire 8
+darsay catalog drop <board-url> huggingface:owner/name --full
+darsay catalog adopt local-name <board-url>        # pull a local copy
+```
+
+`estimate` against a board is the round trip that keeps it honest: the
+board's own quick estimates can only price the shipping box, while the
+CLI classifies (masters-first prices, `hints`, the `policy` marker) and
+pushes the refreshed catalog back. Mutating verbs push after saving;
+`--dry-run` never pushes. The board URL is the capability — treat it
+like a secret.
+
+`archive --next <board-url>` also **claims** the row it picks, signed
+as this machine (`board.client` in config, default the hostname). A row
+another client holds a live claim on is skipped — that is how two
+people split one board without colliding. Archive boundaries (start,
+clean pause, registration) report progress, which the board renders as
+a gauge; reporting done flips the row to `have` and fills an empty
+holders field with the client id. Claims, like the board's status and
+holders columns, are board-side coordination: they never appear in
+`catalog.json`, and a stale claim (24 h without a report) simply
+expires.
+
 ## CLI
 
 ```
@@ -170,7 +208,9 @@ darsay archive --next CATALOG
 darsay catalog adopt MINE ./friend
 ```
 
-`catalog add` is offline unless `--estimate`. Bare `darsay list` is the
+`catalog add` is offline unless `--estimate`. Every `catalog` verb and
+`estimate CATALOG` take `-n` / `--dry-run`: the change is printed, the file
+is not written. Bare `darsay list` is the
 vault as the same table; DESIRE, HINTS, and NOTE hide when every cell is
 empty. HINTS is the entry's [hints](#hints) (`large, gated`), the same
 words `estimate CATALOG` prints per row.

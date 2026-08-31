@@ -7,9 +7,9 @@ description: "**You have five minutes.**"
 
 | | Current |
 |---|---|
-| Tool | **0.13.0** |
-| Manifest schema | **1.6.0** |
-| Catalog schema | **1.1.0** |
+| Tool | **0.14.6** |
+| Manifest schema | **1.7.0** |
+| Catalog schema | **1.2.0** |
 | MVB format | **1.2** |
 | License | Apache 2.0 |
 
@@ -38,7 +38,7 @@ required to open a bundle. Everything else is how we got there.
 
 **You are changing the tool.**
 [Design](/docs/design/) for why, [Testing](/docs/testing/) and
-[Contributing](https://github.com/darsay-io/darsay/blob/e9adb57fa506df58302cb8cfde0a85e264ad0bb6/CONTRIBUTING.md) for how,
+[Contributing](https://github.com/darsay-io/darsay/blob/14e824b9089320b4f9d0cf384f56d6ac076e54b9/CONTRIBUTING.md) for how,
 [Distribution](/docs/distribution/) for how a release is consumed.
 
 ## Using the vault
@@ -52,8 +52,9 @@ required to open a bundle. Everything else is how we got there.
 | [**Incremental transfer**](/docs/incremental/) | Budgets, Ctrl-C, Range partials, the free-space floor and `config.toml`, `--shard N/T`, `assemble` |
 | [**Datasets**](/docs/datasets/) | The source is `datasets/owner/name`; payload under `data/` |
 | [**Sources**](/docs/sources/) | Provider-qualified refs; Hugging Face is a plugin |
-| [**Quantization**](/docs/quantization/) | Canonical bundle vs satellite quants vs derived precision |
-| [**Catalogs**](/docs/catalogs/) | Shareable want-lists; the vault is the same list, realized |
+| [**Quantization**](/docs/quantization/) | Masters-first archiving, `darsay classify`, satellite quants, derived precision |
+| [**Catalogs**](/docs/catalogs/) | Shareable want-lists; darsay.io boards as remote catalogs; the vault is the same list, realized |
+| [**Doctor**](/docs/doctor/) | Offline vault diagnostics, reversible repair, JSON contract, evidence history |
 
 ## The formats
 
@@ -72,7 +73,7 @@ are an optional third surface: a shareable want-list. They are not inside
 
 | Document | Open it when… |
 |---|---|
-| [**Design**](/docs/design/) | Why Python. Why longevity is in the formats, not a frozen binary. |
+| [**Design**](/docs/design/) | Why Python. Why transfer concurrency is threads, and where Xet fits. Why longevity is in the formats, not a frozen binary. |
 | [**Distribution**](/docs/distribution/) | PyPI, pipx / uvx / wheel, personal Homebrew tap. |
 | [**Testing**](/docs/testing/) | Unit / integration / opt-in Hub e2e. What the suite is there to keep. |
 
@@ -86,7 +87,8 @@ The short list that every document, and every change, is measured against:
 2. **Partials are portable.** `transfer.json` is disposable acceleration.
    Full files and bundle-local Range partials survive budgets, SIGINT,
    ledger loss, and copying to another vault. No source-machine absolute
-   paths in the ledger.
+   paths in the ledger. rsync is a first-class copy: the next darsay
+   command trusts dest ledger + size and fetches only what is still missing.
 3. **Export determinism.** The same bundle state produces a byte-identical
    `.mvb.tar`. Volatile machine-local files are excluded.
 4. **Record, don't fabricate.** Manifests contain only what was established.
@@ -109,4 +111,4 @@ The short list that every document, and every change, is measured against:
 | A new acquisition host | `SourceProvider` in `src/darsay/providers/`, wired in `sources.py` |
 
 Field changes to `manifest.json` or `.mvb.tar` need a docs update here and
-a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/e9adb57fa506df58302cb8cfde0a85e264ad0bb6/CONTRIBUTING.md).
+a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/14e824b9089320b4f9d0cf384f56d6ac076e54b9/CONTRIBUTING.md).

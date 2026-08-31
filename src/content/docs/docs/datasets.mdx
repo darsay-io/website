@@ -61,9 +61,11 @@ No new verbs, no `--type` flag. Every source-taking command accepts a
 provider-qualified ref; Hugging Face shorthand and paste-from-browser URLs
 still work:
 
-    darsay estimate huggingface:datasets/saidutta69/fable-5-premium
-    darsay archive  datasets/saidutta69/fable-5-premium
-    darsay archive  https://huggingface.co/datasets/saidutta69/fable-5-premium
+```text
+darsay estimate huggingface:datasets/saidutta69/fable-5-premium
+darsay archive  datasets/saidutta69/fable-5-premium
+darsay archive  https://huggingface.co/datasets/saidutta69/fable-5-premium
+```
 
 `parse_source` dispatches on the provider; the Hugging Face plugin maps
 `owner/name` → model and `datasets/owner/name` → dataset. An unprefixed
@@ -76,10 +78,12 @@ manifest's `artifact_type`. See [SOURCES.md](/docs/sources/).
 
 ## 5. Naming and layout
 
-    vault/datasets--saidutta69--fable-5-premium/684cb1f849fe/
-    ├── data/            immutable payload (the manifest's layout.payload_root)
-    ├── manifest.json    artifact_type: "dataset"
-    └── ... identical bundle anatomy ...
+```text
+vault/datasets--saidutta69--fable-5-premium/684cb1f849fe/
+├── data/            immutable payload (the manifest's layout.payload_root)
+├── manifest.json    artifact_type: "dataset"
+└── ... identical bundle anatomy ...
+```
 
 - **Directory & bundle id** take a `datasets--` prefix
   (`datasets--saidutta69--fable-5-premium@684cb1f849fe`): model and dataset

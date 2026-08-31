@@ -36,7 +36,12 @@ want-list on the same vault. `list --json` is the script surface (paths,
 licenses). `info` / `run` / `verify` accept a path, a bundle id, or a
 unique prefix. `darsay du` is disk use of bundles and `.runtime` only
 (catalog JSON is curator data, not payload). `darsay rm` deletes a bundle.
-The vault is yours to rsync, restic, or put on a shelf.
+The vault is yours to rsync, restic, or put on a shelf. rsync is a
+first-class copy: the next `archive` / `assemble` / `assemble --move`
+trusts dest files the ledger already marks verified (size match), fetches
+only what is still missing, and rewrites metadata. It does not re-download
+the majority, and it does not pull dest back over SMB to re-hash a copy.
+[Incremental transfer](/docs/incremental/#1-why-this-can-beat-rsync-at-fetching--and-why-rsync-still-copies-disks).
 
 `config.toml` is operator preference, not archival fact — for example the
 free-space floor an archive pauses at, a bandwidth cap, or how long to
@@ -94,11 +99,18 @@ bundle root can change without the archive “changing.”
 `archive` does not mean “download `main`.” It means:
 
 1. Resolve the ref (`main`, a tag, a commit) to an **immutable revision**.
-2. Freeze the file set for that revision.
+2. Freeze the file set for that revision. For a model this is the
+   **masters-first selection** by default: the irreplaceable weights,
+   everything darsay cannot classify, and all support files —
+   mechanically derivable prints are skipped on the record
+   ([Quantization §4](/docs/quantization/#mechanics); `--full` freezes the
+   whole repo, `--include` freezes exactly what you say).
 3. Transfer those files, and only those files, until every one verifies.
 
-Rerunning `archive` on the same source continues *that pin*. It does not
-chase a moving `main`. To take a new snapshot, `--force` pins again.
+Rerunning `archive` on the same source continues *that pin* — the same
+files, the same selection, no re-classification. It does not chase a
+moving `main` or a moving rule set. To take a new snapshot, `--force`
+pins again.
 
 That is why resume works without a special subcommand, and why a 50 GB
 job can be ten evenings of `--max-gb 10`.
@@ -126,6 +138,26 @@ This distinction is the whole design.
 
 If a number is not in the payload and not returned by upstream, it is
 not in the manifest. Curators fill gaps in `curation.md`.
+
+## Dry run
+
+Every command that writes takes `-n` / `--dry-run`. It runs the same checks
+(and gives the same refusals), prints the same report in the conditional —
+`Would remove:`, `Would import …`, `Would assemble into …` — writes nothing,
+and ends with the real command to paste:
+
+```
+$ darsay rm qwen--qwen3-0.6b -n
+Would remove:
+     1.5 GiB  ~/darsay/qwen--qwen3-0.6b/c1899de289a0
+Dry run: nothing removed. To remove:
+  darsay rm qwen--qwen3-0.6b
+```
+
+`archive --dry-run` is the one preview that records something: a new source
+is pinned (`transfer.json`, no payload bytes) so the plan it printed is the
+plan the real run continues. `estimate` is the preflight that writes nothing
+at all.
 
 ## The loop
 

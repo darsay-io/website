@@ -57,8 +57,11 @@ guard, not just a printout.
 darsay archive sshleifer/tiny-gpt2
 ```
 
-That pins `main` to a commit, copies every file, hashes them, checks the
-hashes against upstream, captures the license, and writes a bundle under
+That pins `main` to a commit, copies every file worth keeping — for a
+model, the masters-first default: the irreplaceable weights and support
+files, skipping mechanically derivable quants; `--full` takes everything
+([Quantization](/docs/quantization/)) — hashes them, checks the hashes
+against upstream, captures the license, and writes a bundle under
 `~/darsay` (override with `--vault` or `$DARSAY_HOME`). On a real model the
 live panel is percent of the whole payload, bytes in / total, rate, and
 time remaining — archives are large enough that a per-file bar is the
@@ -175,6 +178,7 @@ If a later source is gated, set `$HF_TOKEN` or run
 | You wrote curator notes | edit `curation.md`, then `darsay regen <bundle>` |
 | You want shell completion | `eval "$(darsay complete zsh)"` (or `bash` / `fish`) |
 | You want disk usage | `darsay du` |
+| You want to see it before it happens | add `-n` / `--dry-run` to any command that writes — `darsay rm <bundle> -n`, `darsay import file.mvb.tar -n`, `darsay run <bundle> -n`. Same checks, nothing written, and the real command to paste at the end |
 
 Copy-paste for each of those: [Examples](/docs/examples/).
 

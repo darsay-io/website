@@ -27,6 +27,7 @@ const MAP = {
 	"DESIGN.md": "design.mdx",
 	"DISTRIBUTION.md": "distribution.mdx",
 	"TESTING.md": "testing.mdx",
+	"DOCTOR.md": "doctor.mdx",
 	"README.md": "index.mdx",
 };
 
@@ -110,8 +111,59 @@ function leftoverMdLinks(md) {
 	return bad;
 }
 
+/**
+ * CommonMark's 4-space indented code blocks do not exist in MDX: their
+ * contents parse as markdown/JSX, so `<board-url>` in a command block
+ * breaks the build and plain commands render as prose. Fence them.
+ * Conservative: only a run of indented lines that follows a blank line
+ * (or the start), outside existing fences.
+ */
+function fenceIndentedCode(md) {
+	const lines = md.split("\n");
+	const out = [];
+	let inFence = false;
+	let i = 0;
+	while (i < lines.length) {
+		const line = lines[i];
+		if (/^\s*(```|~~~)/.test(line)) {
+			inFence = !inFence;
+			out.push(line);
+			i += 1;
+			continue;
+		}
+		const afterBlank = out.length === 0 || out[out.length - 1].trim() === "";
+		if (!inFence && afterBlank && /^ {4}\S/.test(line)) {
+			const block = [];
+			let j = i;
+			while (j < lines.length) {
+				if (/^ {4}/.test(lines[j])) {
+					block.push(lines[j].slice(4));
+					j += 1;
+					continue;
+				}
+				if (lines[j].trim() === "") {
+					let k = j;
+					while (k < lines.length && lines[k].trim() === "") k += 1;
+					if (k < lines.length && /^ {4}/.test(lines[k])) {
+						block.push("");
+						j += 1;
+						continue;
+					}
+				}
+				break;
+			}
+			out.push("```text", ...block, "```");
+			i = j;
+			continue;
+		}
+		out.push(line);
+		i += 1;
+	}
+	return out.join("\n");
+}
+
 function transform(md, outName, sha, repo) {
-	const stripped = stripHtmlNav(md);
+	const stripped = fenceIndentedCode(stripHtmlNav(md));
 	const title =
 		outName === "index.mdx" ? firstHeading(stripped) || "Documentation" : firstHeading(stripped) || outName;
 	const description = firstDescription(stripped);

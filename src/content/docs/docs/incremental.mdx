@@ -1,6 +1,6 @@
 ---
 title: "Incremental archiving — idempotent, resumable transfer"
-description: "rsync solves a harder problem than ours: its source is *mutable*, so it must"
+description: "rsync is the disk-to-disk copy. darsay does not replace it. An `rsync` (or"
 ---
 
 # Incremental archiving — idempotent, resumable transfer
@@ -37,16 +37,27 @@ heals. A registered bundle remains protected by the existing already-exists
 guard; `--force` performs a fresh pin and adopts matching payload bytes
 instead of downloading them again.
 
-## 1. Why this can beat rsync at its own game
+## 1. Why this can beat rsync at fetching — and why rsync still copies disks
 
-rsync solves a harder problem than ours: its source is *mutable*, so it must
-interrogate both sides (size/mtime quick-check, then rolling checksums) to
-discover what changed. Our source is a **pinned, content-addressed git
-revision**: once `archive` resolves ref → commit on the first run, the
-transfer set is frozen and fully enumerable from one metadata call —
-every file's path, exact size, and upstream digest (LFS SHA-256 for large
-files, git blob SHA-1 for small ones) are known *before a single payload
-byte moves*.
+rsync is the disk-to-disk copy. darsay does not replace it. An `rsync` (or
+`cp -a`, a USB, a restic restore) of payload bytes into a vault is a
+**first-class copy**: the next `archive` / `assemble` / `assemble --move`
+trusts dest files the ledger already marks `verified` (size match), fetches
+only what is still missing, and rewrites transfer metadata. It must not
+re-download a file whose digest matches, and it must not pull dest back
+over the wire to re-hash a copy. Users who rsync then run darsay should
+never be astonished by a second trip of the majority — not as a Hub
+download, and not as an SMB dest-hash. Hash dest where it is a local disk
+(`assemble --rehash` / `darsay verify`).
+
+Where darsay beats rsync is the *upstream* transfer. rsync's source is
+*mutable*, so it must interrogate both sides (size/mtime quick-check, then
+rolling checksums) to discover what changed. Our source is a **pinned,
+content-addressed git revision**: once `archive` resolves ref → commit on
+the first run, the transfer set is frozen and fully enumerable from one
+metadata call — every file's path, exact size, and upstream digest (LFS
+SHA-256 for large files, git blob SHA-1 for small ones) are known *before a
+single payload byte moves*.
 
 That turns the whole problem into set arithmetic:
 
@@ -86,13 +97,26 @@ around that one line.
    they match. Partial files resume with Range requests from the byte where
    they stopped. Identical blobs already verified in sibling bundles are
    copied locally instead of fetched (§5).
-5. **Every stop is clean, every run converges.** Budgets, Ctrl-C, a
+5. **rsync is a first-class copy.** Out-of-band copies (`rsync`, `cp -a`,
+   USB, restic restore) of a bundle — or just its payload — into the usual
+   `<vault>/<slug>/<rev>/` layout are the same as a darsay copy. The next
+   command trusts dest files already `verified` in dest's ledger whose size
+   still matches (the same gate `archive` uses), downloads only what is
+   still missing, and adjusts metadata (`transfer.json`, `moved`). It does
+   not re-read dest to re-hash those files: hashing dest on an SMB mount
+   from the laptop pulls the whole payload back over the wire. Hash dest
+   where the bytes live (`assemble --rehash` / `darsay verify` on the dest
+   host). Present dest files with no verified record are still hashed
+   (adoption). A registered payload stays frozen: rsync a finished bundle,
+   `verify` dest on the dest host, `darsay rm` the source. `assemble --move`
+   is the verb for partials.
+6. **Every stop is clean, every run converges.** Budgets, Ctrl-C, a
    filling disk, network loss, power loss — all leave a state a later run
    continues from. The
    state file is written atomically (temp + rename) after every file
    completion, so the worst possible loss is one in-flight file's progress
    record, which reconciliation recovers anyway.
-6. **Record, don't fabricate — for the transfer itself.** Sessions, bytes
+7. **Record, don't fabricate — for the transfer itself.** Sessions, bytes
    moved, adoptions, local-copy sources, retries, and digest mismatches are
    all logged. A bundle assembled over fourteen sessions says so in its
    manifest; a file that came from a sibling bundle instead of the network
@@ -166,10 +190,32 @@ resume) → hash → compare to upstream digest → append to ledger →
 atomically rewrite `transfer.json`. A digest mismatch on a freshly
 completed file is retried once (transit corruption), then logged as an
 upstream mismatch and set aside — it never silently blocks the rest of the
-transfer. Small files (< 8 MiB) may fetch through a bounded worker pool
-(`--jobs`, default 4 — dataset bundles with thousands of parquet shards
-need this); large files download sequentially, one saturating stream at a
-time. darsay deliberately selects `hf_hub_download`'s HTTP path even
+transfer.
+
+**Concurrency.** Small files (< 8 MiB) fetch through a bounded worker
+pool (`--jobs`, default 4 — dataset bundles with thousands of parquet
+shards need this). Large files fetch through `--jobs` concurrent streams
+as well, each file one HTTP stream (a single CDN connection rarely fills a
+fast link), and a finished file's digest runs on one separate hash thread
+while the streams keep downloading, so the network never idles for
+verification (`hashlib` releases the GIL; a 5 GiB shard hashes in seconds
+on a local SSD — see [DESIGN.md](/docs/design/#transfer-concurrency) for the
+measurements). If the disk cannot keep up with the network, fetching
+pauses at `--jobs` + 1 files awaiting digest rather than piling up
+unverified files. Workers never write the ledger: results are committed on
+the main thread as digests finish, so completion order can differ from
+start order. The floor guard counts every in-flight stream at the bytes it
+has yet to land before another file begins. Streams share one rate cap and
+one byte budget; a stop leaves up to `--jobs` resumable partials.
+
+**Stops inside the pipeline.** Only Ctrl-C abandons a running digest — the
+file stays on disk and the next run's reconcile adopts it after hashing.
+A byte or time budget lets queued digests finish, since they spend no
+network and no disk. An error on one file halts the other streams at their
+next chunk, so a 5 GiB fetch does not run to the end for a session that
+is already lost.
+
+darsay deliberately selects `hf_hub_download`'s HTTP path even
 when `hf_xet` is installed: current Xet aborts discard in-flight
 reconstruction state, while HTTP Range leaves a durable `.incomplete` file
 that survives budgets, SIGINT, process restarts, and filesystem copies. The
@@ -371,7 +417,11 @@ them against the pin, merges portable cache metadata, keeps only the longest
 copy of each matching `.incomplete`, and records an `assemble` session without
 embedding source-machine paths in the ledger. The final `archive` invocation
 continues any remainder—or, when assembly reached 100%, performs registration
-with zero payload network bytes.
+with zero payload network bytes. `assemble --dry-run` prints that plan first —
+what each partial would contribute, what would be hashed at dest, the disk
+verdict for the copy, how far along the pin would be afterwards, and (with
+`--move`) which source files would be released — and creates nothing, not
+even the destination directory.
 
 #### Across disks: `assemble --move` and skeletons
 
@@ -385,10 +435,10 @@ as `missing` (a crash between file-write and ledger-write must heal), so a
 plain `rm` is a re-fetch.
 
 `assemble --move` is the honest way to free that space. It runs an ordinary
-assembly into the big vault, then — *only for files the destination has
-re-hashed against the pin* — deletes the source's copy and rewrites the
-source record from `verified` to **`moved`**: verified, and now living in
-another vault. A partial with any `moved` file is a **skeleton**: the pin,
+assembly into the big vault, then — *only for files the destination already
+holds as `verified` (ledger + size, or hashed under `--rehash`)* — deletes
+the source's copy and rewrites the source record from `verified` to
+**`moved`**: verified, and now living in another vault. A partial with any `moved` file is a **skeleton**: the pin,
 the expected inventory, and every recorded hash stay behind; the payload
 bytes do not. The laptop can then fetch the *other* half without re-fetching
 what it handed over, because a `moved` file is fetched by no one and
@@ -410,10 +460,29 @@ darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move
 darsay --vault /Volumes/big archive Qwen/Qwen3.8-27B          # registers, zero network bytes
 ```
 
-The move is **verify-then-delete, per file**: the destination's hash against
-the pinned upstream digest — the same gate that admits a file to a manifest —
-is what permits the source deletion, so an interrupted or rotted copy leaves
-the source bytes untouched. If the moved bytes ever reappear at the source
+Already `rsync`'d or `cp -a`'d the partial into the destination vault? Same
+command. `assemble --move` copies nothing for files dest already holds,
+trusts dest files the ledger already marks `verified` (size match), then
+deletes the matching source bytes and leaves a skeleton. It does **not**
+re-hash dest: dest's `verified` records travelled with the rsync, and
+hashing dest from a laptop over SMB would pull the payload back across the
+wire. Hash dest where it is a local disk (`assemble --rehash`, or run
+assemble on the dest host). A second `--move` is a no-op for files already
+`moved`. The destination path is the usual two-level layout
+(`<vault>/<repo-slug>/<revision12>/`); rsync the bundle there, not into the
+vault root:
+
+```bash
+rsync -a ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
+darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move
+```
+
+The move is **verify-then-delete, per file**: dest must already have the
+file as `verified` (ledger + size, or a dest-local `--rehash`) before the
+source copy is deleted, so an interrupted or incomplete copy leaves the
+source bytes untouched. A same-size bit-flip during rsync is the same bet
+`archive` after rsync already makes; catch it with `darsay verify` on the
+dest host, not by ingesting dest over SMB. If the moved bytes ever reappear at the source
 (restored by hand from the big vault), reconcile hashes and re-adopts them as
 `verified`: the `moved` record is a hint, and matching bytes always win. Bytes
 that come back *wrong* are removed and the record stays `moved` — a bad
@@ -451,15 +520,15 @@ recorded hashes for bytes this pin handed to a named vault.
 | `--max-rate SIZE` | cap network transfer at SIZE per second across every worker (`5M`, `500K`; default unlimited via config; `0` lifts a configured cap) |
 | `--max-offline DURATION` | keep waiting for a lost network up to DURATION before pausing cleanly (`30m`, `2h`; default 1 h via config; `0` pauses at the first failure) |
 | `--revision REF` | pin a branch, tag, or commit instead of `main`; the resolved commit is frozen for every later run |
-| `--dry-run` | pin (if new) + reconcile + plan report; move no payload bytes |
+| `-n` / `--dry-run` | pin (if new) + reconcile + plan report; move no payload bytes. Every writing command takes the same flag |
 | `--rehash` | re-verify every present file by digest instead of trusting the ledger (periodic paranoia for months-long archives) |
-| `--jobs N` | small-file worker pool width (default 4; large files always sequential) |
+| `--jobs N` | parallel transfer streams (default 4): N small files at once, and N large files at once with one hash thread verifying finished files alongside; `1` restores a single stream, still hashing in parallel |
 | `--shard N/T` | advisory cooperative order: byte-balance files into T lanes and fetch lane N first; the expected set is unchanged |
 
-Budgets are approximate and checked at received-chunk boundaries: active
-small-file workers and the chunk that crosses a cap may overshoot it. The
-in-flight file is left as a
-resumable partial, counted toward the next session. `darsay list` grows
+Budgets are approximate and checked at received-chunk boundaries: every
+active stream and the chunk that crosses a cap may overshoot it. In-flight
+files are left as resumable partials, counted toward the next session.
+`darsay list` grows
 an in-progress row for bundles with a ledger but no manifest —
 `archiving: 61% (34.1/55.6 GB, 9/15 files verified)` — so the vault's
 overall state is visible without running anything.
@@ -643,9 +712,9 @@ final mega-pass.
 | Disk filling mid-session | Plan-phase preflight prices the free-space floor (§6), says where the transfer will stop, and asks on a terminal; the transfer pauses cleanly (`end_reason: disk`, exit 10) before a file that cannot fit above the floor, or the moment free space drops below it, leaving the margin for the rest of the machine. Clear space and rerun. With the floor disabled, a mid-session `ENOSPC` is the same clean pause with state intact. |
 | Network drops mid-session | Bytes received so far are banked in the partial; the panel reads `offline` and retries on a 2 → 30 s schedule (§6) while budgets, the floor, and Ctrl-C keep working. Back within `max_offline` (1 h): the file resumes with a Range request and the outage is one scrollback line. Longer: clean pause, `end_reason: offline`, exit 10; rerun once connected. |
 | Two concurrent runs | Second exits on the live lock. |
-| Partial bundle copied or moved | Relative ledger/cache state resumes at the new vault; an inherited lock is reclaimed only when the physical directory identity changed. |
+| Partial bundle copied or moved | Relative ledger/cache state resumes at the new vault; an inherited lock is reclaimed only when the physical directory identity changed. rsync then `archive` / `assemble --move` trusts dest ledger + size and fetches only the remainder. Hash dest on the dest host (`--rehash` / `verify`). |
 | Cooperative inputs disagree | `assemble` rejects them before creating a destination; repo, type, full pin, and expected inventory must all match. |
-| `assemble --move`, destination copy fails to verify | That file's source bytes are kept, not deleted (verify-then-delete, per file, §5); only files the destination re-hashed against the pin are released, and a skeleton still holding such a file is never dissolved. |
+| `assemble --move`, dest does not have the file as verified | That file's source bytes are kept, not deleted (verify-then-delete, per file, §5); only files dest holds as `verified` (ledger + size, or `--rehash`) are released, and a skeleton still holding such a file is never dissolved. |
 | Moved bytes reappear at a skeleton | Reconciliation hashes and re-adopts them as `verified`; the `moved` record is only a hint. Bytes that fail the pin's checks are removed and the record stays `moved`. |
 | Skeleton ledger lost | Degrades to a plain partial: what is on disk is re-adopted, what was moved out is re-fetched. Never corrupt, only slower. |
 
@@ -680,7 +749,10 @@ final mega-pass.
   `hf_xet` abort behavior did not preserve a usable mid-file checkpoint in
   validation, so v0.5.0 forces the durable HTTP/Range route for archival
   transfers. This can be revisited when Xet exposes durable cross-process
-  continuation without weakening byte budgets or Ctrl-C semantics.
+  continuation without weakening byte budgets or Ctrl-C semantics; what
+  that would take, and why the case for it weakened once large files
+  gained `--jobs` streams, is in
+  [DESIGN.md](/docs/design/#transfer-concurrency).
 - Gated repositories marked gated at pin time receive a read-authorization
   check before any ledger or payload is created. If access disappears only
   after pinning, the partial is retained and its error is recorded.

@@ -40,6 +40,7 @@ export default defineConfig({
 						{ label: 'Sources', slug: 'docs/sources' },
 						{ label: 'Quantization', slug: 'docs/quantization' },
 						{ label: 'Catalogs', slug: 'docs/catalogs' },
+						{ label: 'Doctor', slug: 'docs/doctor' },
 					],
 				},
 				{

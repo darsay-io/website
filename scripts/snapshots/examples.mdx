@@ -24,9 +24,12 @@ This page is the cookbook you return to.
 | Split a download with a friend | [Cooperative shards](#split-a-download-across-machines) |
 | Fetch a model in halves across two disks | [Archive in halves](#archive-in-halves-across-two-disks) |
 | Move a half-finished archive to another disk | [Relocate a partial](#move-a-partial-bundle) |
+| rsync bytes, then let darsay verify | [rsync then darsay](#rsync-then-darsay) |
 | Write curator notes | [Curation](#write-curator-notes) |
 | Curate a want-list and share it | [Share a catalog](#share-a-catalog) |
+| Re-price a darsay.io board, claim its next row | [Keep a board honest](#keep-a-darsayio-board-honest) |
 | Prove the bytes have not drifted | [Verify](#verify-on-a-schedule) |
+| See what a command would do first | [Dry run](#dry-run-anything-that-writes) |
 
 ---
 
@@ -219,6 +222,30 @@ Design: [Incremental transfer](/docs/incremental/#network-loss).
 
 ---
 
+## Archive just the master (the default)
+
+Some repos ship the model *and* a pile of its own derivatives — a BF16
+master plus every GGUF quant of it. `archive` classifies a fresh model
+pin by default and fetches the artifacts that are genuinely hard to
+regenerate: masters, everything it cannot classify, and all support
+files. Mechanically derivable prints are skipped, named in the
+preflight, and recorded in the manifest with the full omitted inventory.
+
+```bash
+darsay estimate owner/model-with-quants        # prices what archive will fetch
+darsay classify owner/model-with-quants        # the per-set evidence table
+darsay archive  owner/model-with-quants        # masters-first, on the record
+darsay archive  owner/model-with-quants --full # every published byte instead
+```
+
+A skipped print is functionally regenerable from the kept master under a
+recorded toolchain — not bit-identical to the published bytes. When
+darsay cannot establish what a file is (two differing weight sets, an
+orphaned shard set, an unreadable header), it refuses to guess and
+fetches it. Policy and rules: [Quantization](/docs/quantization/).
+
+---
+
 ## Price one quant from a pack repo
 
 Some GGUF repos are hundreds of gigabytes of named quants. `--include`
@@ -378,8 +405,19 @@ darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move
 darsay --vault /Volumes/big archive Qwen/Qwen3.8-27B     # registers, zero network
 ```
 
-`--move` only ever deletes a file the destination has re-hashed against the
-pin, so a bad copy never costs the laptop its only copy. On the laptop,
+Already rsync'd the partial onto the big drive? Same command — it copies
+nothing already there, trusts dest files the ledger already marks
+verified (size match), then skeletonizes the laptop copy. It does not
+re-hash dest over SMB:
+
+```bash
+rsync -a ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
+darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move
+```
+
+`--move` only ever deletes a file dest has as verified, so an incomplete
+copy never costs the laptop its only copy. Hash dest on the dest host
+(`assemble --rehash`) if you do not trust the rsync. On the laptop,
 `darsay list` shows the skeleton — `archiving: 52% (…, 27.8 GB moved out)` —
 and an `archive` run there stops cleanly with `assemble to register` once
 everything left is either verified locally or already moved away. A skeleton
@@ -402,6 +440,32 @@ darsay --vault /mnt/other/vault archive Qwen/Qwen3.8-27B
 The pin is unchanged. Completed files are adopted. The longest Range
 partial continues. The ledger holds no source-machine absolute paths, so
 this works across laptops.
+
+---
+
+## rsync then darsay
+
+rsync is a first-class copy. The next darsay command trusts dest files
+the ledger already marks verified (size match), fetches only the
+remainder, and rewrites metadata. It does not re-download the majority,
+and it does not pull dest back over SMB to re-hash a copy. Put the
+bundle at `<vault>/<slug>/<rev>/`, not at the vault root.
+
+```bash
+# resume a partial on the other disk
+rsync -a ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
+darsay --vault /Volumes/big archive Qwen/Qwen3.8-27B
+
+# or free the laptop after the copy (trust dest ledger + size, delete source payload)
+darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move
+```
+
+Hash dest where it is a local disk — `assemble --rehash` or `darsay
+verify` on the NAS, not from a laptop over SMB (that reads the whole
+payload back over the wire). `assemble` warns before it hashes a dest
+that sits on a network mount.
+A registered payload is frozen: rsync it, verify dest on the dest host,
+then `darsay rm` the source. `--move` is the verb for partials.
 
 ---
 
@@ -445,6 +509,83 @@ read-only — it does not write `verification.json`.
 
 `darsay list` is the inventory; `darsay info <bundle>` is the index
 card.
+
+---
+
+## Dry run anything that writes
+
+Every command that changes the vault takes `-n` / `--dry-run`. It runs the
+same checks, prints the same report in the conditional, writes nothing, and
+ends with the real command to paste.
+
+```bash
+darsay rm qwen--qwen3-0.6b -n
+darsay import /Volumes/USB/backups/qwen--qwen3-0.6b@<rev>.mvb.tar -n
+darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move -n
+darsay run qwen--qwen3-0.6b -n                  # will it install torch first?
+darsay envs --prune -n
+```
+
+What `rm -n` prints:
+
+```
+Would remove:
+     1.5 GiB  ~/darsay/qwen--qwen3-0.6b/c1899de289a0
+Dry run: nothing removed. To remove:
+  darsay rm qwen--qwen3-0.6b
+```
+
+And `assemble --move -n`, before a laptop hands its half to the big drive:
+
+```
+Would assemble into /Volumes/big/qwen--qwen3.8-27b/<rev>  (existing partial)
+  from:     ~/darsay/qwen--qwen3.8-27b/<rev>  — copy 4 files, 12.1 GiB  (3 already at dest)
+  verify:   4 files against the pin (4 copied)
+  disk:     needs 12.1 GiB, free 400.2 GiB (2.0 GiB floor) at /Volumes/big — OK
+  after:    7/9 files verified; 2 files (4.4 GiB) still to fetch — continue with `darsay archive`
+  --move:   ~/darsay/qwen--qwen3.8-27b/<rev>  — release 7 files (26.2 GiB) once verified at dest → skeleton (pin + hashes stay)
+Dry run: nothing copied, nothing released. To assemble:
+  darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --move
+```
+
+A refusal is the same refusal: `import -n` of a bundle the vault already
+holds exits with `already exists (use --force to replace)`, exactly as the
+real command would. `archive --dry-run` is the one preview that records
+something — a new source is pinned in `transfer.json`, no payload bytes —
+so the plan it shows is the plan the real run continues; `estimate` is the
+preflight that writes nothing at all.
+
+---
+
+## Keep a darsay.io board honest
+
+A board is a catalog with a URL, and the URL works wherever a catalog
+name does. One command fetches it, re-prices every row with
+classification (the board alone can only price the shipping box), and
+pushes the result back — sizes, hints, and masters markers included:
+
+```bash
+darsay estimate https://darsay.io/b/<board-id>
+```
+
+To fetch the board's next unfinished row — claiming it first, so a
+second machine on the same board picks a different row, and reporting
+progress the board renders as a gauge:
+
+```bash
+darsay archive --next https://darsay.io/b/<board-id>
+```
+
+Sign claims as something nicer than your hostname once:
+
+```toml
+# <vault>/config.toml   (or ~/.config/darsay/config.toml)
+[board]
+client = "jeremy-mbp"
+```
+
+The board URL is the capability: anyone who has it can edit the board.
+Treat it like a secret.
 
 ---
 
