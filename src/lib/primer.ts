@@ -408,7 +408,7 @@ export const PRIMER: PrimerCard[] = [
 		lede: "When a collector's CLI is fetching a row, the row says so — who, how far, and when it last spoke.",
 		body: [
 			"`darsay archive --next <board-url>` claims the row it picks before the first byte moves, then reports at the archive's own boundaries — start, a clean pause, registration — not per file. A gauge can sit at 1% all evening and still be live; the timestamp beside it says when it last reported. Other members see the row is spoken for, and their `--next` skips it.",
-			"A claim goes stale after 24 hours without a report — a closed laptop, a lost network — and another collector's `--next` may take the row. Reporting done flips the row to have. Claims live on the board only; the exported catalog never carries them.",
+			"A claim goes stale after 24 hours without a report — a closed laptop, a lost network — and another collector's `--next` may take the row. Reporting done flips the row to have, and a row checked off as have is one `--next` never picks again; naming the source with `--board` is the deliberate way to re-fetch it. Claims live on the board only; the exported catalog never carries them.",
 		],
 		collect:
 			"Two people fetching the same 700 GiB is the failure this exists to prevent. Let the CLI claim; edit have and who by hand only when the CLI could not.",
