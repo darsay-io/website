@@ -8,6 +8,7 @@ import {
 	isBaseModel,
 	isSpeculator,
 	lensCounts,
+	lensCountsGiven,
 	lensesFor,
 	moeFromName,
 	parseView,
@@ -40,21 +41,41 @@ describe("names", () => {
 		expect(repoName("huggingface:datasets/saidutta69/fable-5-premium")).toBe("fable-5-premium");
 		expect(repoName("test:acme/toy")).toBe("test:acme/toy");
 	});
-	it("spots abliterated and obliterated repos, not owners", () => {
+	it("spots abliterated and obliterated repos, not owners, not uncensored fine-tunes", () => {
 		expect(isAbliterated("huggingface:Uniboshi/Kimi-K3-Abliterated-V1")).toBe(true);
 		expect(isAbliterated("huggingface:OBLITERATUS/Qwen3.8-27B-OBLITERATED")).toBe(true);
 		expect(isAbliterated("huggingface:mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated")).toBe(true);
 		expect(isAbliterated("huggingface:p-e-w/gemma-3-27b-it-heretic")).toBe(true);
+		expect(isAbliterated("huggingface:cognitivecomputations/dolphin-2.9-llama3-8b-uncensored")).toBe(false);
 		expect(isAbliterated("huggingface:OBLITERATUS/Qwen3.8-27B")).toBe(false);
 		expect(isAbliterated("huggingface:Qwen/Qwen3.8-27B")).toBe(false);
 	});
-	it("spots base models by suffix, never datasets", () => {
-		expect(isBaseModel("huggingface:moonshotai/Kimi-K2-Base")).toBe(true);
-		expect(isBaseModel("huggingface:Qwen/Qwen3-8B-Base")).toBe(true);
-		expect(isBaseModel("huggingface:google/gemma-3-27b-pt")).toBe(true);
-		expect(isBaseModel("huggingface:Qwen/Qwen3.8-27B")).toBe(false);
-		expect(isBaseModel("huggingface:Qwen/Qwen3-Coder-480B-A35B-Instruct")).toBe(false);
-		expect(isBaseModel("huggingface:datasets/acme/base-corpus")).toBe(false);
+	it("spots pretrained bases, never size tiers or datasets", () => {
+		for (const yes of [
+			"huggingface:moonshotai/Kimi-K2-Base",
+			"huggingface:Qwen/Qwen3-8B-Base",
+			"huggingface:deepseek-ai/DeepSeek-V3-Base",
+			"huggingface:unsloth/Qwen3-8B-Base-GGUF",
+			"huggingface:google/gemma-3-27b-pt",
+			"huggingface:acme/qwen3-8b-base",
+		]) {
+			expect(isBaseModel(yes), yes).toBe(true);
+		}
+		for (const no of [
+			"huggingface:Qwen/Qwen3.8-27B",
+			"huggingface:Qwen/Qwen3-Coder-480B-A35B-Instruct",
+			"huggingface:google-bert/bert-base-uncased",
+			"huggingface:FacebookAI/roberta-base",
+			"huggingface:openai/whisper-base",
+			"huggingface:BAAI/bge-base-en-v1.5",
+			"huggingface:intfloat/e5-base-v2",
+			"huggingface:google-t5/t5-base",
+			"huggingface:stabilityai/stable-diffusion-xl-base-1.0",
+			"huggingface:datasets/acme/base-corpus",
+			"huggingface:datasets/acme/Corpus-Base",
+		]) {
+			expect(isBaseModel(no), no).toBe(false);
+		}
 	});
 	it("reads total/active from a MoE name", () => {
 		expect(moeFromName("huggingface:Qwen/Qwen3-Coder-480B-A35B-Instruct")).toEqual({ total: 480, active: 35 });
@@ -62,14 +83,27 @@ describe("names", () => {
 		expect(moeFromName("huggingface:mistralai/Mixtral-8x7B-v0.1")).toEqual({ total: null, active: null });
 		expect(moeFromName("huggingface:zai-org/GLM-4.5V")).toBeNull();
 	});
-	it("spots speculators by name, excluding RWKV's Eagle", () => {
-		expect(isSpeculator("huggingface:RedHatAI/Qwen3-32B-speculator.eagle3")).toBe(true);
-		expect(isSpeculator("huggingface:yuhuili/EAGLE3-LLaMA3.1-Instruct-8B")).toBe(true);
-		expect(isSpeculator("huggingface:FasterDecoding/medusa-vicuna-7b-v1.3")).toBe(true);
-		expect(isSpeculator("huggingface:acme/Qwen3-235B-MTP")).toBe(true);
-		expect(isSpeculator("huggingface:RWKV/v5-Eagle-7B-HF")).toBe(false);
-		expect(isSpeculator("huggingface:Qwen/Qwen3.8-27B")).toBe(false);
-		expect(isSpeculator("huggingface:datasets/acme/draft-corpus")).toBe(false);
+	it("spots speculators by name; EAGLE only beside a target; never RWKV or NVIDIA's Eagle VLMs", () => {
+		for (const yes of [
+			"huggingface:RedHatAI/Qwen3-32B-speculator.eagle3",
+			"huggingface:yuhuili/EAGLE3-LLaMA3.1-Instruct-8B",
+			"huggingface:yuhuili/EAGLE-Vicuna-7B-v1.3",
+			"huggingface:FasterDecoding/medusa-vicuna-7b-v1.3",
+			"huggingface:acme/Qwen3-0.6B-draft",
+		]) {
+			expect(isSpeculator(yes), yes).toBe(true);
+		}
+		for (const no of [
+			"huggingface:nvidia/Eagle2-9B",
+			"huggingface:NVEagle/Eagle-X5-7B",
+			"huggingface:RWKV/v5-Eagle-7B-HF",
+			"huggingface:Qwen/Qwen3.8-27B",
+			"huggingface:acme/Qwen3-235B-MTP",
+			"huggingface:acme/draftsman-7b",
+			"huggingface:datasets/acme/draft-corpus",
+		]) {
+			expect(isSpeculator(no), no).toBe(false);
+		}
 	});
 });
 
@@ -117,6 +151,14 @@ describe("lenses", () => {
 		expect(counts.get("spec")).toBe(0);
 		expect(counts.get("unpriced")).toBe(1);
 	});
+	it("counts a chip against the other active lenses, never promising rows the AND drops", () => {
+		const given = lensCountsGiven(rows, ["gated"]);
+		expect(given.get("gated")).toBe(1); // its own count ignores itself
+		expect(given.get("dataset")).toBe(0); // no gated dataset
+		expect(given.get("abliterated")).toBe(1);
+		expect(given.get("want")).toBe(1);
+		expect(lensCountsGiven(rows, []).get("large")).toBe(4);
+	});
 	it("tallies bytes by status and counts the unsized", () => {
 		const t = tally(rows);
 		expect(t.n).toBe(7);
@@ -125,9 +167,10 @@ describe("lenses", () => {
 		expect(t.wantBytes).toBe((330 + 1454 + 15 + 751 + 2) * GiB);
 		expect(t.bytes).toBe(t.haveBytes + t.wantBytes);
 	});
-	it("every lens names a primer card and a blurb", () => {
+	it("every lens names a primer card, a noun, and a blurb", () => {
 		for (const l of LENSES) {
 			expect(l.primer.length).toBeGreaterThan(0);
+			expect(l.noun.length).toBeGreaterThan(0);
 			expect(l.blurb.length).toBeGreaterThan(20);
 			if (l.fromName) expect(l.blurb).toMatch(/repo name/);
 		}

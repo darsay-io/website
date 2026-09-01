@@ -2,11 +2,13 @@
  * The field guide dialog: one teaching card at a time, a deck strip to jump
  * between them, arrows to turn pages, and a "show on the board" button that
  * applies the lens the card explains. Content comes from primer.ts; nothing
- * here is user text.
+ * here is user text. Opened from a row, every card also applies its lesson
+ * to that row (rownote.ts) until the guide closes.
  */
 import { el, inline, roman, stage } from "./dom.ts";
-import { LENS_BY_KEY, type LensKey } from "./lenses.ts";
+import { LENS_BY_KEY, repoName, type LensKey } from "./lenses.ts";
 import { PRIMER, PRIMER_BY_KEY, primerIndex, type PrimerCard, type PrimerKey } from "./primer.ts";
+import { rowNote, type RowFacts } from "./rownote.ts";
 
 export type GuideContext = {
 	/** Rows on the board a lens currently matches. */
@@ -16,9 +18,15 @@ export type GuideContext = {
 };
 
 export type Guide = {
-	open: (key?: PrimerKey, opener?: HTMLElement | null) => void;
+	/** Open at a card; with a row, every card applies its lesson to that row until the guide closes. */
+	open: (key?: PrimerKey, opener?: HTMLElement | null, row?: RowFacts | null) => void;
 	close: () => void;
 };
+
+/** "MoE" stays MoE; "In flight" becomes in flight. */
+function lensWord(label: string): string {
+	return /[A-Z]/.test(label.slice(1)) ? label : label.toLowerCase();
+}
 
 export function createGuide(ctx: GuideContext): Guide {
 	let dlg: HTMLDialogElement | null = null;
@@ -29,16 +37,21 @@ export function createGuide(ctx: GuideContext): Guide {
 	let deck: HTMLElement | null = null;
 	let current: PrimerKey = PRIMER[0].key;
 	let opener: HTMLElement | null = null;
+	let row: RowFacts | null = null;
+	let rowTag: HTMLElement | null = null;
 
 	function build() {
-		dlg = el("dialog", { class: "guide", "aria-labelledby": "guide-title" });
+		const d = el("dialog", { class: "guide", "aria-labelledby": "guide-title" });
+		dlg = d;
 		const close = el("button", { type: "button", class: "guide-close", "aria-label": "Close the field guide" }, "×");
-		close.addEventListener("click", () => dlg?.close());
+		close.addEventListener("click", () => d.close());
 		pos = el("span", { class: "guide-pos" });
+		rowTag = el("span", { class: "guide-row-tag" });
 		const bar = el(
 			"header",
 			{ class: "guide-bar" },
 			el("span", { class: "guide-kicker" }, el("span", { "aria-hidden": "true" }, "✦ "), "Field guide"),
+			rowTag,
 			pos,
 			close,
 		);
@@ -49,7 +62,11 @@ export function createGuide(ctx: GuideContext): Guide {
 		next.addEventListener("click", () => turn(1));
 		deck = el("ol", { class: "guide-deck", "aria-label": "All cards" });
 		PRIMER.forEach((c, i) => {
-			const b = el("button", { type: "button", class: "guide-deck-btn", title: c.title }, roman(i));
+			const b = el(
+				"button",
+				{ type: "button", class: "guide-deck-btn", title: c.title, "aria-label": `${roman(i)} — ${c.title}` },
+				roman(i),
+			);
 			b.addEventListener("click", () => show(c.key));
 			deck!.append(el("li", {}, b));
 		});
@@ -66,12 +83,13 @@ export function createGuide(ctx: GuideContext): Guide {
 			el("kbd", {}, "?"),
 			" opens from the board",
 		);
-		dlg.append(el("div", { class: "guide-frame" }, bar, cardHost, nav, hint));
-		const self = dlg;
-		self.addEventListener("click", (ev) => {
-			if (ev.target === self) self.close();
+		d.append(el("div", { class: "guide-frame" }, bar, cardHost, nav, hint));
+		d.addEventListener("click", (ev) => {
+			if (ev.target === d) d.close();
 		});
-		dlg.addEventListener("keydown", (ev) => {
+		d.addEventListener("keydown", (ev) => {
+			const t = ev.target as HTMLElement | null;
+			if (t?.closest(".guide-table-wrap, input, textarea")) return;
 			if (ev.key === "ArrowRight") {
 				ev.preventDefault();
 				turn(1);
@@ -80,11 +98,12 @@ export function createGuide(ctx: GuideContext): Guide {
 				turn(-1);
 			}
 		});
-		dlg.addEventListener("close", () => {
-			opener?.focus();
+		d.addEventListener("close", () => {
+			if (opener?.isConnected) opener.focus();
 			opener = null;
+			row = null;
 		});
-		document.body.append(dlg);
+		document.body.append(d);
 	}
 
 	function turn(delta: number) {
@@ -95,11 +114,11 @@ export function createGuide(ctx: GuideContext): Guide {
 
 	function renderCard(c: PrimerCard, i: number): HTMLElement {
 		const art = el("article", { class: "guide-card", tabindex: "-1" });
-		art.append(
-			el("p", { class: "guide-group" }, el("span", { class: "guide-num" }, roman(i)), c.group),
-			el("h2", { class: "guide-title", id: "guide-title" }, c.title),
-			el("p", { class: "guide-lede" }, inline(c.lede)),
-		);
+		const group = el("p", { class: "guide-group" }, el("span", { class: "guide-num" }, roman(i)), c.group);
+		if (c.lens && LENS_BY_KEY[c.lens].fromName) {
+			group.append(el("span", { class: "guide-group-note" }, "read from the repo name, not the bytes"));
+		}
+		art.append(group, el("h2", { class: "guide-title", id: "guide-title" }, c.title), el("p", { class: "guide-lede" }, inline(c.lede)));
 		const body = el("div", { class: "guide-body" });
 		for (const p of c.body) body.append(el("p", {}, inline(p)));
 		art.append(body);
@@ -110,18 +129,33 @@ export function createGuide(ctx: GuideContext): Guide {
 			for (const h of c.table.head) hr.append(el("th", { scope: "col" }, h));
 			thead.append(hr);
 			const tbody = el("tbody", {});
-			for (const row of c.table.rows) {
+			for (const r of c.table.rows) {
 				const tr = el("tr", {});
-				row.forEach((cell, ci) => tr.append(el(ci === 0 ? "th" : "td", ci === 0 ? { scope: "row" } : {}, cell)));
+				r.forEach((cell, ci) => tr.append(el(ci === 0 ? "th" : "td", ci === 0 ? { scope: "row" } : {}, cell)));
 				tbody.append(tr);
 			}
 			table.append(thead, tbody);
-			art.append(el("div", { class: "guide-table-wrap" }, table));
+			art.append(el("div", { class: "guide-table-wrap", tabindex: "0" }, table));
 		}
 		if (c.cmd) art.append(stage(c.cmd.label, c.cmd.lines, "guide-stage"));
-		art.append(
-			el("p", { class: "guide-collect" }, el("span", { class: "guide-collect-k" }, "Collect"), inline(c.collect)),
-		);
+		const note = row ? rowNote(c.key, row) : null;
+		if (row && note) {
+			art.append(
+				el(
+					"aside",
+					{ class: "guide-row" },
+					el(
+						"p",
+						{ class: "guide-row-k" },
+						el("span", { "aria-hidden": "true" }, "✦ "),
+						"On this row",
+						el("span", { class: "guide-row-src" }, repoName(row.source)),
+					),
+					el("p", { class: "guide-row-t" }, inline(note)),
+				),
+			);
+		}
+		art.append(el("p", { class: "guide-collect" }, el("span", { class: "guide-collect-k" }, "Collect"), inline(c.collect)));
 		const links = el("p", { class: "guide-links" });
 		if (c.doc) links.append(el("a", { class: "spell-doc", href: c.doc.href, target: "_blank", rel: "noreferrer" }, c.doc.label));
 		if (c.link) {
@@ -137,9 +171,8 @@ export function createGuide(ctx: GuideContext): Guide {
 			const lens = LENS_BY_KEY[c.lens];
 			const n = ctx.lensCount(c.lens);
 			if (n > 0) {
-				const word = lens.label.toLowerCase();
 				const label =
-					n === 1 ? `Show the one ${word} row on the board` : n === 2 ? `Show both ${word} rows` : `Show all ${n} ${word} rows`;
+					n === 1 ? `Show the one ${lens.noun} row on the board` : n === 2 ? `Show both ${lens.noun} rows` : `Show all ${n} ${lens.noun} rows`;
 				const show = el("button", { type: "button", class: "btn compact guide-show" }, label);
 				show.addEventListener("click", () => {
 					dlg?.close();
@@ -151,7 +184,7 @@ export function createGuide(ctx: GuideContext): Guide {
 					el(
 						"p",
 						{ class: "guide-none" },
-						`None on this board yet — when a ${lens.label.toLowerCase()} row lands, the lens appears above the list.`,
+						`None on this board yet — the ${lensWord(lens.label)} lens appears above the list as soon as a row qualifies.`,
 					),
 				);
 			}
@@ -176,6 +209,10 @@ export function createGuide(ctx: GuideContext): Guide {
 		const i = primerIndex(key);
 		const c = PRIMER[i];
 		pos.textContent = `${roman(i)} of ${roman(PRIMER.length - 1)}`;
+		if (rowTag) {
+			rowTag.replaceChildren();
+			if (row) rowTag.append(el("span", { class: "guide-row-tag-k" }, "through "), el("code", {}, repoName(row.source)));
+		}
 		const card = renderCard(c, i);
 		cardHost.replaceChildren(card);
 		cardHost.scrollTop = 0;
@@ -194,8 +231,9 @@ export function createGuide(ctx: GuideContext): Guide {
 	}
 
 	return {
-		open(key = PRIMER[0].key, from = null) {
+		open(key = PRIMER[0].key, from = null, forRow = null) {
 			if (!dlg) build();
+			row = forRow;
 			opener = from ?? (document.activeElement as HTMLElement | null);
 			if (!dlg!.open) dlg!.showModal();
 			show(key);

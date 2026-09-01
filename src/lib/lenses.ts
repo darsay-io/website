@@ -3,7 +3,7 @@
  * row is read through. Pure and static — every lens is decided from the
  * row's own fields. Hints come from the CLI's closed vocabulary (or the
  * worker's port of it); a handful of lenses read the repo *name* instead
- * and say so in their caption, because the CLI never guesses from a name.
+ * and say so, because the CLI never guesses from a name.
  */
 import { FULL_FIDELITY_DTYPES, LARGE_PAYLOAD_BYTES, type Hint } from "../worker/hints.ts";
 import { artifactTypeFromSource, canonicalizeSource } from "../worker/sources.ts";
@@ -44,6 +44,8 @@ export type LensGroup = "ledger" | "policy" | "name" | "kind";
 export type Lens = {
 	key: LensKey;
 	label: string;
+	/** The adjective for a generated sentence: "the one gated row", "all 13 large rows". */
+	noun: string;
 	group: LensGroup;
 	/** The field-guide card that explains this lens. */
 	primer: PrimerKey;
@@ -61,11 +63,20 @@ export function repoName(source: string): string {
 	return source;
 }
 
-export const ABLITERATED_RE = /abliterat|obliterat|uncensor|heretic|(?:^|[^a-z])ablat/i;
-export const BASE_RE = /(?:^|[-_.])(?:base|pt)(?=$|[-_.])/i;
+export const ABLITERATED_RE = /abliterat|obliterat|heretic|(?:^|[^a-z])ablat/i;
+/**
+ * Pretrained-only releases: a capitalised `-Base` segment (Kimi-K2-Base,
+ * DeepSeek-V3-Base), or `base`/`pt` right after a size token (gemma-3-27b-pt,
+ * qwen3-8b-base). Never bare `-base`, which names a size tier on BERT, T5,
+ * Whisper, and the embedding models.
+ */
+export const BASE_RE = /[-_.]Base(?=$|[-_.])|\d(?:\.\d+)?[bm][-_.](?:base|pt)(?=$|[-_.])/;
 export const MOE_NAME_RE = /(\d+(?:\.\d+)?)B-A(\d+(?:\.\d+)?)B/i;
 export const MOE_HINT_RE = /\bmoe\b|\d+x\d+(?:\.\d+)?b\b/i;
-export const SPEC_RE = /eagle|medusa|speculat|draft|(?:^|[-_.])mtp(?=$|[-_.])/i;
+/** Draft heads and draft models. EAGLE only beside a target family, so NVIDIA's Eagle VLMs stay out. */
+export const SPEC_RE = /speculat|medusa|(?:^|[-_.])draft(?=$|[-_.\d])/i;
+const EAGLE_RE = /eagle/i;
+const EAGLE_TARGET_RE = /llama|qwen|vicuna|mistral|mixtral|gemma|deepseek|glm|phi|yi|speculat/i;
 
 export function isAbliterated(source: string): boolean {
 	return ABLITERATED_RE.test(repoName(source));
@@ -88,7 +99,9 @@ export function moeFromName(source: string): { total: number | null; active: num
 export function isSpeculator(source: string): boolean {
 	if (artifactTypeFromSource(source) === "dataset") return false;
 	if (/rwkv/i.test(source)) return false; // RWKV's "Eagle" is an architecture, not a draft head
-	return SPEC_RE.test(repoName(source));
+	const name = repoName(source);
+	if (SPEC_RE.test(name)) return true;
+	return EAGLE_RE.test(name) && EAGLE_TARGET_RE.test(name);
 }
 
 /**
@@ -122,7 +135,8 @@ export function inFlight(e: LensEntry): boolean {
 export const LENSES: Lens[] = [
 	{
 		key: "want",
-		label: "Wanted",
+		label: "Want",
+		noun: "wanted",
 		group: "ledger",
 		primer: "desire",
 		blurb: "Not yet in any vault on this board. Sorted by desire, this is the queue `archive --next` walks.",
@@ -130,15 +144,17 @@ export const LENSES: Lens[] = [
 	},
 	{
 		key: "have",
-		label: "Vaulted",
+		label: "Have",
+		noun: "held",
 		group: "ledger",
 		primer: "desire",
-		blurb: "A complete, verified bundle sits in at least one member's vault — the Who field says whose.",
+		blurb: "A member says a complete bundle sits in their vault — Who says whose. The CLI ticks it for real when it reports done.",
 		test: (e) => e.status === "have",
 	},
 	{
 		key: "claimed",
 		label: "In flight",
+		noun: "in-flight",
 		group: "ledger",
 		primer: "claims",
 		blurb: "A collector's CLI has claimed the row and is reporting progress; `--next` skips it for everyone else.",
@@ -147,6 +163,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "masters",
 		label: "Masters",
+		noun: "masters-priced",
 		group: "policy",
 		primer: "masters",
 		blurb: "Priced masters-first: the CLI classified the repo and the size shown is what `archive` will actually fetch — negatives, not prints.",
@@ -155,6 +172,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "large",
 		label: "Large",
+		noun: "large",
 		group: "policy",
 		primer: "large",
 		blurb: "20 GiB or more — more than one sitting, often more than one disk. Budget it with the dials, or fetch it in halves.",
@@ -163,6 +181,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "quant",
 		label: "Quant",
+		noun: "quant",
 		group: "policy",
 		primer: "quant",
 		blurb: "A published quantized artifact: mostly GGUF, or a dominant dtype below full fidelity. Some are prints; a native FP8 or INT4 release is the master.",
@@ -171,6 +190,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "redundant",
 		label: "Redundant",
+		noun: "redundant",
 		group: "policy",
 		primer: "redundant",
 		blurb: "The weight bytes are at least 1.75× one copy of the parameter count — the repo ships several weight sets. `darsay classify` shows which.",
@@ -179,6 +199,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "gated",
 		label: "Gated",
+		noun: "gated",
 		group: "policy",
 		primer: "gated",
 		blurb: "Upstream asks you to accept the author's terms first. Accept on the Hub, `hf auth login` once, then the same verbs as any other source.",
@@ -187,6 +208,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "subset",
 		label: "Subset",
+		noun: "subset",
 		group: "policy",
 		primer: "subset",
 		blurb: "Pinned with `--include`: only the named files plus the sidecars a single file needs to load. The manifest records what was left upstream.",
@@ -195,6 +217,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "abliterated",
 		label: "Abliterated",
+		noun: "abliterated",
 		group: "name",
 		primer: "abliterated",
 		fromName: true,
@@ -204,6 +227,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "base",
 		label: "Base",
+		noun: "base",
 		group: "name",
 		primer: "base",
 		fromName: true,
@@ -213,6 +237,7 @@ export const LENSES: Lens[] = [
 	{
 		key: "moe",
 		label: "MoE",
+		noun: "MoE",
 		group: "name",
 		primer: "moe",
 		fromName: true,
@@ -222,15 +247,17 @@ export const LENSES: Lens[] = [
 	{
 		key: "spec",
 		label: "Speculators",
+		noun: "speculator",
 		group: "name",
 		primer: "spec",
 		fromName: true,
-		blurb: "Draft models and EAGLE/Medusa/MTP heads — small, trained, and only useful beside the exact target they were made for. Read from the repo name.",
+		blurb: "Draft models and EAGLE/Medusa heads — small, trained, and only useful beside the exact target they were made for. Read from the repo name.",
 		test: (e) => isSpeculator(e.source),
 	},
 	{
 		key: "dataset",
 		label: "Datasets",
+		noun: "dataset",
 		group: "kind",
 		primer: "dataset",
 		blurb: "The second artifact type: `datasets/owner/name`, payload under `data/`, same verbs, no engine.",
@@ -239,8 +266,9 @@ export const LENSES: Lens[] = [
 	{
 		key: "unpriced",
 		label: "Unpriced",
+		noun: "unpriced",
 		group: "kind",
-		primer: "dtype",
+		primer: "large",
 		blurb: "No size on record yet — upstream returned nothing to price. `darsay estimate` prices it from Hub metadata without writing a file.",
 		test: (e) => e.payload_bytes === null,
 	},
@@ -269,10 +297,26 @@ export function applyLenses<T extends LensEntry>(rows: T[], active: Iterable<Len
 	return rows.filter((r) => keys.every((k) => LENS_BY_KEY[k].test(r)));
 }
 
+/** Rows each lens would match on its own. */
 export function lensCounts(rows: LensEntry[]): Map<LensKey, number> {
 	const m = new Map<LensKey, number>();
 	for (const l of LENSES) m.set(l.key, 0);
 	for (const r of rows) for (const k of lensesFor(r)) m.set(k, (m.get(k) ?? 0) + 1);
+	return m;
+}
+
+/**
+ * Rows each lens would leave when added to the active set — the number a
+ * chip should show while other lenses are on, so the counts never promise
+ * rows the AND would drop.
+ */
+export function lensCountsGiven(rows: LensEntry[], active: LensKey[]): Map<LensKey, number> {
+	const m = new Map<LensKey, number>();
+	for (const l of LENSES) {
+		const others = active.filter((k) => k !== l.key);
+		const base = applyLenses(rows, others);
+		m.set(l.key, base.filter((r) => l.test(r)).length);
+	}
 	return m;
 }
 

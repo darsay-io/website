@@ -40,6 +40,7 @@ import {
 	isBaseModel,
 	isSpeculator,
 	lensCounts,
+	lensCountsGiven,
 	moeFromName,
 	parseView,
 	tally,
@@ -134,6 +135,9 @@ function humanError(msg: string): string {
 	};
 	return known[msg] ?? msg;
 }
+
+/** No hover: a phone. The `?` shortcut and hover titles are for keyboards. */
+const hasKeyboard = () => typeof window === "undefined" || !window.matchMedia?.("(hover: none)").matches;
 
 export function mountCreate(root: HTMLElement) {
 	const title = el("input", {
@@ -245,7 +249,10 @@ type GaugeRef = {
 	input: HTMLInputElement;
 };
 
+type Target = "file" | "url";
+
 const DEFAULT_SORT: { sort: SortKey; dir: "asc" | "desc" } = { sort: "desire", dir: "desc" };
+const HINT_KEY = "darsay:board:guide-hint";
 
 export async function mountBoard(root: HTMLElement, id: string) {
 	root.replaceChildren(
@@ -271,12 +278,17 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	let sortDir: "asc" | "desc" = initial.dir ?? DEFAULT_SORT.dir;
 	let lenses: LensKey[] = initial.lenses;
 	let dials: DialIndices = { ...DEFAULT_DIAL_INDICES };
+	let target: Target = "file";
 	let installFlavor: InstallFlavor = "pipx";
 	let howOpen = true;
-	let archiveLive: { cmd: HTMLElement; caption: HTMLElement; gauges: GaugeRef[] } | null = null;
+	let archiveLive: { cmd: HTMLElement; caption: HTMLElement; gauges: GaugeRef[]; label: HTMLElement } | null = null;
 	let installLive: HTMLElement | null = null;
+	let idsLive: HTMLElement | null = null;
 	const openRecipes = new Set<number>();
 	let firstPaint = true;
+	let stickyWatch: IntersectionObserver | null = null;
+	/** Entry writes go one at a time, so a note blur and a Have click cannot race. */
+	let writes: Promise<unknown> = Promise.resolve();
 
 	const shells = {
 		toolbar: el("div", { class: "ledger-toolbar" }),
@@ -291,17 +303,18 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			syncHash();
 			paintLedger();
 			shells.toolbar.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+			shells.toolbar.querySelector<HTMLElement>(".lens-chip.is-active")?.focus({ preventScroll: true });
 		},
 	});
 
-	function openGuide(key: PrimerKey, from?: HTMLElement | null) {
-		guide.open(key, from ?? null);
+	function openGuide(key: PrimerKey, from?: HTMLElement | null, row?: Entry | null) {
+		guide.open(key, from ?? null, row ?? null);
 	}
 
-	/** A chip that opens a field-guide card. */
-	function teachChip(text: string, key: PrimerKey, cls: string, title?: string): HTMLButtonElement {
-		const b = el("button", { type: "button", class: `chip ${cls}`, title: title ?? `What “${text}” means` }, text);
-		b.addEventListener("click", () => openGuide(key, b));
+	/** A chip that opens a field-guide card, applied to its row. */
+	function teachChip(text: string, key: PrimerKey, cls: string, row: Entry, title?: string): HTMLButtonElement {
+		const b = el("button", { type: "button", class: `chip ${cls}`, title: title ?? `What “${text}” means — the field guide, applied to this row` }, text);
+		b.addEventListener("click", () => openGuide(key, b, row));
 		return b;
 	}
 
@@ -328,27 +341,84 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		openGuide("masters");
 	});
 
+	function hintSeen(): boolean {
+		try {
+			return localStorage.getItem(HINT_KEY) === "1";
+		} catch {
+			return true;
+		}
+	}
+	function markHintSeen() {
+		try {
+			localStorage.setItem(HINT_KEY, "1");
+		} catch {
+			/* private mode: the hint just shows again next time */
+		}
+	}
+
+	/** Remember which field has focus, so a repaint can hand it back. */
+	function focusMemo(): { entry: string; field: string; start: number | null } | null {
+		const a = document.activeElement as HTMLElement | null;
+		if (!a || !a.dataset.entry || !a.dataset.field) return null;
+		const start = a instanceof HTMLInputElement && a.type === "text" ? a.selectionStart : null;
+		return { entry: a.dataset.entry, field: a.dataset.field, start };
+	}
+	function focusRestore(memo: ReturnType<typeof focusMemo>) {
+		if (!memo) return;
+		const n = shells.ledger.querySelector<HTMLElement>(`[data-entry="${memo.entry}"][data-field="${memo.field}"]`);
+		if (!n) return;
+		n.focus({ preventScroll: true });
+		if (memo.start !== null && n instanceof HTMLInputElement) {
+			try {
+				n.setSelectionRange(memo.start, memo.start);
+			} catch {
+				/* number inputs refuse; fine */
+			}
+		}
+	}
+
 	async function patchBoard(body: Record<string, unknown>) {
 		try {
-			await api(`/api/boards/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+			const res = (await api(`/api/boards/${id}`, { method: "PATCH", body: JSON.stringify(body) })) as {
+				updated?: string;
+				catalog_id?: string;
+			};
+			if (typeof body.title === "string") board.title = body.title;
+			if (typeof body.curator === "string") board.curator = body.curator || null;
+			if (typeof body.note === "string") board.note = body.note || null;
+			if (res.updated) board.updated = res.updated;
+			if (res.catalog_id) board.catalog_id = res.catalog_id;
+			paintIds();
+			paintArchive();
 			toast("Saved");
-			await reload();
 		} catch (e) {
 			toast(humanError(e instanceof Error ? e.message : "failed"), "error");
 		}
 	}
 
-	async function patchEntry(eid: number, body: Record<string, unknown>, reloadAfter = true) {
-		try {
-			await api(`/api/boards/${id}/entries/${eid}`, { method: "PATCH", body: JSON.stringify(body) });
-			toast("Saved");
-			if (reloadAfter) await reload();
-		} catch (e) {
-			toast(humanError(e instanceof Error ? e.message : "failed"), "error");
-		}
+	/** Write one field, merge the row the API returns, and repaint the ledger without losing focus. */
+	function patchEntry(eid: number, body: Record<string, unknown>): Promise<void> {
+		const run = async () => {
+			try {
+				const updated = (await api(`/api/boards/${id}/entries/${eid}`, { method: "PATCH", body: JSON.stringify(body) })) as Entry;
+				const i = board.entries.findIndex((e) => e.id === eid);
+				if (i >= 0) board.entries[i] = updated;
+				board.updated = new Date().toISOString();
+				const memo = focusMemo();
+				paintLedger();
+				focusRestore(memo);
+				paintIds();
+				toast("Saved");
+			} catch (e) {
+				toast(humanError(e instanceof Error ? e.message : "failed"), "error");
+			}
+		};
+		writes = writes.then(run, run);
+		return writes as Promise<void>;
 	}
 
 	async function reload() {
+		await writes;
 		board = (await api(`/api/boards/${id}`)) as Board;
 		render();
 	}
@@ -373,15 +443,31 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		toast(`Saved ${board.catalog_id}.json`);
 	}
 
+	function boardUrl(): string {
+		return `${location.origin}/b/${id}`;
+	}
+
+	function currentTarget(): string {
+		return target === "url" ? boardUrl() : catalogArg(board.catalog_id);
+	}
+
 	function currentCommand(): string {
-		return archiveCommand(catalogArg(board.catalog_id), dialsFromIndices(dials));
+		return archiveCommand(currentTarget(), dialsFromIndices(dials));
+	}
+
+	function currentCaption(): string {
+		const base = archiveCaption(dialsFromIndices(dials));
+		return target === "url"
+			? `${base} Straight from this board: the CLI claims the row it picks and reports progress here, so the others see it is taken.`
+			: `${base} From the downloaded catalog; nothing is reported back to the board.`;
 	}
 
 	function paintArchive() {
 		if (!archiveLive) return;
 		const d = dialsFromIndices(dials);
-		archiveLive.cmd.textContent = archiveCommand(catalogArg(board.catalog_id), d);
-		archiveLive.caption.textContent = archiveCaption(d);
+		archiveLive.cmd.textContent = archiveCommand(currentTarget(), d);
+		archiveLive.caption.textContent = currentCaption();
+		archiveLive.label.textContent = target === "url" ? "tonight’s fetch · from the board" : "tonight’s fetch · from the file";
 		for (const g of archiveLive.gauges) {
 			const idx = dials[g.kind];
 			const r = gaugeReadout(g.kind, idx);
@@ -432,14 +518,28 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			el(
 				"p",
 				{ class: "bring-lede" },
-				"This site never holds weights. Save the catalog, then let darsay archive the next unfinished source onto your machine.",
+				"This site never holds weights. Point darsay at this board — or at the downloaded catalog — and it archives the next unfinished source onto your machine.",
 			),
 		);
 
 		const cmd = el("code", { class: "cmd-text", "aria-live": "polite" }, currentCommand());
 		const copy = el("button", { type: "button", class: "btn compact cmd-copy" }, "Copy");
 		copy.addEventListener("click", () => void copyOrSelect(copy, currentCommand(), cmd));
-		const chrome = el("div", { class: "cmd-chrome" }, termDots(), el("span", { class: "cmd-label" }, "tonight’s fetch"), copy);
+		const label = el("span", { class: "cmd-label" }, "tonight’s fetch");
+		const targets = el("div", { class: "install-switch cmd-target", role: "group", "aria-label": "Point darsay at" });
+		for (const t of ["url", "file"] as Target[]) {
+			const b = el("button", { type: "button", class: "install-pill" }, t === "url" ? "this board" : "the file");
+			b.setAttribute("aria-pressed", t === target ? "true" : "false");
+			b.addEventListener("click", () => {
+				target = t;
+				for (const child of targets.querySelectorAll("button")) {
+					child.setAttribute("aria-pressed", child === b ? "true" : "false");
+				}
+				paintArchive();
+			});
+			targets.append(b);
+		}
+		const chrome = el("div", { class: "cmd-chrome" }, termDots(), label, targets, copy);
 		const stageEl = el("div", { class: "cmd-stage" }, chrome, el("pre", {}, cmd));
 
 		const dl = el("button", { type: "button", class: "btn bring-download" });
@@ -450,7 +550,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		dl.addEventListener("click", () => downloadCatalog());
 
 		const cmdRow = el("div", { class: "cmd-row" }, stageEl, dl);
-		const caption = el("p", { class: "cmd-caption" }, archiveCaption(dialsFromIndices(dials)));
+		const caption = el("p", { class: "cmd-caption" }, currentCaption());
 
 		const gauges: GaugeRef[] = [];
 		const gaugeRow = el("div", { class: "gauges" });
@@ -460,7 +560,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			gaugeRow.append(g.root);
 		}
 
-		archiveLive = { cmd, caption, gauges };
+		archiveLive = { cmd, caption, gauges, label };
 
 		const details = el("details", { class: "bring-how" });
 		details.open = howOpen;
@@ -485,6 +585,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			flavors.append(b);
 		}
 
+		const step2 = el("p", {});
+		step2.append(
+			"Paste the command with ",
+			el("em", {}, "this board"),
+			" and the CLI claims the row it picks, so the gauge and In flight appear here for everyone. Or download the catalog and run it from ",
+			el("em", {}, "the file"),
+			" — the same want-list, nothing reported back. Either way the URL is this board's key: keep it out of shared shell histories.",
+		);
 		const steps = el("ol", { class: "bring-steps" });
 		steps.append(
 			el(
@@ -493,17 +601,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				el("span", { class: "step-n" }, "1"),
 				el("div", {}, el("strong", {}, "Install darsay"), flavors, el("pre", { class: "install-cmd" }, installCode)),
 			),
-			el(
-				"li",
-				{},
-				el("span", { class: "step-n" }, "2"),
-				el(
-					"div",
-					{},
-					el("strong", {}, "Save the catalog"),
-					el("p", {}, "A catalog.json the CLI already understands. Download it — do not paste the board URL into a terminal."),
-				),
-			),
+			el("li", {}, el("span", { class: "step-n" }, "2"), el("div", {}, el("strong", {}, "Point it at the board, or the file"), step2)),
 			el(
 				"li",
 				{},
@@ -511,15 +609,15 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				el(
 					"div",
 					{},
-					el("strong", {}, "Run it where you saved the file"),
-					el("p", {}, "In that folder, paste the command above. The dials rewrite the flags. Rerun the same line to resume."),
+					el("strong", {}, "Run it, then rerun it"),
+					el("p", {}, "The dials rewrite the flags. Interrupt any time; the same line resumes the same pin until every file verifies."),
 				),
 			),
 		);
 
-		const more = el("p", { class: "bring-more muted" }, "The catalog is the want-list, not the weights. Upstream is Hugging Face. ");
+		const more = el("p", { class: "bring-more muted" }, "Upstream is Hugging Face. ");
 		more.append(el("a", { href: "/docs/getting-started/" }, "Full walkthrough"), " · ");
-		more.append(el("a", { href: "/docs/examples/#share-a-catalog" }, "Share a catalog"), " · ");
+		more.append(el("a", { href: "/docs/examples/#keep-a-darsayio-board-honest" }, "Keep a board honest"), " · ");
 		const fg = el("button", { type: "button", class: "linkish" }, "✦ Field guide");
 		fg.addEventListener("click", () => openGuide("masters", fg));
 		more.append(fg);
@@ -573,7 +671,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			const key = factPrimer(f);
 			if (key) {
 				const b = el("button", { type: "button", class: "grim-fact-btn", title: "Open in the field guide" }, f);
-				b.addEventListener("click", () => openGuide(key, b));
+				b.addEventListener("click", () => openGuide(key, b, e));
 				facts.append(el("li", {}, b));
 			} else {
 				facts.append(el("li", {}, f));
@@ -633,7 +731,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				: "";
 		const since = claim.updated ? ` · reported ${relativeTime(claim.updated)}` : "";
 		const why = el("button", { type: "button", class: "claim-why", "aria-label": "What is a claim?" }, "✦");
-		why.addEventListener("click", () => openGuide("claims", why));
+		why.addEventListener("click", () => openGuide("claims", why, e));
 		const label = el(
 			"div",
 			{ class: "claim-label" },
@@ -676,8 +774,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 		const kind = entryArtifactType(e);
 		const facts = el("div", { class: "work-facts" });
-		if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset"));
-		else if (kind === "model") facts.append(teachChip("model", "bundle", "chip-type chip-type-model", "What a model bundle is"));
+		if (e.status === "have") {
+			facts.append(teachChip(e.holders ? `have · ${e.holders}` : "have", "desire", "chip-have", e, "In a member's vault — who says whose"));
+		}
+		if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset", e));
+		else if (kind === "model") facts.append(teachChip("model", "bundle", "chip-type chip-type-model", e, "What lands on disk for a model"));
 		else facts.append(el("span", { class: "muted" }, "—"));
 
 		const size = el("span", { class: "work-size" }, humanSize(e.payload_bytes));
@@ -685,24 +786,23 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		facts.append(size);
 		if (e.parameters) {
 			const stat = `${humanParams(e.parameters)}${e.dominant_dtype ? ` · ${e.dominant_dtype}` : ""}`;
-			facts.append(teachChip(stat, "dtype", "chip-stat", "Parameters and dominant dtype — what one copy should weigh"));
+			facts.append(teachChip(stat, "dtype", "chip-stat", e, "Parameters and dominant dtype — what one copy should weigh"));
 		}
 		if (e.policy === "masters") {
-			facts.append(teachChip("masters", "masters", "chip-policy", "Priced masters-first: negatives, not prints"));
+			facts.append(teachChip("masters", "masters", "chip-policy", e, "Priced masters-first: negatives, not prints"));
 		}
 		for (const hint of effectiveHints(e)) {
 			const key = HINT_PRIMER[hint];
-			if (key) facts.append(teachChip(hint, key, "chip-hint"));
+			if (key) facts.append(teachChip(hint, key, "chip-hint", e));
 		}
-		if (isAbliterated(e.source)) facts.append(teachChip("abliterated", "abliterated", "chip-name"));
-		if (isSpeculator(e.source)) facts.append(teachChip("speculator", "spec", "chip-name"));
-		if (isBaseModel(e.source)) facts.append(teachChip("base", "base", "chip-name"));
+		if (isAbliterated(e.source)) facts.append(teachChip("abliterated", "abliterated", "chip-name", e));
+		if (isSpeculator(e.source)) facts.append(teachChip("speculator", "spec", "chip-name", e));
+		if (isBaseModel(e.source)) facts.append(teachChip("base", "base", "chip-name", e));
 		const moe = moeFromName(e.source);
 		if (moe) {
 			const label = moe.total !== null && moe.active !== null ? `MoE · ${moe.active}B active` : "MoE";
-			facts.append(teachChip(label, "moe", "chip-name"));
+			facts.append(teachChip(label, "moe", "chip-name", e));
 		}
-		if (e.status === "have") facts.append(teachChip("✓ vaulted", "desire", "chip-have", "In at least one member's vault"));
 
 		const open = openRecipes.has(e.id);
 		const region = el("section", {
@@ -727,7 +827,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				"aria-expanded": open ? "true" : "false",
 				"aria-controls": region.id,
 			},
-			el("span", { class: "grim-glyph", "aria-hidden": "true" }, "✦"),
+			el("span", { class: "grim-glyph", "aria-hidden": "true" }, "▸"),
 			el("span", {}, "Recipes"),
 		);
 		toggle.addEventListener("click", () => {
@@ -752,11 +852,13 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				maxlength: "500",
 				placeholder: "A sentence for why this one.",
 				"aria-label": `Note for ${e.source}`,
+				"data-entry": String(e.id),
+				"data-field": "note",
 			},
 			e.note || "",
 		);
 		note.addEventListener("change", () => {
-			void patchEntry(e.id, { note: note.value }, false);
+			void patchEntry(e.id, { note: note.value });
 		});
 
 		const desire = el("input", {
@@ -766,16 +868,18 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			inputmode: "numeric",
 			value: e.desire ? String(e.desire) : "",
 			"aria-label": `Desire for ${e.source}, 1 to 9`,
+			"data-entry": String(e.id),
+			"data-field": "desire",
 		});
-		desire.addEventListener("change", async () => {
+		desire.addEventListener("change", () => {
 			const v = desire.value === "" ? null : Number(desire.value);
-			await patchEntry(e.id, { desire: v });
+			void patchEntry(e.id, { desire: v });
 		});
 
-		const have = el("input", { type: "checkbox" });
+		const have = el("input", { type: "checkbox", "data-entry": String(e.id), "data-field": "have" });
 		if (e.status === "have") have.checked = true;
-		have.addEventListener("change", async () => {
-			await patchEntry(e.id, { status: have.checked ? "have" : "want" });
+		have.addEventListener("change", () => {
+			void patchEntry(e.id, { status: have.checked ? "have" : "want" });
 		});
 
 		const who = el("input", {
@@ -784,9 +888,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			value: e.holders || "",
 			maxlength: "500",
 			"aria-label": `Who holds ${e.source}`,
+			"data-entry": String(e.id),
+			"data-field": "who",
 		});
-		who.addEventListener("change", async () => {
-			await patchEntry(e.id, { holders: who.value }, false);
+		who.addEventListener("change", () => {
+			void patchEntry(e.id, { holders: who.value });
 		});
 
 		const rm = el("button", { type: "button", class: "btn compact secondary work-drop" }, "Drop");
@@ -808,7 +914,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		});
 
 		const desireKicker = el("button", { type: "button", class: "kicker-btn", title: "What desire does" }, "Desire");
-		desireKicker.addEventListener("click", () => openGuide("desire", desireKicker));
+		desireKicker.addEventListener("click", () => openGuide("desire", desireKicker, e));
 		const bar = el(
 			"div",
 			{ class: "work-bar" },
@@ -827,6 +933,20 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			wrap,
 		);
 		return card;
+	}
+
+	function paintIds() {
+		if (!idsLive) return;
+		idsLive.replaceChildren(
+			el("span", { class: "board-id-k" }, "catalog "),
+			el("code", { class: "board-id-v" }, board.catalog_id),
+			el("span", { class: "board-id-sep", "aria-hidden": "true" }, " · "),
+			el("span", {}, "created "),
+			el("time", { datetime: board.created, title: board.created }, prettyDate(board.created)),
+			el("span", { class: "board-id-sep", "aria-hidden": "true" }, " · "),
+			el("span", {}, "updated "),
+			el("time", { datetime: board.updated, title: board.updated }, relativeTime(board.updated)),
+		);
 	}
 
 	function renderHeader(): HTMLElement {
@@ -886,30 +1006,27 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		);
 		boardNote.addEventListener("change", () => patchBoard({ note: boardNote.value }));
 
-		const ids = el("p", { class: "muted board-ids" });
-		ids.append(
-			el("span", { class: "board-id-k" }, "catalog "),
-			el("code", { class: "board-id-v" }, board.catalog_id),
-			el("span", { class: "board-id-sep", "aria-hidden": "true" }, " · "),
-			el("span", {}, "created "),
-			el("time", { datetime: board.created, title: board.created }, prettyDate(board.created)),
-			el("span", { class: "board-id-sep", "aria-hidden": "true" }, " · "),
-			el("span", {}, "updated "),
-			el("time", { datetime: board.updated, title: board.updated }, relativeTime(board.updated)),
-		);
+		idsLive = el("p", { class: "muted board-ids" });
+		paintIds();
 
 		header.append(
 			el("div", { class: "board-title-row" }, title, actions),
 			el("label", { class: "meta-field curator-field" }, el("span", {}, "Curator"), curator),
 			el("label", { class: "board-note-wrap" }, el("span", { class: "work-note-kicker" }, "About this list"), boardNote),
-			ids,
+			idsLive,
 		);
 		return header;
 	}
 
+	function clearLenses() {
+		lenses = [];
+		syncHash();
+		paintLedger();
+	}
+
 	function paintToolbar(visible: Entry[]) {
 		const all = board.entries;
-		const counts = lensCounts(all);
+		const counts = lensCountsGiven(all, lenses);
 		const t = tally(visible);
 		const total = all.length;
 
@@ -921,7 +1038,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		}
 		const parts: string[] = [];
 		if (t.wantBytes > 0) parts.push(`${humanSize(t.wantBytes)} wanted`);
-		if (t.haveBytes > 0) parts.push(`${humanSize(t.haveBytes)} vaulted`);
+		if (t.haveBytes > 0) parts.push(`${humanSize(t.haveBytes)} in vaults`);
 		if (t.unsized > 0) parts.push(`${t.unsized} unpriced`);
 		const tallyEl = el("span", { class: "ledger-tally", title: "Sizes as priced by the Hub; masters-first where the CLI classified" });
 		parts.forEach((p, i) => {
@@ -964,25 +1081,28 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			{ type: "button", class: "lens-chip lens-all", "aria-pressed": lenses.length === 0 ? "true" : "false" },
 			"All",
 		);
-		all_.addEventListener("click", () => {
-			lenses = [];
-			syncHash();
-			paintLedger();
-		});
-		chips.append(all_);
+		all_.addEventListener("click", clearLenses);
+		chips.append(el("span", { class: "lens-group" }, all_));
+		let group: HTMLElement | null = null;
 		let lastGroup = "";
 		for (const lens of LENSES) {
 			const n = counts.get(lens.key) ?? 0;
 			const active = lenses.includes(lens.key);
-			if (n === 0 && !active) continue;
-			if (lastGroup && lens.group !== lastGroup) chips.append(el("span", { class: "lens-gap", "aria-hidden": "true" }));
-			lastGroup = lens.group;
+			const alone = lensCounts(all).get(lens.key) ?? 0;
+			if (alone === 0 && !active) continue;
+			if (!group || lens.group !== lastGroup) {
+				group = el("span", { class: "lens-group" });
+				chips.append(group);
+				lastGroup = lens.group;
+			}
 			const b = el(
 				"button",
 				{
 					type: "button",
-					class: `lens-chip lens-${lens.group}${active ? " is-active" : ""}`,
+					class: `lens-chip lens-${lens.group}${active ? " is-active" : ""}${n === 0 && !active ? " is-empty" : ""}`,
 					"aria-pressed": active ? "true" : "false",
+					"data-lens": lens.key,
+					title: n === 0 && !active ? "Nothing would be left with the lenses already on" : lens.blurb.replace(/`/g, ""),
 				},
 				lens.label,
 				el("span", { class: "lens-n" }, String(n)),
@@ -991,10 +1111,22 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				lenses = active ? lenses.filter((k) => k !== lens.key) : [...lenses, lens.key];
 				syncHash();
 				paintLedger();
+				// The toolbar was rebuilt; keep the keyboard on the chip that was pressed.
+				shells.toolbar.querySelector<HTMLElement>(`.lens-chip[data-lens="${lens.key}"]`)?.focus({ preventScroll: true });
 			});
-			chips.append(b);
+			group.append(b);
 		}
-		const guideBtn = el("button", { type: "button", class: "guide-open" }, el("span", { "aria-hidden": "true" }, "✦ "), "Field guide");
+		const guideBtn = el(
+			"button",
+			{
+				type: "button",
+				class: "guide-open",
+				title: hasKeyboard() ? "Open the field guide — or press ? anywhere on the board" : "Open the field guide",
+			},
+			el("span", { "aria-hidden": "true" }, "✦ "),
+			el("span", { class: "guide-open-long" }, "Field "),
+			"guide",
+		);
 		guideBtn.addEventListener("click", () => openGuide(lenses.length ? LENS_BY_KEY[lenses[lenses.length - 1]].primer : "masters", guideBtn));
 
 		shells.toolbar.replaceChildren(
@@ -1002,21 +1134,36 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			el("div", { class: "ledger-row lens-row" }, el("span", { class: "lens-kicker" }, "Lens"), chips),
 		);
 
-		// The caption: the most recently added lens explains itself.
-		if (lenses.length) {
+		// The caption: the active lenses explain themselves; before any lens,
+		// a one-time hint that the chips are doorways.
+		if (!lenses.length && !hintSeen()) {
+			const hint = el("p", { class: "lens-caption lens-hint" });
+			hint.append(
+				el("span", { "aria-hidden": "true" }, "✦ "),
+				"New here? Every chip on a row — the type, the size stat, hints like ",
+				el("code", {}, "large"),
+				" — opens a card of the field guide, applied to that row. ",
+			);
+			if (hasKeyboard()) hint.append(el("span", { class: "kbd-only" }, "Press ", el("kbd", {}, "?"), " any time. "));
+			const ok = el("button", { type: "button", class: "linkish lens-clear" }, "Got it");
+			ok.addEventListener("click", () => {
+				markHintSeen();
+				shells.caption.replaceChildren();
+			});
+			hint.append(ok);
+			shells.caption.replaceChildren(hint);
+		} else if (lenses.length) {
 			const last = LENS_BY_KEY[lenses[lenses.length - 1]];
 			const cap = el("p", { class: "lens-caption" });
-			const names = lenses.map((k) => LENS_BY_KEY[k].label).join(" + ");
-			cap.append(el("strong", {}, names), " — ", inline(last.blurb), " ");
+			const names = lenses.map((k) => LENS_BY_KEY[k].label).join(" · ");
+			cap.append(el("strong", {}, names), " — ");
+			if (lenses.length > 1) cap.append(`rows that are ${lenses.length === 2 ? "both" : "all of these"}. `);
+			cap.append(inline(last.blurb), " ");
 			const read = el("button", { type: "button", class: "linkish" }, "✦ Read the card");
 			read.addEventListener("click", () => openGuide(last.primer, read));
 			cap.append(read);
-			const clear = el("button", { type: "button", class: "linkish lens-clear" }, "Clear");
-			clear.addEventListener("click", () => {
-				lenses = [];
-				syncHash();
-				paintLedger();
-			});
+			const clear = el("button", { type: "button", class: "linkish lens-clear" }, lenses.length > 1 ? "Clear all" : "Clear");
+			clear.addEventListener("click", clearLenses);
 			cap.append(el("span", { class: "guide-sep", "aria-hidden": "true" }, " · "), clear);
 			shells.caption.replaceChildren(cap);
 		} else {
@@ -1038,13 +1185,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			shells.ledger.append(empty);
 		} else if (visible.length === 0) {
 			const empty = el("div", { class: "ledger-empty" });
-			const clear = el("button", { type: "button", class: "btn compact secondary" }, "Clear lenses");
-			clear.addEventListener("click", () => {
-				lenses = [];
-				syncHash();
-				paintLedger();
-			});
-			empty.append(el("p", { class: "ledger-empty-t" }, "Nothing through this lens."), clear);
+			const n = lenses.length;
+			const clear = el(
+				"button",
+				{ type: "button", class: "btn compact secondary" },
+				n === 1 ? "Clear the lens" : n === 2 ? "Clear both lenses" : `Clear all ${n} lenses`,
+			);
+			clear.addEventListener("click", clearLenses);
+			empty.append(el("p", { class: "ledger-empty-t" }, n === 1 ? "Nothing through this lens." : "Nothing through these lenses together."), clear);
 			shells.ledger.append(empty);
 		} else {
 			visible.forEach((e, i) => shells.ledger.append(renderEntry(e, i)));
@@ -1080,10 +1228,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const addBtn = el("button", { type: "submit", class: "btn" }, "Add source");
 		const addErr = el("p", { class: "add-err", role: "alert" });
 		const help = el("p", { class: "add-help muted" });
-		help.append("Priced from the Hub as it lands — size, parameters, dtype. New to the vocabulary? ");
-		const fg = el("button", { type: "button", class: "linkish" }, "✦ Open the field guide");
-		fg.addEventListener("click", () => openGuide("masters", fg));
-		help.append(fg);
+		help.append("Priced from the Hub as it lands — size, parameters, dtype. Rate it 1–9; ");
+		const fg = el("button", { type: "button", class: "linkish" }, "✦ what desire does");
+		fg.addEventListener("click", () => openGuide("desire", fg));
+		help.append(fg, ".");
 
 		add.append(
 			el("h2", { class: "add-title", id: "add-title" }, "Add a source"),
@@ -1134,14 +1282,15 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	}
 
 	function watchSticky() {
+		stickyWatch?.disconnect();
 		const sentinel = el("div", { class: "sticky-sentinel", "aria-hidden": "true" });
 		shells.toolbar.before(sentinel);
 		if (!("IntersectionObserver" in window)) return;
-		const io = new IntersectionObserver(
+		stickyWatch = new IntersectionObserver(
 			([entry]) => shells.toolbar.classList.toggle("is-stuck", !entry.isIntersecting),
 			{ threshold: [1] },
 		);
-		io.observe(sentinel);
+		stickyWatch.observe(sentinel);
 	}
 
 	function render() {

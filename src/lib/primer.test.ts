@@ -78,11 +78,19 @@ describe("the field guide", () => {
 		for (const c of PRIMER) if (c.lens) expect(LENS_BY_KEY[c.lens], `card ${c.key} → lens ${c.lens}`).toBeDefined();
 	});
 
-	it("says so when a lens reads the name", () => {
+	it("leaves 'read from the repo name' to the guide chrome instead of repeating it per card", () => {
 		for (const l of LENSES) {
 			if (!l.fromName) continue;
 			const card = PRIMER_BY_KEY[l.primer];
-			expect(card.body.join(" ")).toMatch(/reads the repo name/);
+			expect(card.body.join(" ")).not.toMatch(/This lens reads the repo name/);
+		}
+	});
+
+	it("speaks in GiB, like the board and the CLI", () => {
+		for (const c of PRIMER) {
+			for (const text of [c.lede, c.collect, ...c.body, ...(c.table?.rows.flat() ?? [])]) {
+				expect(text, `${c.key}: "${text.slice(0, 60)}…"`).not.toMatch(/\d\s?GB\b/);
+			}
 		}
 	});
 });

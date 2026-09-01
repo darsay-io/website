@@ -946,7 +946,7 @@ button.btn.bring-download {
 	gap: 0.7rem;
 	min-width: 0;
 	max-width: 100%;
-	box-shadow: inset 3px 0 0 var(--d-gold);
+	box-shadow: inset 3px 0 0 rgba(212, 176, 106, 0.55);
 }
 
 .work-top {
@@ -1158,7 +1158,7 @@ button.btn.bring-download {
 
 .grim-toggle[aria-expanded="true"] .grim-glyph {
 	color: var(--d-ink);
-	transform: rotate(135deg);
+	transform: rotate(90deg);
 }
 
 .grim-wrap {
@@ -1736,7 +1736,7 @@ button.btn.bring-download {
 	align-self: flex-start;
 	padding-top: 0.6rem;
 	font-size: 0.68rem;
-	letter-spacing: 0.14em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: var(--d-gold);
 }
@@ -1750,11 +1750,26 @@ button.btn.bring-download {
 	flex: 1 1 auto;
 }
 
-.lens-gap {
+.lens-group {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+}
+
+.lens-group + .lens-group::before {
+	content: "";
 	width: 1px;
 	height: 1.1rem;
 	margin: 0 0.25rem;
 	background: var(--d-border);
+}
+
+.lens-chip.is-empty {
+	opacity: 0.45;
+}
+
+.lens-chip.is-empty:hover {
+	opacity: 0.8;
 }
 
 .lens-chip {
@@ -1853,7 +1868,7 @@ button.btn.bring-download {
 	margin: -0.25rem 0 0.95rem;
 	padding: 0.65rem 0.95rem 0.7rem;
 	border-left: 2px solid var(--d-gold);
-	border-radius: 0 8px 8px 0;
+	border-radius: 0 10px 10px 0;
 	background: rgba(212, 176, 106, 0.05);
 	font-family: var(--d-serif);
 	font-size: 1.02rem;
@@ -2074,15 +2089,10 @@ a.src-link:hover .src-name {
 }
 
 .chip-policy {
-	color: var(--d-ink);
-	background: var(--d-gold);
-	border-color: var(--d-gold-hi);
+	color: var(--d-gold-hi);
+	background: var(--d-gold-dim);
+	border-color: var(--d-gold);
 	font-weight: 600;
-}
-
-.chip-policy:hover {
-	color: var(--d-ink);
-	background: var(--d-gold-hi);
 }
 
 .chip-name {
@@ -2090,9 +2100,15 @@ a.src-link:hover .src-name {
 }
 
 .chip-have {
-	color: var(--d-gold-hi);
-	border-color: rgba(212, 176, 106, 0.5);
-	background: transparent;
+	color: var(--d-ink);
+	background: var(--d-gold-hi);
+	border-color: var(--d-gold-hi);
+	font-weight: 600;
+}
+
+.chip-have:hover {
+	color: var(--d-ink);
+	background: var(--d-gold);
 }
 
 .claim-label {
@@ -2324,7 +2340,7 @@ dialog.confirm,
 dialog.guide {
 	padding: 0;
 	border: 1px solid var(--d-gold);
-	border-radius: 14px;
+	border-radius: 12px;
 	background:
 		radial-gradient(ellipse 70% 55% at 0% 0%, rgba(212, 176, 106, 0.1), transparent 55%),
 		radial-gradient(ellipse 45% 45% at 100% 100%, rgba(90, 70, 160, 0.16), transparent 52%),
@@ -2368,7 +2384,7 @@ dialog.confirm {
 	font-family: var(--d-serif);
 	font-style: italic;
 	font-weight: 600;
-	font-size: 1.45rem;
+	font-size: 1.35rem;
 	letter-spacing: -0.015em;
 }
 
@@ -2447,7 +2463,7 @@ dialog.guide {
 
 .guide-kicker {
 	font-size: 0.72rem;
-	letter-spacing: 0.16em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: var(--d-gold);
 }
@@ -2500,11 +2516,12 @@ dialog.guide {
 
 .guide-group {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: baseline;
-	gap: 0.6rem;
+	gap: 0.3rem 0.6rem;
 	margin: 0 0 0.35rem;
 	font-size: 0.7rem;
-	letter-spacing: 0.14em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: var(--d-muted);
 }
@@ -2523,7 +2540,7 @@ dialog.guide {
 	font-family: var(--d-serif);
 	font-style: italic;
 	font-weight: 600;
-	font-size: clamp(1.7rem, 3.4vw, 2.25rem);
+	font-size: clamp(1.55rem, 3vw, 2rem);
 	letter-spacing: -0.02em;
 	line-height: 1.12;
 	color: var(--d-fg);
@@ -2662,7 +2679,7 @@ dialog.guide {
 	margin-bottom: 0.2rem;
 	font-family: var(--d-sans);
 	font-size: 0.66rem;
-	letter-spacing: 0.16em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: var(--d-gold);
 }
@@ -2715,7 +2732,7 @@ dialog.guide {
 .guide-related-k {
 	margin-right: 0.3rem;
 	font-size: 0.66rem;
-	letter-spacing: 0.14em;
+	letter-spacing: 0.12em;
 	text-transform: uppercase;
 	color: var(--d-muted);
 }
@@ -2761,7 +2778,7 @@ dialog.guide {
 	max-width: 100%;
 	padding: 0.3rem 0.7rem;
 	border: 1px solid transparent;
-	border-radius: 8px;
+	border-radius: 6px;
 	background: transparent;
 	color: var(--d-gold-hi);
 	font-family: var(--d-serif);
@@ -3100,5 +3117,163 @@ dialog.guide {
 			opacity: 1;
 			transform: none;
 		}
+	}
+}
+
+/* ── The guide, applied to a row ────────────────────────────────────────── */
+.guide-row-tag {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.78rem;
+	color: var(--d-muted);
+}
+
+.guide-row-tag:empty {
+	display: none;
+}
+
+.guide-row-tag-k {
+	font-style: italic;
+	font-family: var(--d-serif);
+}
+
+.guide-row-tag code {
+	font-family: var(--d-mono);
+	font-size: 0.78rem;
+	color: var(--d-gold-hi);
+}
+
+.guide-row {
+	margin: 1.15rem 0 0;
+	padding: 0.85rem 1rem 0.9rem;
+	border: 1px dashed rgba(212, 176, 106, 0.45);
+	border-radius: 10px;
+	background: rgba(212, 176, 106, 0.05);
+}
+
+.guide-row-k {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.2rem 0.5rem;
+	margin: 0 0 0.35rem;
+	font-size: 0.66rem;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--d-gold);
+}
+
+.guide-row-src {
+	font-family: var(--d-mono);
+	font-size: 0.78rem;
+	letter-spacing: 0;
+	text-transform: none;
+	color: var(--d-gold-hi);
+	overflow-wrap: anywhere;
+}
+
+.guide-row-t {
+	margin: 0;
+	font-family: var(--d-serif);
+	font-size: 1.05rem;
+	line-height: 1.5;
+	color: var(--d-fg);
+}
+
+.guide-row-t strong {
+	color: var(--d-gold-hi);
+	font-weight: 600;
+}
+
+.lens-hint {
+	font-family: var(--d-sans);
+	font-size: 0.9rem;
+	color: var(--d-muted);
+	border-left-color: rgba(212, 176, 106, 0.5);
+}
+
+.lens-hint code {
+	font-size: 0.82em;
+}
+
+.lens-hint kbd {
+	display: inline-block;
+	min-width: 1.1rem;
+	padding: 0 0.3rem;
+	border: 1px solid var(--d-border);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	font-family: var(--d-mono);
+	font-size: 0.72rem;
+	color: var(--d-gold-hi);
+	text-align: center;
+}
+
+@media (max-width: 40rem) {
+	.guide-open-long {
+		display: none;
+	}
+
+	.guide-row-tag {
+		display: none;
+	}
+}
+
+/* ── Review pass: target switch, name-read note, focus under the sticky bar ── */
+.cmd-target {
+	margin: 0;
+	flex-shrink: 0;
+}
+
+.cmd-target .install-pill {
+	min-height: 0;
+	padding: 0.12rem 0.55rem;
+	font-size: 0.72rem;
+}
+
+.guide-group-note {
+	font-style: italic;
+	font-family: var(--d-serif);
+	font-size: 0.88rem;
+	letter-spacing: 0;
+	text-transform: none;
+	color: var(--d-gold);
+}
+
+.guide-group-note::before {
+	content: "· ";
+	color: var(--d-muted);
+}
+
+.guide-table-wrap:focus-visible {
+	outline: 2px solid var(--d-gold);
+	outline-offset: 2px;
+	border-radius: 6px;
+}
+
+@media (min-width: 40.01rem) {
+	html {
+		scroll-padding-top: 8rem;
+	}
+}
+
+@media (max-width: 40rem) {
+	.cmd-chrome {
+		flex-wrap: wrap;
+	}
+
+	.cmd-target {
+		order: 3;
+		flex-basis: 100%;
+		padding-top: 0.35rem;
+	}
+}
+
+@media (hover: none) {
+	.kbd-only,
+	.guide-keys {
+		display: none;
 	}
 }
