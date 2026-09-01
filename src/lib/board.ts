@@ -1,5 +1,4 @@
-import { artifactTypeFromSource, hfUrlFromCanonical } from "../worker/sources.ts";
-import { deriveRecipes, humanSize, type Recipe } from "./recipes.ts";
+import { artifactTypeFromSource, canonicalizeSource, hfUrlFromCanonical } from "../worker/sources.ts";
 import {
 	DEFAULT_DIAL_INDICES,
 	GAUGE_META,
@@ -15,6 +14,40 @@ import {
 	type GaugeKind,
 	type InstallFlavor,
 } from "./archive-cmd.ts";
+import {
+	codeLines,
+	confirmDialog,
+	copyOrSelect,
+	copyText,
+	el,
+	flashCopied,
+	inline,
+	reducedMotion,
+	roman,
+	termDots,
+	toast,
+} from "./dom.ts";
+import { plural, prettyDate, relativeTime } from "./format.ts";
+import { createGuide, type Guide } from "./guide.ts";
+import {
+	LENSES,
+	LENS_BY_KEY,
+	applyLenses,
+	effectiveHints,
+	formatView,
+	inFlight,
+	isAbliterated,
+	isBaseModel,
+	isSpeculator,
+	lensCounts,
+	moeFromName,
+	parseView,
+	tally,
+	type LensKey,
+	type SortKey,
+} from "./lenses.ts";
+import { HINT_PRIMER, type PrimerKey } from "./primer.ts";
+import { deriveRecipes, humanParams, humanSize, type Recipe } from "./recipes.ts";
 
 type Entry = {
 	id: number;
@@ -55,21 +88,6 @@ type Board = {
 	entries: Entry[];
 };
 
-function el<K extends keyof HTMLElementTagNameMap>(
-	tag: K,
-	attrs: Record<string, string> = {},
-	...kids: (Node | string)[]
-): HTMLElementTagNameMap[K] {
-	const n = document.createElement(tag);
-	for (const [k, v] of Object.entries(attrs)) {
-		if (k === "class") n.className = v;
-		else n.setAttribute(k, v);
-	}
-	for (const kid of kids) n.append(typeof kid === "string" ? document.createTextNode(kid) : kid);
-	return n;
-}
-
-
 function fitTextarea(n: HTMLTextAreaElement) {
 	n.style.height = "auto";
 	n.style.height = `${Math.max(n.scrollHeight, 44)}px`;
@@ -81,76 +99,6 @@ function area(attrs: Record<string, string>, value: string): HTMLTextAreaElement
 	n.addEventListener("input", () => fitTextarea(n));
 	queueMicrotask(() => fitTextarea(n));
 	return n;
-}
-
-async function copyText(text: string): Promise<boolean> {
-	try {
-		await navigator.clipboard.writeText(text);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function flashCopied(btn: HTMLButtonElement) {
-	const prev = btn.textContent;
-	btn.textContent = "Copied";
-	btn.classList.add("is-copied");
-	window.setTimeout(() => {
-		btn.textContent = prev;
-		btn.classList.remove("is-copied");
-	}, 1600);
-}
-
-function selectContents(node: Node) {
-	const sel = window.getSelection();
-	if (!sel) return;
-	const range = document.createRange();
-	range.selectNodeContents(node);
-	sel.removeAllRanges();
-	sel.addRange(range);
-}
-
-function isMac(): boolean {
-	return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
-}
-
-/** Copy; where the clipboard is unavailable, select the text and name the key instead. */
-async function copyOrSelect(btn: HTMLButtonElement, text: string, node: Node) {
-	if (await copyText(text)) {
-		flashCopied(btn);
-		return;
-	}
-	selectContents(node);
-	const prev = btn.textContent;
-	btn.textContent = isMac() ? "Selected · ⌘C" : "Selected · Ctrl+C";
-	btn.classList.add("is-copied");
-	window.setTimeout(() => {
-		btn.textContent = prev;
-		btn.classList.remove("is-copied");
-	}, 2400);
-}
-
-const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
-
-function termDots(): HTMLElement {
-	return el("span", { class: "cmd-dots", "aria-hidden": "true" }, el("span"), el("span"), el("span"));
-}
-
-/** Shell lines as text nodes; a trailing `# comment` gets a dimmer span. Never HTML. */
-function codeLines(lines: string[]): HTMLElement {
-	const code = el("code", { class: "cmd-text" });
-	lines.forEach((line, i) => {
-		if (i > 0) code.append("\n");
-		const m = /^(\s*)(#.*)$/.exec(line) ?? /^(.*?\S)(\s+#.*)$/.exec(line);
-		if (m) {
-			if (m[1]) code.append(m[1]);
-			code.append(el("span", { class: "cmd-comment" }, m[2]));
-		} else if (line) {
-			code.append(line);
-		}
-	});
-	return code;
 }
 
 async function api(path: string, init?: RequestInit) {
@@ -170,6 +118,21 @@ async function api(path: string, init?: RequestInit) {
 		throw new Error(err);
 	}
 	return body;
+}
+
+/** API error strings, as a person would hear them. */
+function humanError(msg: string): string {
+	const known: Record<string, string> = {
+		not_found: "That board is gone.",
+		conflict: "That source is already on the list.",
+		entry_cap: "The list is full.",
+		mutate_cap: "The board is resting — too many edits today. Try again tomorrow.",
+		lookup_cap: "Too many lookups today. Try again tomorrow.",
+		quota: "The ledger could not be written. Try again in a moment.",
+		"invalid source": "That does not look like a source. Try owner/name or a Hugging Face URL.",
+		"field too long": "That is too long for the field.",
+	};
+	return known[msg] ?? msg;
 }
 
 export function mountCreate(root: HTMLElement) {
@@ -217,11 +180,7 @@ export function mountCreate(root: HTMLElement) {
 			urlBox.textContent = body.url;
 			result.hidden = false;
 			copyBtn.onclick = async () => {
-				try {
-					await navigator.clipboard.writeText(body.url);
-				} catch {
-					/* user can select the URL */
-				}
+				if (await copyText(body.url)) flashCopied(copyBtn);
 			};
 			ackBox.addEventListener("change", () => {
 				go.hidden = !ackBox.checked;
@@ -239,8 +198,6 @@ export function mountCreate(root: HTMLElement) {
 	});
 	root.append(form);
 }
-
-type SortKey = "source" | "type" | "desire" | "size" | "status";
 
 export function entryArtifactType(e: Pick<Entry, "source" | "artifact_type">): string {
 	if (e.artifact_type === "dataset" || e.artifact_type === "model") return e.artifact_type;
@@ -267,6 +224,19 @@ export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "d
 	return a.id - b.id;
 }
 
+/** Which field-guide card a recipe-card fact opens, if any. */
+export function factPrimer(fact: string): PrimerKey | null {
+	if (/^pin /.test(fact)) return "pin";
+	if (fact === "gated") return "gated";
+	if (/\bglobs?$/.test(fact)) return "subset";
+	if (fact === "dataset") return "dataset";
+	if (fact === "model") return "bundle";
+	if (/^\d[\d.]*[BM]\b/.test(fact)) return "dtype";
+	if (/before --include$/.test(fact)) return "subset";
+	if (/\b(GiB|TiB)$/.test(fact)) return "large";
+	return null;
+}
+
 type GaugeRef = {
 	kind: GaugeKind;
 	face: HTMLElement;
@@ -275,45 +245,106 @@ type GaugeRef = {
 	input: HTMLInputElement;
 };
 
+const DEFAULT_SORT: { sort: SortKey; dir: "asc" | "desc" } = { sort: "desire", dir: "desc" };
+
 export async function mountBoard(root: HTMLElement, id: string) {
-	root.replaceChildren(el("p", {}, "Loading…"));
+	root.replaceChildren(
+		el("p", { class: "board-loading" }, el("span", { class: "loading-rule", "aria-hidden": "true" }), "Opening the ledger…"),
+	);
 	let board: Board;
 	try {
 		board = (await api(`/api/boards/${id}`)) as Board;
 	} catch {
-		root.replaceChildren(el("p", {}, "Board not found. Check the URL."));
+		const p = el("p", { class: "board-missing" });
+		p.append(
+			el("strong", {}, "Board not found."),
+			" Check the URL — it is the whole key. ",
+			el("a", { href: "/boards" }, "Create a new one"),
+			".",
+		);
+		root.replaceChildren(p);
 		return;
 	}
 
-	let sortKey: SortKey = "desire";
-	let sortDir: "asc" | "desc" = "desc";
-	let message = "";
+	const initial = parseView(location.hash);
+	let sortKey: SortKey = initial.sort ?? DEFAULT_SORT.sort;
+	let sortDir: "asc" | "desc" = initial.dir ?? DEFAULT_SORT.dir;
+	let lenses: LensKey[] = initial.lenses;
 	let dials: DialIndices = { ...DEFAULT_DIAL_INDICES };
 	let installFlavor: InstallFlavor = "pipx";
 	let howOpen = true;
 	let archiveLive: { cmd: HTMLElement; caption: HTMLElement; gauges: GaugeRef[] } | null = null;
 	let installLive: HTMLElement | null = null;
 	const openRecipes = new Set<number>();
+	let firstPaint = true;
+
+	const shells = {
+		toolbar: el("div", { class: "ledger-toolbar" }),
+		caption: el("div", { class: "lens-caption-slot" }),
+		ledger: el("div", { class: "ledger" }),
+	};
+
+	const guide: Guide = createGuide({
+		lensCount: (key) => lensCounts(board.entries).get(key) ?? 0,
+		showLens: (key) => {
+			lenses = [key];
+			syncHash();
+			paintLedger();
+			shells.toolbar.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+		},
+	});
+
+	function openGuide(key: PrimerKey, from?: HTMLElement | null) {
+		guide.open(key, from ?? null);
+	}
+
+	/** A chip that opens a field-guide card. */
+	function teachChip(text: string, key: PrimerKey, cls: string, title?: string): HTMLButtonElement {
+		const b = el("button", { type: "button", class: `chip ${cls}`, title: title ?? `What “${text}” means` }, text);
+		b.addEventListener("click", () => openGuide(key, b));
+		return b;
+	}
+
+	function syncHash() {
+		const hash = formatView({ lenses, sort: sortKey, dir: sortDir }, DEFAULT_SORT);
+		const url = `${location.pathname}${location.search}${hash}`;
+		if (`${location.pathname}${location.search}${location.hash}` !== url) history.replaceState(null, "", url);
+	}
+
+	window.addEventListener("hashchange", () => {
+		const v = parseView(location.hash);
+		lenses = v.lenses;
+		sortKey = v.sort ?? DEFAULT_SORT.sort;
+		sortDir = v.dir ?? DEFAULT_SORT.dir;
+		paintLedger();
+	});
+
+	document.addEventListener("keydown", (ev) => {
+		if (ev.key !== "?" || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+		const t = ev.target as HTMLElement | null;
+		if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+		if (document.querySelector("dialog[open]")) return;
+		ev.preventDefault();
+		openGuide("masters");
+	});
 
 	async function patchBoard(body: Record<string, unknown>) {
 		try {
 			await api(`/api/boards/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-			message = "";
+			toast("Saved");
 			await reload();
 		} catch (e) {
-			message = e instanceof Error ? e.message : "failed";
-			render();
+			toast(humanError(e instanceof Error ? e.message : "failed"), "error");
 		}
 	}
 
 	async function patchEntry(eid: number, body: Record<string, unknown>, reloadAfter = true) {
 		try {
 			await api(`/api/boards/${id}/entries/${eid}`, { method: "PATCH", body: JSON.stringify(body) });
-			message = "";
+			toast("Saved");
 			if (reloadAfter) await reload();
 		} catch (e) {
-			message = e instanceof Error ? e.message : "failed";
-			render();
+			toast(humanError(e instanceof Error ? e.message : "failed"), "error");
 		}
 	}
 
@@ -328,7 +359,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			headers: { "Content-Type": "application/json" },
 			body: "{}",
 		});
-		if (!res.ok) return;
+		if (!res.ok) {
+			toast("The catalog could not be fetched.", "error");
+			return;
+		}
 		const blob = await res.blob();
 		const a = document.createElement("a");
 		a.href = URL.createObjectURL(blob);
@@ -336,6 +370,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		a.rel = "noreferrer";
 		a.click();
 		URL.revokeObjectURL(a.href);
+		toast(`Saved ${board.catalog_id}.json`);
 	}
 
 	function currentCommand(): string {
@@ -385,14 +420,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			dials = { ...dials, [kind]: Number(input.value) };
 			paintArchive();
 		});
-		const root = el(
-			"label",
-			{ class: "gauge" },
-			el("span", { class: "gauge-kicker" }, meta.label),
-			face,
-			input,
-		);
-		return { root, ref: { kind, face, value, unit, input } };
+		const rootEl = el("label", { class: "gauge" }, el("span", { class: "gauge-kicker" }, meta.label), face, input);
+		return { root: rootEl, ref: { kind, face, value, unit, input } };
 	}
 
 	function renderBringHome(): HTMLElement {
@@ -410,20 +439,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const cmd = el("code", { class: "cmd-text", "aria-live": "polite" }, currentCommand());
 		const copy = el("button", { type: "button", class: "btn compact cmd-copy" }, "Copy");
 		copy.addEventListener("click", () => void copyOrSelect(copy, currentCommand(), cmd));
-		const chrome = el(
-			"div",
-			{ class: "cmd-chrome" },
-			el(
-				"span",
-				{ class: "cmd-dots", "aria-hidden": "true" },
-				el("span"),
-				el("span"),
-				el("span"),
-			),
-			el("span", { class: "cmd-label" }, "tonight’s fetch"),
-			copy,
-		);
-		const stage = el("div", { class: "cmd-stage" }, chrome, el("pre", {}, cmd));
+		const chrome = el("div", { class: "cmd-chrome" }, termDots(), el("span", { class: "cmd-label" }, "tonight’s fetch"), copy);
+		const stageEl = el("div", { class: "cmd-stage" }, chrome, el("pre", {}, cmd));
 
 		const dl = el("button", { type: "button", class: "btn bring-download" });
 		dl.append(
@@ -432,7 +449,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		);
 		dl.addEventListener("click", () => downloadCatalog());
 
-		const cmdRow = el("div", { class: "cmd-row" }, stage, dl);
+		const cmdRow = el("div", { class: "cmd-row" }, stageEl, dl);
 		const caption = el("p", { class: "cmd-caption" }, archiveCaption(dialsFromIndices(dials)));
 
 		const gauges: GaugeRef[] = [];
@@ -457,8 +474,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		installLive = installCode;
 		for (const flavor of ["pipx", "brew", "uvx"] as InstallFlavor[]) {
 			const b = el("button", { type: "button", class: "install-pill" }, flavor);
-			if (flavor === installFlavor) b.setAttribute("aria-pressed", "true");
-			else b.setAttribute("aria-pressed", "false");
+			b.setAttribute("aria-pressed", flavor === installFlavor ? "true" : "false");
 			b.addEventListener("click", () => {
 				installFlavor = flavor;
 				for (const child of flavors.querySelectorAll("button")) {
@@ -470,58 +486,43 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		}
 
 		const steps = el("ol", { class: "bring-steps" });
-		const step1 = el(
-			"li",
-			{},
-			el("span", { class: "step-n" }, "1"),
+		steps.append(
 			el(
-				"div",
+				"li",
 				{},
-				el("strong", {}, "Install darsay"),
-				flavors,
-				el("pre", { class: "install-cmd" }, installCode),
+				el("span", { class: "step-n" }, "1"),
+				el("div", {}, el("strong", {}, "Install darsay"), flavors, el("pre", { class: "install-cmd" }, installCode)),
 			),
-		);
-		const step2 = el(
-			"li",
-			{},
-			el("span", { class: "step-n" }, "2"),
 			el(
-				"div",
+				"li",
 				{},
-				el("strong", {}, "Save the catalog"),
+				el("span", { class: "step-n" }, "2"),
 				el(
-					"p",
+					"div",
 					{},
-					"A catalog.json the CLI already understands. Download it — do not paste the board URL into a terminal.",
+					el("strong", {}, "Save the catalog"),
+					el("p", {}, "A catalog.json the CLI already understands. Download it — do not paste the board URL into a terminal."),
+				),
+			),
+			el(
+				"li",
+				{},
+				el("span", { class: "step-n" }, "3"),
+				el(
+					"div",
+					{},
+					el("strong", {}, "Run it where you saved the file"),
+					el("p", {}, "In that folder, paste the command above. The dials rewrite the flags. Rerun the same line to resume."),
 				),
 			),
 		);
-		const step3 = el(
-			"li",
-			{},
-			el("span", { class: "step-n" }, "3"),
-			el(
-				"div",
-				{},
-				el("strong", {}, "Run it where you saved the file"),
-				el(
-					"p",
-					{},
-					"In that folder, paste the command above. The dials rewrite the flags. Rerun the same line to resume.",
-				),
-			),
-		);
-		steps.append(step1, step2, step3);
 
-		const more = el(
-			"p",
-			{ class: "bring-more muted" },
-			"The catalog is the want-list, not the weights. Upstream is Hugging Face. ",
-		);
-		const docs = el("a", { href: "/docs/getting-started/" }, "Full walkthrough");
-		more.append(docs, " · ");
-		more.append(el("a", { href: "/docs/examples/#share-a-catalog" }, "Share a catalog"));
+		const more = el("p", { class: "bring-more muted" }, "The catalog is the want-list, not the weights. Upstream is Hugging Face. ");
+		more.append(el("a", { href: "/docs/getting-started/" }, "Full walkthrough"), " · ");
+		more.append(el("a", { href: "/docs/examples/#share-a-catalog" }, "Share a catalog"), " · ");
+		const fg = el("button", { type: "button", class: "linkish" }, "✦ Field guide");
+		fg.addEventListener("click", () => openGuide("masters", fg));
+		more.append(fg);
 
 		details.append(summary, steps, more);
 		section.append(cmdRow, caption, gaugeRow, details);
@@ -535,7 +536,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			const code = codeLines(r.lines);
 			const copy = el("button", { type: "button", class: "btn compact cmd-copy" }, "Copy");
 			copy.addEventListener("click", () => void copyOrSelect(copy, text, code));
-			const stage = el(
+			const stageEl = el(
 				"div",
 				{ class: "cmd-stage" },
 				el("div", { class: "cmd-chrome" }, termDots(), el("span", { class: "cmd-label" }, r.label), copy),
@@ -543,26 +544,20 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			);
 			const foot = el("p", { class: "spell-foot" });
 			if (r.doc) {
-				foot.append(
-					el("a", { class: "spell-doc", href: r.doc.href, target: "_blank", rel: "noreferrer" }, r.doc.label),
-				);
+				foot.append(el("a", { class: "spell-doc", href: r.doc.href, target: "_blank", rel: "noreferrer" }, r.doc.label));
 			}
 			if (r.download) {
-				const dl = el(
-					"button",
-					{ type: "button", class: "btn compact secondary spell-dl" },
-					`Download ${board.catalog_id}.json`,
-				);
+				const dl = el("button", { type: "button", class: "btn compact secondary spell-dl" }, `Download ${board.catalog_id}.json`);
 				dl.addEventListener("click", () => downloadCatalog());
 				foot.append(dl);
 			}
 			const li = el(
 				"li",
 				{ class: "spell" },
-				el("span", { class: "spell-n", "aria-hidden": "true" }, ROMAN[offset + i] ?? String(offset + i + 1)),
+				el("span", { class: "spell-n", "aria-hidden": "true" }, roman(offset + i)),
 				el("h4", {}, r.title),
 				el("p", { class: "spell-why" }, r.why),
-				stage,
+				stageEl,
 			);
 			if (foot.childNodes.length) li.append(foot);
 			ol.append(li);
@@ -574,7 +569,16 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	function buildGrimoire(e: Entry): Node[] {
 		const set = deriveRecipes(e, board.catalog_id);
 		const facts = el("ul", { class: "grim-facts" });
-		for (const f of set.facts) facts.append(el("li", {}, f));
+		for (const f of set.facts) {
+			const key = factPrimer(f);
+			if (key) {
+				const b = el("button", { type: "button", class: "grim-fact-btn", title: "Open in the field guide" }, f);
+				b.addEventListener("click", () => openGuide(key, b));
+				facts.append(el("li", {}, b));
+			} else {
+				facts.append(el("li", {}, f));
+			}
+		}
 		const head = el(
 			"header",
 			{ class: "grim-head" },
@@ -627,41 +631,78 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			claim.banked_bytes !== null && claim.total_bytes
 				? ` · ${humanSize(claim.banked_bytes)} of ${humanSize(claim.total_bytes)}`
 				: "";
+		const since = claim.updated ? ` · reported ${relativeTime(claim.updated)}` : "";
+		const why = el("button", { type: "button", class: "claim-why", "aria-label": "What is a claim?" }, "✦");
+		why.addEventListener("click", () => openGuide("claims", why));
 		const label = el(
 			"div",
 			{ class: "claim-label" },
 			el("span", { class: "claim-client" }, claim.client),
-			el("span", {}, ` ${verb}${clamped === null ? "" : ` ${clamped}%`}${bytes}`),
+			el("span", {}, ` ${verb}${clamped === null ? "" : ` ${clamped}%`}${bytes}${since}`),
+			why,
 		);
 		return el("div", { class: "claim-gauge" }, track, label);
 	}
 
-	function renderEntry(e: Entry): HTMLElement {
-		const card = el("article", { class: "work-card" });
+	/** `huggingface:` `Owner/` `Name` as three tones, so the name reads first. */
+	function sourceLabel(source: string): Node[] {
+		const parsed = canonicalizeSource(source);
+		if (parsed.kind !== "hf") return [el("span", { class: "src-name" }, source)];
+		const prefix = parsed.artifactType === "dataset" ? "huggingface:datasets/" : "huggingface:";
+		const [owner, ...rest] = parsed.locator.split("/");
+		return [
+			el("span", { class: "src-scheme" }, prefix),
+			el("span", { class: "src-owner" }, `${owner}/`),
+			el("span", { class: "src-name" }, rest.join("/")),
+		];
+	}
+
+	function renderEntry(e: Entry, index: number): HTMLElement {
+		const claimed = inFlight(e);
+		const card = el("article", {
+			class: `work-card${e.status === "have" ? " is-have" : ""}${claimed ? " is-claimed" : ""}`,
+		});
+		if (firstPaint && !reducedMotion()) card.style.animationDelay = `${Math.min(index, 10) * 45}ms`;
+		else card.classList.add("no-enter");
+
 		const src = el("div", { class: "work-id" });
 		const href = hfUrlFromCanonical(e.source);
-		if (href) {
-			src.append(el("a", { href, rel: "noreferrer", target: "_blank" }, e.source));
-		} else {
-			src.append(el("span", {}, e.source));
-		}
-		if (e.revision) src.append(el("div", { class: "muted" }, e.revision));
-		if (e.include?.length) src.append(el("div", { class: "muted" }, e.include.join(", ")));
+		if (href) src.append(el("a", { href, rel: "noreferrer", target: "_blank", class: "src-link" }, ...sourceLabel(e.source)));
+		else src.append(el("span", { class: "src-link" }, ...sourceLabel(e.source)));
+		const sub: string[] = [];
+		if (e.revision) sub.push(`pin ${e.revision.length > 12 ? e.revision.slice(0, 12) : e.revision}`);
+		if (e.include?.length) sub.push(`include ${e.include.join(", ")}`);
+		if (sub.length) src.append(el("div", { class: "work-sub" }, sub.join(" · ")));
 
 		const kind = entryArtifactType(e);
 		const facts = el("div", { class: "work-facts" });
-		if (kind === "model" || kind === "dataset") {
-			facts.append(el("span", { class: `type-tag type-tag-${kind}` }, kind));
-		} else {
-			facts.append(el("span", { class: "muted" }, "—"));
+		if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset"));
+		else if (kind === "model") facts.append(teachChip("model", "bundle", "chip-type chip-type-model", "What a model bundle is"));
+		else facts.append(el("span", { class: "muted" }, "—"));
+
+		const size = el("span", { class: "work-size" }, humanSize(e.payload_bytes));
+		if (typeof e.payload_bytes === "number") size.title = `${e.payload_bytes.toLocaleString()} bytes`;
+		facts.append(size);
+		if (e.parameters) {
+			const stat = `${humanParams(e.parameters)}${e.dominant_dtype ? ` · ${e.dominant_dtype}` : ""}`;
+			facts.append(teachChip(stat, "dtype", "chip-stat", "Parameters and dominant dtype — what one copy should weigh"));
 		}
-		facts.append(el("span", { class: "work-size" }, humanSize(e.payload_bytes)));
-		if (e.policy) {
-			facts.append(el("span", { class: "policy-chip", title: "Priced as the masters-first acquisition" }, e.policy));
+		if (e.policy === "masters") {
+			facts.append(teachChip("masters", "masters", "chip-policy", "Priced masters-first: negatives, not prints"));
 		}
-		for (const hint of e.hints ?? []) {
-			facts.append(el("span", { class: "hint-chip" }, hint));
+		for (const hint of effectiveHints(e)) {
+			const key = HINT_PRIMER[hint];
+			if (key) facts.append(teachChip(hint, key, "chip-hint"));
 		}
+		if (isAbliterated(e.source)) facts.append(teachChip("abliterated", "abliterated", "chip-name"));
+		if (isSpeculator(e.source)) facts.append(teachChip("speculator", "spec", "chip-name"));
+		if (isBaseModel(e.source)) facts.append(teachChip("base", "base", "chip-name"));
+		const moe = moeFromName(e.source);
+		if (moe) {
+			const label = moe.total !== null && moe.active !== null ? `MoE · ${moe.active}B active` : "MoE";
+			facts.append(teachChip(label, "moe", "chip-name"));
+		}
+		if (e.status === "have") facts.append(teachChip("✓ vaulted", "desire", "chip-have", "In at least one member's vault"));
 
 		const open = openRecipes.has(e.id);
 		const region = el("section", {
@@ -669,11 +710,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			id: `grim-${e.id}`,
 			"aria-label": `Recipes for ${e.source}`,
 		});
-		const wrap = el(
-			"div",
-			{ class: open ? "grim-wrap is-open" : "grim-wrap" },
-			el("div", { class: "grim-clip" }, region),
-		);
+		const wrap = el("div", { class: open ? "grim-wrap is-open" : "grim-wrap" }, el("div", { class: "grim-clip" }, region));
 		if (!open) wrap.setAttribute("inert", "");
 		let built = false;
 		const ensureBuilt = () => {
@@ -726,8 +763,9 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			type: "number",
 			min: "1",
 			max: "9",
+			inputmode: "numeric",
 			value: e.desire ? String(e.desire) : "",
-			"aria-label": `Desire for ${e.source}`,
+			"aria-label": `Desire for ${e.source}, 1 to 9`,
 		});
 		desire.addEventListener("change", async () => {
 			const v = desire.value === "" ? null : Number(desire.value);
@@ -751,17 +789,30 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			await patchEntry(e.id, { holders: who.value }, false);
 		});
 
-		const rm = el("button", { type: "button", class: "btn compact secondary" }, "Drop");
+		const rm = el("button", { type: "button", class: "btn compact secondary work-drop" }, "Drop");
 		rm.addEventListener("click", async () => {
-			if (!confirm("Drop this row?")) return;
-			await api(`/api/boards/${id}/entries/${e.id}`, { method: "DELETE" });
-			await reload();
+			const ok = await confirmDialog({
+				title: "Drop this row?",
+				body: `${e.source} leaves the list. Vaults that already hold it are untouched; the catalog simply stops asking for it.`,
+				action: "Drop it",
+				danger: true,
+			});
+			if (!ok) return;
+			try {
+				await api(`/api/boards/${id}/entries/${e.id}`, { method: "DELETE" });
+				toast("Dropped");
+				await reload();
+			} catch (err) {
+				toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+			}
 		});
 
+		const desireKicker = el("button", { type: "button", class: "kicker-btn", title: "What desire does" }, "Desire");
+		desireKicker.addEventListener("click", () => openGuide("desire", desireKicker));
 		const bar = el(
 			"div",
 			{ class: "work-bar" },
-			el("label", { class: "work-desire" }, el("span", {}, "Desire"), desire),
+			el("label", { class: "work-desire" }, desireKicker, desire),
 			el("label", { class: "work-have" }, have, el("span", {}, "Have")),
 			el("label", { class: "work-who" }, el("span", {}, "Who"), who),
 			rm,
@@ -778,27 +829,39 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		return card;
 	}
 
-	function render() {
+	function renderHeader(): HTMLElement {
 		const header = el("header", { class: "board-head" });
 		const title = el("input", {
 			type: "text",
 			class: "board-title",
 			value: board.title || "",
 			maxlength: "120",
+			placeholder: "Name this list",
 			"aria-label": "Board title",
 		});
 		title.addEventListener("change", () => patchBoard({ title: title.value }));
 
 		const copy = el("button", { type: "button", class: "btn compact secondary" }, "Copy URL");
 		copy.addEventListener("click", async () => {
-			if (await copyText(location.href)) flashCopied(copy);
+			if (await copyText(location.href.split("#")[0])) flashCopied(copy);
+			else toast("Select the address bar and copy it.", "error");
 		});
 		const del = el("button", { type: "button", class: "btn compact danger" }, "Delete board");
 		del.addEventListener("click", async () => {
-			const typed = prompt('Type "delete" to destroy this board');
-			if (typed !== "delete") return;
-			await api(`/api/boards/${id}`, { method: "DELETE", body: JSON.stringify({ confirm: "delete" }) });
-			location.href = "/";
+			const ok = await confirmDialog({
+				title: "Destroy this board?",
+				body: "Every row, note, and claim goes with it, and the URL stops working for everyone who has it. Vaults are untouched — the board never held the bytes.",
+				action: "Delete the board",
+				danger: true,
+				typed: "delete",
+			});
+			if (!ok) return;
+			try {
+				await api(`/api/boards/${id}`, { method: "DELETE", body: JSON.stringify({ confirm: "delete" }) });
+				location.href = "/";
+			} catch (err) {
+				toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+			}
 		});
 		const actions = el("div", { class: "board-actions" }, copy, del);
 
@@ -823,22 +886,50 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		);
 		boardNote.addEventListener("change", () => patchBoard({ note: boardNote.value }));
 
+		const ids = el("p", { class: "muted board-ids" });
+		ids.append(
+			el("span", { class: "board-id-k" }, "catalog "),
+			el("code", { class: "board-id-v" }, board.catalog_id),
+			el("span", { class: "board-id-sep", "aria-hidden": "true" }, " · "),
+			el("span", {}, "created "),
+			el("time", { datetime: board.created, title: board.created }, prettyDate(board.created)),
+			el("span", { class: "board-id-sep", "aria-hidden": "true" }, " · "),
+			el("span", {}, "updated "),
+			el("time", { datetime: board.updated, title: board.updated }, relativeTime(board.updated)),
+		);
+
 		header.append(
 			el("div", { class: "board-title-row" }, title, actions),
 			el("label", { class: "meta-field curator-field" }, el("span", {}, "Curator"), curator),
 			el("label", { class: "board-note-wrap" }, el("span", { class: "work-note-kicker" }, "About this list"), boardNote),
-			el(
-				"p",
-				{ class: "muted board-ids" },
-				`catalog id ${board.catalog_id} · created ${board.created} · updated ${board.updated}`,
-			),
+			ids,
 		);
-		if (message) header.append(el("p", { class: "flash" }, message));
+		return header;
+	}
 
-		const toolbar = el("div", { class: "ledger-toolbar" });
-		const n = board.entries.length;
-		toolbar.append(el("span", { class: "ledger-count" }, n === 1 ? "1 source" : `${n} sources`));
-		const sorts = el("div", { class: "sort-pills" });
+	function paintToolbar(visible: Entry[]) {
+		const all = board.entries;
+		const counts = lensCounts(all);
+		const t = tally(visible);
+		const total = all.length;
+
+		const head = el("span", { class: "ledger-n" });
+		if (lenses.length && visible.length !== total) {
+			head.append(el("strong", {}, String(visible.length)), ` of ${plural(total, "source")}`);
+		} else {
+			head.append(el("strong", {}, String(total)), ` ${total === 1 ? "source" : "sources"}`);
+		}
+		const parts: string[] = [];
+		if (t.wantBytes > 0) parts.push(`${humanSize(t.wantBytes)} wanted`);
+		if (t.haveBytes > 0) parts.push(`${humanSize(t.haveBytes)} vaulted`);
+		if (t.unsized > 0) parts.push(`${t.unsized} unpriced`);
+		const tallyEl = el("span", { class: "ledger-tally", title: "Sizes as priced by the Hub; masters-first where the CLI classified" });
+		parts.forEach((p, i) => {
+			if (i > 0) tallyEl.append(el("span", { class: "ledger-sep", "aria-hidden": "true" }, "·"));
+			tallyEl.append(p);
+		});
+
+		const sorts = el("div", { class: "sort-pills", role: "group", "aria-label": "Sort" });
 		const sortCols: { label: string; key: SortKey }[] = [
 			{ label: "Desire", key: "desire" },
 			{ label: "Source", key: "source" },
@@ -847,59 +938,166 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			{ label: "Have", key: "status" },
 		];
 		for (const col of sortCols) {
-			const mark = sortKey === col.key ? (sortDir === "desc" ? " ▾" : " ▴") : "";
+			const active = sortKey === col.key;
 			const btn = el(
 				"button",
-				{
-					type: "button",
-					class: sortKey === col.key ? "sort-btn is-active" : "sort-btn",
-				},
-				col.label + mark,
+				{ type: "button", class: active ? "sort-btn is-active" : "sort-btn", "aria-pressed": active ? "true" : "false" },
+				col.label,
 			);
+			if (active) btn.append(el("span", { class: "sort-mark", "aria-hidden": "true" }, sortDir === "desc" ? "▾" : "▴"));
+			btn.setAttribute("aria-label", active ? `Sort by ${col.label}, ${sortDir === "desc" ? "descending" : "ascending"}` : `Sort by ${col.label}`);
 			btn.addEventListener("click", () => {
 				if (sortKey === col.key) sortDir = sortDir === "desc" ? "asc" : "desc";
 				else {
 					sortKey = col.key;
 					sortDir = col.key === "source" ? "asc" : "desc";
 				}
-				render();
+				syncHash();
+				paintLedger();
 			});
 			sorts.append(btn);
 		}
-		toolbar.append(sorts);
 
-		const ledger = el("div", { class: "ledger" });
-		const rows = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
-		if (rows.length === 0) {
-			ledger.append(el("p", { class: "muted" }, "Add a source to start the list."));
-		} else {
-			for (const e of rows) ledger.append(renderEntry(e));
+		const chips = el("div", { class: "lens-chips", role: "group", "aria-label": "Lenses" });
+		const all_ = el(
+			"button",
+			{ type: "button", class: "lens-chip lens-all", "aria-pressed": lenses.length === 0 ? "true" : "false" },
+			"All",
+		);
+		all_.addEventListener("click", () => {
+			lenses = [];
+			syncHash();
+			paintLedger();
+		});
+		chips.append(all_);
+		let lastGroup = "";
+		for (const lens of LENSES) {
+			const n = counts.get(lens.key) ?? 0;
+			const active = lenses.includes(lens.key);
+			if (n === 0 && !active) continue;
+			if (lastGroup && lens.group !== lastGroup) chips.append(el("span", { class: "lens-gap", "aria-hidden": "true" }));
+			lastGroup = lens.group;
+			const b = el(
+				"button",
+				{
+					type: "button",
+					class: `lens-chip lens-${lens.group}${active ? " is-active" : ""}`,
+					"aria-pressed": active ? "true" : "false",
+				},
+				lens.label,
+				el("span", { class: "lens-n" }, String(n)),
+			);
+			b.addEventListener("click", () => {
+				lenses = active ? lenses.filter((k) => k !== lens.key) : [...lenses, lens.key];
+				syncHash();
+				paintLedger();
+			});
+			chips.append(b);
 		}
+		const guideBtn = el("button", { type: "button", class: "guide-open" }, el("span", { "aria-hidden": "true" }, "✦ "), "Field guide");
+		guideBtn.addEventListener("click", () => openGuide(lenses.length ? LENS_BY_KEY[lenses[lenses.length - 1]].primer : "masters", guideBtn));
 
-		const add = el("form", { class: "add-row add-card" });
+		shells.toolbar.replaceChildren(
+			el("div", { class: "ledger-row ledger-row-top" }, head, tallyEl, sorts, guideBtn),
+			el("div", { class: "ledger-row lens-row" }, el("span", { class: "lens-kicker" }, "Lens"), chips),
+		);
+
+		// The caption: the most recently added lens explains itself.
+		if (lenses.length) {
+			const last = LENS_BY_KEY[lenses[lenses.length - 1]];
+			const cap = el("p", { class: "lens-caption" });
+			const names = lenses.map((k) => LENS_BY_KEY[k].label).join(" + ");
+			cap.append(el("strong", {}, names), " — ", inline(last.blurb), " ");
+			const read = el("button", { type: "button", class: "linkish" }, "✦ Read the card");
+			read.addEventListener("click", () => openGuide(last.primer, read));
+			cap.append(read);
+			const clear = el("button", { type: "button", class: "linkish lens-clear" }, "Clear");
+			clear.addEventListener("click", () => {
+				lenses = [];
+				syncHash();
+				paintLedger();
+			});
+			cap.append(el("span", { class: "guide-sep", "aria-hidden": "true" }, " · "), clear);
+			shells.caption.replaceChildren(cap);
+		} else {
+			shells.caption.replaceChildren();
+		}
+	}
+
+	function paintLedger() {
+		const sorted = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
+		const visible = applyLenses(sorted, lenses);
+		paintToolbar(visible);
+		shells.ledger.replaceChildren();
+		if (board.entries.length === 0) {
+			const empty = el("div", { class: "ledger-empty" });
+			empty.append(
+				el("p", { class: "ledger-empty-t" }, "An empty ledger."),
+				el("p", {}, "Add a source below — a Hugging Face URL or ", el("code", {}, "owner/name"), " — and it is priced from the Hub as it lands."),
+			);
+			shells.ledger.append(empty);
+		} else if (visible.length === 0) {
+			const empty = el("div", { class: "ledger-empty" });
+			const clear = el("button", { type: "button", class: "btn compact secondary" }, "Clear lenses");
+			clear.addEventListener("click", () => {
+				lenses = [];
+				syncHash();
+				paintLedger();
+			});
+			empty.append(el("p", { class: "ledger-empty-t" }, "Nothing through this lens."), clear);
+			shells.ledger.append(empty);
+		} else {
+			visible.forEach((e, i) => shells.ledger.append(renderEntry(e, i)));
+		}
+		firstPaint = false;
+	}
+
+	function renderAdd(): HTMLElement {
+		const add = el("form", { class: "add-card", "aria-labelledby": "add-title" });
 		const source = el("input", {
 			type: "text",
-			placeholder: "huggingface:Qwen/Qwen3-0.6B or datasets/owner/name",
+			placeholder: "owner/name, datasets/owner/name, or a Hugging Face URL",
 			required: "true",
-			"aria-label": "Source",
+			id: "add-source",
+			autocomplete: "off",
+			spellcheck: "false",
 		});
-		const d = el("input", { type: "number", min: "1", max: "9", placeholder: "desire", "aria-label": "Desire" });
-		const rev = el("input", {
-			type: "text",
-			placeholder: "revision (optional)",
-			maxlength: "64",
-			"aria-label": "Revision",
-		});
-		const advanced = el("details");
+		const d = el("input", { type: "number", min: "1", max: "9", inputmode: "numeric", placeholder: "1–9", id: "add-desire" });
+		const rev = el("input", { type: "text", placeholder: "main, a tag, a commit", maxlength: "64", id: "add-rev", spellcheck: "false" });
+		const advanced = el("details", { class: "add-advanced" });
 		const inc = el("input", {
 			type: "text",
-			placeholder: "include globs, comma-separated",
-			"aria-label": "Include globs",
+			placeholder: "*Q4_K_M*, tokenizer*",
+			"aria-label": "Include globs, comma-separated",
+			spellcheck: "false",
 		});
-		advanced.append(el("summary", {}, "subset / include"), inc);
+		const incWhy = el("button", { type: "button", class: "linkish" }, "✦ What a subset is");
+		incWhy.addEventListener("click", () => openGuide("subset", incWhy));
+		advanced.append(
+			el("summary", {}, "Only part of the repo? Add include globs"),
+			el("div", { class: "add-advanced-row" }, inc, incWhy),
+		);
 		const addBtn = el("button", { type: "submit", class: "btn" }, "Add source");
-		const addErr = el("p", { class: "muted" });
-		add.append(source, d, rev, advanced, addBtn, addErr);
+		const addErr = el("p", { class: "add-err", role: "alert" });
+		const help = el("p", { class: "add-help muted" });
+		help.append("Priced from the Hub as it lands — size, parameters, dtype. New to the vocabulary? ");
+		const fg = el("button", { type: "button", class: "linkish" }, "✦ Open the field guide");
+		fg.addEventListener("click", () => openGuide("masters", fg));
+		help.append(fg);
+
+		add.append(
+			el("h2", { class: "add-title", id: "add-title" }, "Add a source"),
+			el(
+				"div",
+				{ class: "add-fields" },
+				el("label", { class: "add-field add-field-source" }, el("span", {}, "Source"), source),
+				el("label", { class: "add-field add-field-desire" }, el("span", {}, "Desire"), d),
+				el("label", { class: "add-field add-field-rev" }, el("span", {}, "Revision"), rev),
+			),
+			advanced,
+			el("div", { class: "add-actions" }, addBtn, addErr),
+			help,
+		);
 		add.addEventListener("submit", async (ev) => {
 			ev.preventDefault();
 			addErr.textContent = "";
@@ -907,6 +1105,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				.split(",")
 				.map((s) => s.trim())
 				.filter(Boolean);
+			addBtn.disabled = true;
+			addBtn.textContent = "Pricing…";
 			try {
 				await api(`/api/boards/${id}/entries`, {
 					method: "POST",
@@ -919,14 +1119,37 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				});
 				source.value = "";
 				rev.value = "";
+				inc.value = "";
+				d.value = "";
+				toast("Added and priced");
 				await reload();
 			} catch (err) {
-				addErr.textContent = err instanceof Error ? err.message : "failed";
+				addErr.textContent = humanError(err instanceof Error ? err.message : "failed");
+			} finally {
+				addBtn.disabled = false;
+				addBtn.textContent = "Add source";
 			}
 		});
+		return add;
+	}
 
-		root.replaceChildren(header, renderBringHome(), toolbar, ledger, add);
+	function watchSticky() {
+		const sentinel = el("div", { class: "sticky-sentinel", "aria-hidden": "true" });
+		shells.toolbar.before(sentinel);
+		if (!("IntersectionObserver" in window)) return;
+		const io = new IntersectionObserver(
+			([entry]) => shells.toolbar.classList.toggle("is-stuck", !entry.isIntersecting),
+			{ threshold: [1] },
+		);
+		io.observe(sentinel);
+	}
+
+	function render() {
+		root.replaceChildren(renderHeader(), renderBringHome(), shells.toolbar, shells.caption, shells.ledger, renderAdd());
+		watchSticky();
+		paintLedger();
 		paintArchive();
+		syncHash();
 	}
 
 	render();

@@ -1,3 +1,4 @@
+import { entryHints } from "./hints.ts";
 import { artifactTypeFromSource } from "./sources.ts";
 
 export const CATALOG_TOP_KEYS = [
@@ -204,7 +205,9 @@ export function entryToApi(e: EntryRow) {
 		gated: typeof est?.gated === "boolean" ? est.gated : null,
 		parameters: typeof est?.parameters === "number" ? est.parameters : null,
 		dominant_dtype: typeof est?.dominant_dtype === "string" ? est.dominant_dtype : null,
-		hints: Array.isArray(est?.hints) ? est.hints : [],
+		// Stored hints win (the CLI wrote them); a digest without any is read
+		// the way the CLI's derive_hints reads a 1.0.0 file.
+		hints: entryHints(est, include),
 		policy: typeof est?.policy === "string" ? est.policy : null,
 		claim: parseClaim(e.claim_json),
 	};

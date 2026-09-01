@@ -144,6 +144,8 @@ describe("entryToApi", () => {
 		expect(rich.dominant_dtype).toBe("BF16");
 		expect(bare.claim?.client).toBe("usb-carrier");
 		expect(bare.claim?.percent).toBe(40);
-		expect(rich.hints).toEqual([]);
+		// No stored hints: derived the way the CLI reads a 1.0.0 digest.
+		expect(rich.hints).toEqual(["gated"]);
+		expect(bare.hints).toEqual([]);
 	});
 });
