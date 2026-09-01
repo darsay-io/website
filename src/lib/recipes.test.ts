@@ -14,6 +14,7 @@ import {
 } from "./recipes.ts";
 
 const GiB = 1024 ** 3;
+const BOARD = "https://darsay.io/b/0123456789abcdef0123456789abcdef";
 
 function entry(over: Partial<RecipeInput> = {}): RecipeInput {
 	return {
@@ -80,6 +81,12 @@ describe("shell safety", () => {
 		expect(est.lines[0]).toBe(
 			"darsay estimate 'huggingface:Ev il/Name\nrm -rf ~' --revision 'v1.0 $(id)' --include '*'\\''; echo pwned; '\\''*'",
 		);
+	});
+	it("quotes a board URL that needs it, leaves the real one bare", () => {
+		const evil = deriveRecipes(entry(), "s", "https://darsay.io/b/x; rm -rf ~").hero.find((r) => r.key === "board")!;
+		expect(evil.lines[0]).toContain("--board 'https://darsay.io/b/x; rm -rf ~'");
+		const real = deriveRecipes(entry(), "s", BOARD).hero.find((r) => r.key === "board")!;
+		expect(real.lines[0]).toBe(`darsay archive huggingface:Qwen/Qwen3-0.6B --board ${BOARD}`);
 	});
 });
 
@@ -278,5 +285,59 @@ describe("deriveRecipes", () => {
 	it("LARGE_BYTES is the 20 GiB line", () => {
 		expect(deriveRecipes(entry({ payload_bytes: LARGE_BYTES - 1 }), "s").traits).not.toContain("large");
 		expect(deriveRecipes(entry({ payload_bytes: LARGE_BYTES }), "s").traits).toContain("large");
+	});
+});
+
+describe("the board round-trip card", () => {
+	const rows: RecipeInput[] = [
+		entry(),
+		entry({ payload_bytes: 438 * GiB }),
+		entry({ source: "huggingface:unsloth/Qwen3-30B-A3B-GGUF", include: ["*Q4_K_M*"], payload_bytes: 464 * GiB }),
+		entry({ source: "huggingface:unsloth/Qwen3-30B-A3B-GGUF", payload_bytes: 464 * GiB }),
+		entry({ source: "huggingface:meta-llama/Llama-3.1-8B", gated: true, payload_bytes: 30 * GiB }),
+		entry({ source: "huggingface:datasets/acme/reviews", artifact_type: "dataset", payload_bytes: 889_683 }),
+		entry({ source: "test:acme/toy", artifact_type: null, payload_bytes: null }),
+	];
+
+	it("appears in the hero of every row shape when the page has a URL, never without one", () => {
+		for (const row of rows) {
+			const withUrl = deriveRecipes(row, "summer", BOARD);
+			expect(keys(withUrl.hero)).toContain("board");
+			expect(withUrl.hero.length).toBeLessThanOrEqual(4);
+			expect(new Set(keys(all(withUrl))).size).toBe(all(withUrl).length);
+			expect(keys(all(deriveRecipes(row, "summer")))).not.toContain("board");
+		}
+	});
+
+	it("is one line — the row's exact identity plus --board, so the claim matches", () => {
+		const set = deriveRecipes(
+			entry({
+				source: "huggingface:unsloth/Qwen3-30B-A3B-GGUF",
+				revision: "c1899de289a0f1e2",
+				include: ["*Q4_K_M*"],
+				payload_bytes: 18 * GiB,
+			}),
+			"summer",
+			BOARD,
+		);
+		const b = set.hero.find((r) => r.key === "board")!;
+		expect(b.lines).toEqual([
+			`darsay archive huggingface:unsloth/Qwen3-30B-A3B-GGUF --revision c1899de289a0f1e2 --include '*Q4_K_M*' --board ${BOARD}`,
+		]);
+		expect(b.label).toBe("claim · fetch · report");
+		expect(b.doc?.href).toBe("/docs/examples/#keep-a-darsayio-board-honest");
+		expect(b.why).toContain("--board");
+	});
+
+	it("slots after the fetch verbs and spills the displaced card into more", () => {
+		const small = deriveRecipes(entry(), "s", BOARD);
+		expect(keys(small.hero)).toEqual(["estimate", "archive", "board", "after"]);
+		expect(keys(small.more)).toEqual(["adopt", "shards"]);
+		const large = deriveRecipes(entry({ payload_bytes: 438 * GiB }), "s", BOARD);
+		expect(keys(large.hero)).toEqual(["estimate", "budget", "board", "halves"]);
+		expect(keys(large.more)).toEqual(["shards", "archive", "adopt", "after"]);
+		const gatedLarge = deriveRecipes(entry({ gated: true, payload_bytes: 438 * GiB }), "s", BOARD);
+		expect(keys(gatedLarge.hero)).toEqual(["estimate", "archive", "budget", "board"]);
+		expect(keys(gatedLarge.more)).toEqual(["halves", "shards", "adopt", "after"]);
 	});
 });

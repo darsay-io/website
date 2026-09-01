@@ -663,9 +663,9 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		return ol;
 	}
 
-	/** The recipe card for one entry. Static: derived from the row's fields, no fetch. */
+	/** The recipe card for one entry. Static: derived from the row's fields and this page's URL, no fetch. */
 	function buildGrimoire(e: Entry): Node[] {
-		const set = deriveRecipes(e, board.catalog_id);
+		const set = deriveRecipes(e, board.catalog_id, boardUrl());
 		const facts = el("ul", { class: "grim-facts" });
 		for (const f of set.facts) {
 			const key = factPrimer(f);

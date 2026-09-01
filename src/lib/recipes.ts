@@ -3,9 +3,9 @@
  *
  * Pure and static. Everything is derived from the entry's own fields (source,
  * revision, include, payload_bytes, gated, parameters/dtype from the cached
- * estimate digest) — no catalog.json field, no server round-trip. Wording
- * mirrors `examples/README.md` in darsay-io/darsay; user text is only ever
- * placed inside single quotes, never in comments.
+ * estimate digest) plus the board's own page URL — no catalog.json field, no
+ * server round-trip. Wording mirrors `examples/README.md` in darsay-io/darsay;
+ * user text is only ever placed inside single quotes, never in comments.
  */
 import { canonicalizeSource } from "../worker/sources.ts";
 
@@ -40,6 +40,10 @@ export const DOCS = {
 		label: "Cookbook → Split a download",
 	},
 	adopt: { href: "/docs/examples/#share-a-catalog", label: "Cookbook → Share a catalog" },
+	board: {
+		href: "/docs/examples/#keep-a-darsayio-board-honest",
+		label: "Cookbook → Keep a board honest",
+	},
 	export: { href: "/docs/examples/#export-to-a-usb-drive", label: "Cookbook → Export to a USB drive" },
 } as const;
 
@@ -57,6 +61,7 @@ export type RecipeInput = {
 export type RecipeKey =
 	| "estimate"
 	| "archive"
+	| "board"
 	| "budget"
 	| "halves"
 	| "subset"
@@ -167,7 +172,7 @@ export function alignComments(rows: Row[]): string[] {
 	});
 }
 
-export function deriveRecipes(e: RecipeInput, catalogId: string): RecipeSet {
+export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: string): RecipeSet {
 	const parsed = canonicalizeSource(e.source);
 	const hf = parsed.kind === "hf" ? parsed : null;
 	const kind: "model" | "dataset" | null =
@@ -279,6 +284,19 @@ export function deriveRecipes(e: RecipeInput, catalogId: string): RecipeSet {
 		doc: gated && hf ? { href: hf.url, label: "Accept the terms on Hugging Face" } : dataset ? DOCS.dataset : DOCS.first,
 	};
 
+	/** The row-specific board round trip: `archive SOURCE --board URL`, as the cookbook writes it. */
+	const board: Recipe | null = boardUrl
+		? {
+				key: "board",
+				title: "Bring the board along",
+				why:
+					"The most basic board form: name this row's source and add --board. darsay claims the row before fetching — a second machine picks a different one — and every boundary, start, clean pause, registration, updates the gauge and status here on its own. When it registers, the row flips to have.",
+				label: "claim · fetch · report",
+				lines: [`darsay archive ${srcInc} --board ${shellQuote(boardUrl)}`],
+				doc: DOCS.board,
+			}
+		: null;
+
 	const budget: Recipe = {
 		key: "budget",
 		title: "Pause and resume",
@@ -378,26 +396,32 @@ export function deriveRecipes(e: RecipeInput, catalogId: string): RecipeSet {
 		doc: DOCS.export,
 	};
 
+	// With a board URL the report-back card joins the hero four; whatever it
+	// displaces leads "More ways" so nothing is lost, only reordered.
 	let hero: Recipe[];
 	let more: Recipe[];
 	if (!hf) {
-		hero = [estimate, archive, adopt];
+		hero = [estimate, archive, ...(board ? [board] : []), adopt];
 		more = [];
 	} else if (large) {
-		hero = gated ? [estimate, archive, budget, halves] : [estimate, budget, halves, shards];
-		more = gated ? [shards, adopt, after] : [archive, adopt, after];
+		hero = gated
+			? [estimate, archive, budget, ...(board ? [board] : [halves])]
+			: [estimate, budget, ...(board ? [board, halves] : [halves, shards])];
+		more = gated
+			? [...(board ? [halves] : []), shards, adopt, after]
+			: [...(board ? [shards] : []), archive, adopt, after];
 	} else if (pack) {
-		hero = [subset, estimate, adopt];
+		hero = [subset, estimate, ...(board ? [board] : []), adopt];
 		more = [archive, ...(packLarge ? [budget] : []), shards, after];
 	} else if (include) {
-		hero = [estimate, archive, adopt];
+		hero = [estimate, archive, ...(board ? [board] : []), adopt];
 		more = [...(packLarge ? [budget] : []), shards, after];
 	} else if (gated) {
-		hero = [estimate, archive, adopt];
+		hero = [estimate, archive, ...(board ? [board] : []), adopt];
 		more = [shards, after];
 	} else {
-		hero = [estimate, archive, after, adopt];
-		more = [shards];
+		hero = board ? [estimate, archive, board, after] : [estimate, archive, after, adopt];
+		more = board ? [adopt, shards] : [shards];
 	}
 
 	return { traits, headline, facts, verdict, hero, more };
