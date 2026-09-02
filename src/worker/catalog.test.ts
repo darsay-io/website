@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG_TOP_KEYS, DIGEST_KEYS, entryToApi, exportCatalog } from "./catalog.ts";
+import { CATALOG_TOP_KEYS, DIGEST_KEYS, entryToApi, exportCatalog, liveClaim, parseClaim } from "./catalog.ts";
 
 describe("exportCatalog", () => {
 	it("emits schema 1.2.0 without holders, status, claims, or board id", () => {
@@ -123,7 +123,12 @@ describe("entryToApi", () => {
 			added: "2026-08-26T18:04:11+00:00",
 			payload_bytes: 10,
 			estimate_json: null,
-			claim_json: JSON.stringify({ client: "usb-carrier", state: "paused", percent: 40 }),
+			claim_json: JSON.stringify({
+				client: "usb-carrier",
+				state: "paused",
+				percent: 40,
+				updated: new Date().toISOString(),
+			}),
 		};
 		const bare = entryToApi(base);
 		expect(bare.gated).toBeNull();
@@ -147,5 +152,41 @@ describe("entryToApi", () => {
 		// No stored hints: derived the way the CLI reads a 1.0.0 digest.
 		expect(rich.hints).toEqual(["gated"]);
 		expect(bare.hints).toEqual([]);
+	});
+});
+
+describe("liveClaim", () => {
+	const at = (updated: string) =>
+		parseClaim(JSON.stringify({ client: "usb-carrier", state: "paused", updated }));
+	const now = Date.parse("2026-09-01T12:00:00Z");
+
+	it("keeps a fresh claim, expires one past the TTL, drops undated ones", () => {
+		expect(liveClaim(at("2026-09-01T11:00:00Z"), now)).not.toBeNull();
+		expect(liveClaim(at("2026-08-30T11:00:00Z"), now)).toBeNull();
+		expect(liveClaim(at(""), now)).toBeNull();
+		expect(liveClaim(null, now)).toBeNull();
+	});
+
+	it("entryToApi stops rendering an expired claim as in flight", () => {
+		const row = {
+			id: 9,
+			source: "huggingface:MiniMaxAI/MiniMax-H3",
+			revision: "",
+			include_json: null,
+			desire: null,
+			note: null,
+			status: "have",
+			holders: "darsay1",
+			added: "2026-08-26T18:04:11+00:00",
+			payload_bytes: null,
+			estimate_json: null,
+			claim_json: JSON.stringify({
+				client: "usb-carrier",
+				state: "paused",
+				percent: 40,
+				updated: "2026-08-01T00:00:00Z",
+			}),
+		};
+		expect(entryToApi(row).claim).toBeNull();
 	});
 });

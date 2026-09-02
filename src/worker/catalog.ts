@@ -1,5 +1,6 @@
 import { entryHints } from "./hints.ts";
 import { artifactTypeFromSource } from "./sources.ts";
+import { CLAIM_TTL_MS } from "./validate.ts";
 
 export const CATALOG_TOP_KEYS = [
 	"catalog_schema_version",
@@ -209,6 +210,14 @@ export function entryToApi(e: EntryRow) {
 		// the way the CLI's derive_hints reads a 1.0.0 file.
 		hints: entryHints(est, include),
 		policy: typeof est?.policy === "string" ? est.policy : null,
-		claim: parseClaim(e.claim_json),
+		claim: liveClaim(parseClaim(e.claim_json)),
 	};
+}
+
+/** A claim past the TTL is over: it stops rendering as in flight, the same
+ * moment it stops blocking new claims. Undated claims count as expired. */
+export function liveClaim(claim: Claim | null, now = Date.now()): Claim | null {
+	if (!claim) return null;
+	const t = Date.parse(claim.updated || claim.claimed_at);
+	return Number.isFinite(t) && now - t < CLAIM_TTL_MS ? claim : null;
 }

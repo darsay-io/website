@@ -870,6 +870,40 @@ describe("claims", () => {
 		}
 	});
 
+	it("refuses an un-marked claim on a have row; refetch and own reports flow", async () => {
+		const { env: e } = env();
+		const created = await req(e, "/api/boards", postBoard({ title: "x" }));
+		const { id } = (await created.json()) as { id: string };
+		const add = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "hf:acme/one", status: "have" }),
+		});
+		const { id: eid } = (await add.json()) as { id: number };
+
+		// An out-of-date --next about to re-download what the group holds.
+		const blocked = await req(e, `/api/boards/${id}/entries/${eid}/claim`, claim({ client: "usb-carrier" }));
+		expect(blocked.status).toBe(409);
+		expect(((await blocked.json()) as Record<string, any>).error).toBe("have");
+
+		// Naming the source is the deliberate act: archive SOURCE --board sends refetch.
+		const refetch = await req(
+			e,
+			`/api/boards/${id}/entries/${eid}/claim`,
+			claim({ client: "usb-carrier", refetch: true }),
+		);
+		expect(refetch.status).toBe(200);
+
+		// The holder's own boundary reports keep flowing un-marked.
+		const report = await req(
+			e,
+			`/api/boards/${id}/entries/${eid}/claim`,
+			claim({ client: "usb-carrier", state: "paused", percent: 40 }),
+		);
+		expect(report.status).toBe(200);
+		expect(((await report.json()) as Record<string, any>).claim.state).toBe("paused");
+	});
+
 	it("release clears the claim for the claimant only", async () => {
 		const { env: e } = env();
 		const { id, eid } = await boardWithEntry(e);

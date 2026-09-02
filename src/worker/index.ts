@@ -720,6 +720,19 @@ app.post("/boards/:id/entries/:eid/claim", async (c) => {
 		const live = Number.isFinite(updatedAt) && Date.now() - updatedAt < CLAIM_TTL_MS;
 		if (live) return c.json({ error: "claimed", claim: current }, 409);
 	}
+	// The board's checkmark gates claims: an un-marked claim on a row already
+	// checked off as have is an out-of-date --next about to re-download what
+	// the group holds. A client that means it says so (refetch — that is
+	// archive SOURCE --board) or forces; the holder's own boundary reports
+	// keep flowing either way.
+	if (
+		existing.status === "have" &&
+		parsed.body.refetch !== true &&
+		parsed.body.force !== true &&
+		!(current && current.client === client)
+	) {
+		return c.json({ error: "have", claim: current }, 409);
+	}
 	const claim = {
 		client,
 		state,
