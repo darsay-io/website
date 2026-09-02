@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CATALOG_TOP_KEYS, DIGEST_KEYS, entryToApi, exportCatalog, liveClaim, parseClaim } from "./catalog.ts";
 
 describe("exportCatalog", () => {
-	it("emits schema 1.2.0 without holders, status, claims, or board id", () => {
+	it("emits schema 2.0.0 without holders, status, claims, or board id", () => {
 		const cat = exportCatalog(
 			{
 				id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -39,7 +39,11 @@ describe("exportCatalog", () => {
 						dominant_dtype: "BF16",
 						unknown_size_count: 0,
 						hints: ["large", "redundant"],
-						policy: "masters",
+						policy: "negatives",
+						precision: "BF16",
+						bytes_per_param: 2.0,
+						architecture: "qwen3",
+						parents: [{ source: "huggingface:Qwen/Qwen3-0.6B-Base", relation: "finetune", declared_by: "tag" }],
 						extra: "drop me",
 					}),
 				},
@@ -56,9 +60,11 @@ describe("exportCatalog", () => {
 		for (const k of Object.keys(est)) expect(DIGEST_KEYS).toContain(k);
 		expect(est.extra).toBeUndefined();
 		expect(est.hints).toEqual(["large", "redundant"]);
-		expect(est.policy).toBe("masters");
+		expect(est.policy).toBe("negatives");
+		expect(est.precision).toBe("BF16");
+		expect(est.parents).toEqual([{ source: "huggingface:Qwen/Qwen3-0.6B-Base", relation: "finetune" }]);
 		expect(JSON.stringify(cat)).not.toContain("claim");
-		expect((cat as Record<string, unknown>).catalog_schema_version).toBe("1.2.0");
+		expect((cat as Record<string, unknown>).catalog_schema_version).toBe("2.0.0");
 		expect("artifact_type" in entry).toBe(false);
 	});
 });
@@ -72,13 +78,17 @@ describe("sanitizeDigest", () => {
 		const out = sanitizeDigest({
 			payload_bytes: 55_586_114_863,
 			hints: ["redundant", 7, "x".repeat(99)],
-			policy: "masters",
+			policy: "negatives",
+			parents: [{ source: "huggingface:Qwen/Qwen3.8-27B", relation: 7 }, { relation: "x" }, "junk"],
+			bytes_per_param: 8.628,
 			extra: "drop me",
 			license: null,
 		}) as Record<string, unknown>;
 		expect(out.payload_bytes).toBe(55_586_114_863);
 		expect(out.hints).toEqual(["redundant"]);
-		expect(out.policy).toBe("masters");
+		expect(out.policy).toBe("negatives");
+		expect(out.parents).toEqual([{ source: "huggingface:Qwen/Qwen3.8-27B", relation: null }]);
+		expect(out.bytes_per_param).toBe(8.628);
 		expect(out.license).toBeNull();
 		expect("extra" in out).toBe(false);
 	});
@@ -147,6 +157,9 @@ describe("entryToApi", () => {
 		expect(rich.gated).toBe(true);
 		expect(rich.parameters).toBe(8_030_261_248);
 		expect(rich.dominant_dtype).toBe("BF16");
+		expect(rich.precision).toBeNull();
+		expect(rich.closed).toBe(false);
+		expect(entryToApi({ ...base, source: "https://www.qwencloud.com/models/qwen3.8-max-0902" }).closed).toBe(true);
 		expect(bare.claim?.client).toBe("usb-carrier");
 		expect(bare.claim?.percent).toBe(40);
 		// No stored hints: derived the way the CLI reads a 1.0.0 digest.

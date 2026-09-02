@@ -1,3 +1,4 @@
+import { humanBytesPerParam } from "../worker/precision.ts";
 import { artifactTypeFromSource, canonicalizeSource, hfUrlFromCanonical } from "../worker/sources.ts";
 import {
 	DEFAULT_DIAL_INDICES,
@@ -38,6 +39,7 @@ import {
 	inFlight,
 	isAbliterated,
 	isBaseModel,
+	isClosed,
 	isSpeculator,
 	lensCounts,
 	lensCountsGiven,
@@ -46,7 +48,9 @@ import {
 	tally,
 	type LensKey,
 	type SortKey,
+	type ViewMode,
 } from "./lenses.ts";
+import { compareGenerations, displayGeneration, familiesOf, familyKey, groupByFamily, lineageOf, publisherOf } from "./lineage.ts";
 import { HINT_PRIMER, type PrimerKey } from "./primer.ts";
 import { deriveRecipes, humanParams, humanSize, type Recipe } from "./recipes.ts";
 
@@ -67,6 +71,11 @@ type Entry = {
 	dominant_dtype?: string | null;
 	hints?: string[];
 	policy?: string | null;
+	precision?: string | null;
+	bytes_per_param?: number | null;
+	architecture?: string | null;
+	parents?: Array<{ source: string; relation: string | null }> | null;
+	closed?: boolean;
 	claim?: {
 		client: string;
 		state: "archiving" | "paused" | "done";
@@ -208,9 +217,28 @@ export function entryArtifactType(e: Pick<Entry, "source" | "artifact_type">): s
 	return artifactTypeFromSource(e.source) ?? "—";
 }
 
+/** The tree order: family, then generation oldest first, then size — as `darsay list --sort family`. */
+export function compareFamily(a: Pick<Entry, "source">, b: Pick<Entry, "source">): number {
+	const la = lineageOf(a.source);
+	const lb = lineageOf(b.source);
+	const fa = familyKey(la);
+	const fb = familyKey(lb);
+	if (fa === null && fb !== null) return 1;
+	if (fb === null && fa !== null) return -1;
+	return (
+		(fa ?? "").localeCompare(fb ?? "") ||
+		compareGenerations(la.generation, lb.generation) ||
+		(la.sizeTotal ?? 0) - (lb.sizeTotal ?? 0) ||
+		(la.member ?? "").localeCompare(lb.member ?? "") ||
+		a.source.localeCompare(b.source)
+	);
+}
+
 export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "desc"): number {
 	let cmp = 0;
-	if (key === "desire" || key === "size") {
+	if (key === "family") {
+		cmp = compareFamily(a, b);
+	} else if (key === "desire" || key === "size") {
 		const av = key === "desire" ? a.desire : a.payload_bytes;
 		const bv = key === "desire" ? b.desire : b.payload_bytes;
 		if (av === null && bv === null) cmp = 0;
@@ -232,10 +260,11 @@ export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "d
 export function factPrimer(fact: string): PrimerKey | null {
 	if (/^pin /.test(fact)) return "pin";
 	if (fact === "gated") return "gated";
+	if (fact === "closed") return "closed";
 	if (/\bglobs?$/.test(fact)) return "subset";
 	if (fact === "dataset") return "dataset";
 	if (fact === "model") return "bundle";
-	if (/^\d[\d.]*[BM]\b/.test(fact)) return "dtype";
+	if (/^\d[\d.]*[BMT]\b/.test(fact) || /B\/param$/.test(fact)) return "dtype";
 	if (/before --include$/.test(fact)) return "subset";
 	if (/\b(GiB|TiB)$/.test(fact)) return "large";
 	return null;
@@ -277,6 +306,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	let sortKey: SortKey = initial.sort ?? DEFAULT_SORT.sort;
 	let sortDir: "asc" | "desc" = initial.dir ?? DEFAULT_SORT.dir;
 	let lenses: LensKey[] = initial.lenses;
+	let family: string | null = initial.family;
+	let view: ViewMode = initial.view ?? "ledger";
 	let dials: DialIndices = { ...DEFAULT_DIAL_INDICES };
 	let target: Target = "file";
 	let installFlavor: InstallFlavor = "pipx";
@@ -319,7 +350,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	}
 
 	function syncHash() {
-		const hash = formatView({ lenses, sort: sortKey, dir: sortDir }, DEFAULT_SORT);
+		const hash = formatView({ lenses, sort: sortKey, dir: sortDir, family, view }, DEFAULT_SORT);
 		const url = `${location.pathname}${location.search}${hash}`;
 		if (`${location.pathname}${location.search}${location.hash}` !== url) history.replaceState(null, "", url);
 	}
@@ -329,6 +360,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		lenses = v.lenses;
 		sortKey = v.sort ?? DEFAULT_SORT.sort;
 		sortDir = v.dir ?? DEFAULT_SORT.dir;
+		family = v.family;
+		view = v.view ?? "ledger";
 		paintLedger();
 	});
 
@@ -338,7 +371,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 		if (document.querySelector("dialog[open]")) return;
 		ev.preventDefault();
-		openGuide("masters");
+		openGuide("negatives");
 	});
 
 	function hintSeen(): boolean {
@@ -619,7 +652,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		more.append(el("a", { href: "/docs/getting-started/" }, "Full walkthrough"), " · ");
 		more.append(el("a", { href: "/docs/examples/#keep-a-darsayio-board-honest" }, "Keep a board honest"), " · ");
 		const fg = el("button", { type: "button", class: "linkish" }, "✦ Field guide");
-		fg.addEventListener("click", () => openGuide("masters", fg));
+		fg.addEventListener("click", () => openGuide("negatives", fg));
 		more.append(fg);
 
 		details.append(summary, steps, more);
@@ -745,6 +778,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	/** `huggingface:` `Owner/` `Name` as three tones, so the name reads first. */
 	function sourceLabel(source: string): Node[] {
 		const parsed = canonicalizeSource(source);
+		if (parsed.kind === "home") {
+			const name = source.replace(/\/+$/, "").slice(source.replace(/\/+$/, "").lastIndexOf("/") + 1);
+			return [el("span", { class: "src-scheme" }, `${parsed.host}/`), el("span", { class: "src-name" }, name)];
+		}
 		if (parsed.kind !== "hf") return [el("span", { class: "src-name" }, source)];
 		const prefix = parsed.artifactType === "dataset" ? "huggingface:datasets/" : "huggingface:";
 		const [owner, ...rest] = parsed.locator.split("/");
@@ -757,14 +794,16 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 	function renderEntry(e: Entry, index: number): HTMLElement {
 		const claimed = inFlight(e);
+		const closed = isClosed(e);
 		const card = el("article", {
-			class: `work-card${e.status === "have" ? " is-have" : ""}${claimed ? " is-claimed" : ""}`,
+			class: `work-card${e.status === "have" ? " is-have" : ""}${claimed ? " is-claimed" : ""}${closed ? " is-closed" : ""}`,
+			id: `row-${e.id}`,
 		});
 		if (firstPaint && !reducedMotion()) card.style.animationDelay = `${Math.min(index, 10) * 45}ms`;
 		else card.classList.add("no-enter");
 
 		const src = el("div", { class: "work-id" });
-		const href = hfUrlFromCanonical(e.source);
+		const href = closed ? e.source : hfUrlFromCanonical(e.source);
 		if (href) src.append(el("a", { href, rel: "noreferrer", target: "_blank", class: "src-link" }, ...sourceLabel(e.source)));
 		else src.append(el("span", { class: "src-link" }, ...sourceLabel(e.source)));
 		const sub: string[] = [];
@@ -777,19 +816,29 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (e.status === "have") {
 			facts.append(teachChip(e.holders ? `have · ${e.holders}` : "have", "desire", "chip-have", e, "In a member's vault — who says whose"));
 		}
-		if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset", e));
+		if (closed) facts.append(teachChip("closed", "closed", "chip-type chip-closed", e, "A home page, not a source — a place held in its family"));
+		else if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset", e));
 		else if (kind === "model") facts.append(teachChip("model", "bundle", "chip-type chip-type-model", e, "What lands on disk for a model"));
 		else facts.append(el("span", { class: "muted" }, "—"));
 
-		const size = el("span", { class: "work-size" }, humanSize(e.payload_bytes));
-		if (typeof e.payload_bytes === "number") size.title = `${e.payload_bytes.toLocaleString()} bytes`;
-		facts.append(size);
-		if (e.parameters) {
-			const stat = `${humanParams(e.parameters)}${e.dominant_dtype ? ` · ${e.dominant_dtype}` : ""}`;
-			facts.append(teachChip(stat, "dtype", "chip-stat", e, "Parameters and dominant dtype — what one copy should weigh"));
+		if (!closed) {
+			const size = el("span", { class: "work-size" }, humanSize(e.payload_bytes));
+			if (typeof e.payload_bytes === "number") size.title = `${e.payload_bytes.toLocaleString()} bytes`;
+			facts.append(size);
 		}
-		if (e.policy === "masters") {
-			facts.append(teachChip("masters", "masters", "chip-policy", e, "Priced masters-first: negatives, not prints"));
+		if (e.parameters) {
+			// Parameters · precision · bytes per parameter: the three numbers
+			// that explain the size (the precision card).
+			const label = e.precision ?? e.dominant_dtype;
+			const parts = [humanParams(e.parameters), ...(label ? [label] : []), ...(typeof e.bytes_per_param === "number" ? [humanBytesPerParam(e.bytes_per_param)] : [])];
+			facts.append(teachChip(parts.join(" · "), "dtype", "chip-stat", e, "Parameters, release precision, bytes per parameter — why it weighs what it weighs"));
+		}
+		if (e.policy === "negatives") {
+			facts.append(teachChip("negatives", "negatives", "chip-policy", e, "Priced as the negative set: negatives, not prints"));
+		}
+		const lin = lineageOf(e.source);
+		if (lin.family) {
+			facts.append(teachChip(displayGeneration(lin.family, lin.generation), "family", "chip-family", e, "Family and generation — read from the name"));
 		}
 		for (const hint of effectiveHints(e)) {
 			const key = HINT_PRIMER[hint];
@@ -915,14 +964,17 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 		const desireKicker = el("button", { type: "button", class: "kicker-btn", title: "What desire does" }, "Desire");
 		desireKicker.addEventListener("click", () => openGuide("desire", desireKicker, e));
-		const bar = el(
-			"div",
-			{ class: "work-bar" },
-			el("label", { class: "work-desire" }, desireKicker, desire),
-			el("label", { class: "work-have" }, have, el("span", {}, "Have")),
-			el("label", { class: "work-who" }, el("span", {}, "Who"), who),
-			rm,
-		);
+		const bar = el("div", { class: "work-bar" }, el("label", { class: "work-desire" }, desireKicker, desire));
+		if (closed) {
+			// Nothing to hold: a closed work is a place, not bytes.
+			bar.append(el("span", { class: "work-closed-note" }, "no bytes to hold — a place in the family until weights ship"));
+		} else {
+			bar.append(
+				el("label", { class: "work-have" }, have, el("span", {}, "Have")),
+				el("label", { class: "work-who" }, el("span", {}, "Who"), who),
+			);
+		}
+		bar.append(rm);
 
 		const claimRow = renderClaim(e);
 		card.append(
@@ -1040,15 +1092,32 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (t.wantBytes > 0) parts.push(`${humanSize(t.wantBytes)} wanted`);
 		if (t.haveBytes > 0) parts.push(`${humanSize(t.haveBytes)} in vaults`);
 		if (t.unsized > 0) parts.push(`${t.unsized} unpriced`);
-		const tallyEl = el("span", { class: "ledger-tally", title: "Sizes as priced by the Hub; masters-first where the CLI classified" });
+		const tallyEl = el("span", { class: "ledger-tally", title: "Sizes as priced by the Hub; the negative set where the CLI classified" });
 		parts.forEach((p, i) => {
 			if (i > 0) tallyEl.append(el("span", { class: "ledger-sep", "aria-hidden": "true" }, "·"));
 			tallyEl.append(p);
 		});
 
+		const views = el("div", { class: "view-pills", role: "group", "aria-label": "View" });
+		for (const v of ["ledger", "lineage"] as ViewMode[]) {
+			const b = el(
+				"button",
+				{ type: "button", class: `view-btn${view === v ? " is-active" : ""}`, "aria-pressed": view === v ? "true" : "false" },
+				v === "ledger" ? "Ledger" : "Lineage",
+			);
+			b.addEventListener("click", () => {
+				if (view === v) return;
+				view = v;
+				syncHash();
+				paintLedger();
+			});
+			views.append(b);
+		}
+
 		const sorts = el("div", { class: "sort-pills", role: "group", "aria-label": "Sort" });
 		const sortCols: { label: string; key: SortKey }[] = [
 			{ label: "Desire", key: "desire" },
+			{ label: "Family", key: "family" },
 			{ label: "Source", key: "source" },
 			{ label: "Type", key: "type" },
 			{ label: "Size", key: "size" },
@@ -1067,7 +1136,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				if (sortKey === col.key) sortDir = sortDir === "desc" ? "asc" : "desc";
 				else {
 					sortKey = col.key;
-					sortDir = col.key === "source" ? "asc" : "desc";
+					sortDir = col.key === "source" || col.key === "family" ? "asc" : "desc";
 				}
 				syncHash();
 				paintLedger();
@@ -1116,6 +1185,35 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			});
 			group.append(b);
 		}
+		// Families: one chip per family read from the names on the board.
+		const families = familiesOf(all);
+		if (families.length > 1 || family) {
+			const famGroup = el("span", { class: "lens-group lens-group-family" });
+			for (const f of families) {
+				const active = family === f.key;
+				const n = applyLenses(all, lenses, f.key).length;
+				const b = el(
+					"button",
+					{
+						type: "button",
+						class: `lens-chip lens-family${active ? " is-active" : ""}${n === 0 && !active ? " is-empty" : ""}`,
+						"aria-pressed": active ? "true" : "false",
+						"data-family": f.key,
+						title: `The ${f.family} family — read from the names, ${plural(f.count, "work")}`,
+					},
+					f.family,
+					el("span", { class: "lens-n" }, String(n)),
+				);
+				b.addEventListener("click", () => {
+					family = active ? null : f.key;
+					syncHash();
+					paintLedger();
+					shells.toolbar.querySelector<HTMLElement>(`.lens-chip[data-family="${f.key}"]`)?.focus({ preventScroll: true });
+				});
+				famGroup.append(b);
+			}
+			chips.append(famGroup);
+		}
 		const guideBtn = el(
 			"button",
 			{
@@ -1127,10 +1225,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			el("span", { class: "guide-open-long" }, "Field "),
 			"guide",
 		);
-		guideBtn.addEventListener("click", () => openGuide(lenses.length ? LENS_BY_KEY[lenses[lenses.length - 1]].primer : "masters", guideBtn));
+		guideBtn.addEventListener("click", () => openGuide(lenses.length ? LENS_BY_KEY[lenses[lenses.length - 1]].primer : family ? "family" : "negatives", guideBtn));
 
 		shells.toolbar.replaceChildren(
-			el("div", { class: "ledger-row ledger-row-top" }, head, tallyEl, sorts, guideBtn),
+			el("div", { class: "ledger-row ledger-row-top" }, head, tallyEl, views, sorts, guideBtn),
 			el("div", { class: "ledger-row lens-row" }, el("span", { class: "lens-kicker" }, "Lens"), chips),
 		);
 
@@ -1152,18 +1250,38 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			});
 			hint.append(ok);
 			shells.caption.replaceChildren(hint);
-		} else if (lenses.length) {
-			const last = LENS_BY_KEY[lenses[lenses.length - 1]];
+		} else if (lenses.length || family) {
 			const cap = el("p", { class: "lens-caption" });
-			const names = lenses.map((k) => LENS_BY_KEY[k].label).join(" · ");
+			const famName = family ? (families.find((f) => f.key === family)?.family ?? family) : null;
+			if (!lenses.length && famName) {
+				cap.append(el("strong", {}, famName), " — ");
+				cap.append(inline("one family, read from the names on this board. Generations order numerically; the Lineage view draws the tree. "));
+				const read = el("button", { type: "button", class: "linkish" }, "✦ Read the card");
+				read.addEventListener("click", () => openGuide("family", read));
+				cap.append(read);
+				const clear = el("button", { type: "button", class: "linkish lens-clear" }, "Clear");
+				clear.addEventListener("click", () => {
+					family = null;
+					syncHash();
+					paintLedger();
+				});
+				cap.append(el("span", { class: "guide-sep", "aria-hidden": "true" }, " · "), clear);
+				shells.caption.replaceChildren(cap);
+				return;
+			}
+			const last = LENS_BY_KEY[lenses[lenses.length - 1]];
+			const names = [...(famName ? [famName] : []), ...lenses.map((k) => LENS_BY_KEY[k].label)].join(" · ");
 			cap.append(el("strong", {}, names), " — ");
 			if (lenses.length > 1) cap.append(`rows that are ${lenses.length === 2 ? "both" : "all of these"}. `);
 			cap.append(inline(last.blurb), " ");
 			const read = el("button", { type: "button", class: "linkish" }, "✦ Read the card");
 			read.addEventListener("click", () => openGuide(last.primer, read));
 			cap.append(read);
-			const clear = el("button", { type: "button", class: "linkish lens-clear" }, lenses.length > 1 ? "Clear all" : "Clear");
-			clear.addEventListener("click", clearLenses);
+			const clear = el("button", { type: "button", class: "linkish lens-clear" }, lenses.length + (family ? 1 : 0) > 1 ? "Clear all" : "Clear");
+			clear.addEventListener("click", () => {
+				family = null;
+				clearLenses();
+			});
 			cap.append(el("span", { class: "guide-sep", "aria-hidden": "true" }, " · "), clear);
 			shells.caption.replaceChildren(cap);
 		} else {
@@ -1173,9 +1291,15 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 	function paintLedger() {
 		const sorted = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
-		const visible = applyLenses(sorted, lenses);
+		const visible = applyLenses(sorted, lenses, family);
 		paintToolbar(visible);
 		shells.ledger.replaceChildren();
+		shells.ledger.classList.toggle("is-lineage", view === "lineage");
+		if (view === "lineage" && visible.length) {
+			shells.ledger.append(renderLineage(visible));
+			firstPaint = false;
+			return;
+		}
 		if (board.entries.length === 0) {
 			const empty = el("div", { class: "ledger-empty" });
 			empty.append(
@@ -1185,13 +1309,16 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			shells.ledger.append(empty);
 		} else if (visible.length === 0) {
 			const empty = el("div", { class: "ledger-empty" });
-			const n = lenses.length;
+			const n = lenses.length + (family ? 1 : 0);
 			const clear = el(
 				"button",
 				{ type: "button", class: "btn compact secondary" },
 				n === 1 ? "Clear the lens" : n === 2 ? "Clear both lenses" : `Clear all ${n} lenses`,
 			);
-			clear.addEventListener("click", clearLenses);
+			clear.addEventListener("click", () => {
+				family = null;
+				clearLenses();
+			});
 			empty.append(el("p", { class: "ledger-empty-t" }, n === 1 ? "Nothing through this lens." : "Nothing through these lenses together."), clear);
 			shells.ledger.append(empty);
 		} else {
@@ -1200,11 +1327,144 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		firstPaint = false;
 	}
 
+	/** Jump from a lineage card to its ledger row. */
+	function showRow(e: Entry) {
+		view = "ledger";
+		syncHash();
+		paintLedger();
+		const card = document.getElementById(`row-${e.id}`);
+		if (card) {
+			card.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+			card.classList.add("is-spotlit");
+			window.setTimeout(() => card.classList.remove("is-spotlit"), 1800);
+		}
+	}
+
+	/** One work in the tree: name, what it is, what it weighs, where it stands. */
+	function renderMember(e: Entry, edge: string | null, homePublisher: string | null): HTMLElement {
+		const lin = lineageOf(e.source);
+		const closed = isClosed(e);
+		const claimed = inFlight(e);
+		const li = el("li", {
+			class: `member${e.status === "have" ? " is-have" : ""}${closed ? " is-closed" : ""}${claimed ? " is-claimed" : ""}${edge ? " is-derivative" : ""}`,
+		});
+		const href = closed ? e.source : hfUrlFromCanonical(e.source);
+		const nameText = lin.member ?? (lin.generation ? "flagship" : lineageOf(e.source).family ?? e.source);
+		const name = href
+			? el("a", { href, rel: "noreferrer", target: "_blank", class: "member-name" }, nameText)
+			: el("span", { class: "member-name" }, nameText);
+		const tags = el("span", { class: "member-tags" });
+		for (const v of lin.variants) tags.append(el("span", { class: "member-tag" }, v));
+		for (const f of lin.formats) tags.append(el("span", { class: "member-tag member-tag-format" }, `${f} print`));
+		if (closed) tags.append(el("span", { class: "member-tag member-tag-closed" }, "closed"));
+		const head = el("div", { class: "member-head" }, name, tags);
+		const publisher = publisherOf(e.source);
+		const by = publisher && homePublisher && publisher !== homePublisher ? el("div", { class: "member-by" }, `by ${publisher}`) : null;
+		const edgeEl = edge ? el("div", { class: "member-edge" }, edge) : null;
+
+		const facts: string[] = [];
+		if (!closed && typeof e.payload_bytes === "number") facts.push(humanSize(e.payload_bytes));
+		if (e.parameters) facts.push(humanParams(e.parameters));
+		const label = e.precision ?? e.dominant_dtype;
+		if (label) facts.push(label);
+		if (typeof e.bytes_per_param === "number") facts.push(humanBytesPerParam(e.bytes_per_param));
+		const factsEl = el("div", { class: "member-facts" }, facts.join(" · ") || (closed ? "no bytes to fetch" : "unpriced"));
+
+		const status = e.status === "have" ? (e.holders ? `have · ${e.holders}` : "have") : claimed ? `in flight · ${e.claim?.client ?? ""}` : closed ? "closed" : "want";
+		const desire = e.desire ? ` · desire ${e.desire}` : "";
+		const statusEl = el("div", { class: "member-status" }, `${status}${desire}`);
+
+		const row = el("button", { type: "button", class: "member-row-btn", title: "Open this row in the ledger" }, "row ↗");
+		row.addEventListener("click", () => showRow(e));
+		const why = el("button", { type: "button", class: "member-why", "aria-label": "What this card shows" }, "✦");
+		why.addEventListener("click", () => openGuide(closed ? "closed" : "family", why, e));
+
+		li.append(head, ...(by ? [by] : []), ...(edgeEl ? [edgeEl] : []), factsEl, statusEl, el("div", { class: "member-actions" }, row, why));
+		if (e.note) li.append(el("p", { class: "member-note" }, e.note));
+		return li;
+	}
+
+	/**
+	 * The tree: families → generations (oldest first) → members (smallest
+	 * first), a derivative nested under the parent upstream declared when
+	 * that parent is on the board. Everything here is read from names and
+	 * declared edges; the field guide says which is which.
+	 */
+	function renderLineage(rows: Entry[]): HTMLElement {
+		const section = el("section", { class: "lineage", "aria-label": "Lineage" });
+		const canonicalOf = (s: string) => {
+			const p = canonicalizeSource(s);
+			return p.kind === "error" ? s : p.canonical;
+		};
+		const bySource = new Map<string, Entry>();
+		for (const e of rows) bySource.set(canonicalOf(e.source), e);
+		// A row whose declared parent is on the board hangs under that parent.
+		const childrenOf = new Map<number, Array<{ child: Entry; relation: string | null }>>();
+		const nested = new Set<number>();
+		for (const e of rows) {
+			for (const p of e.parents ?? []) {
+				const parent = bySource.get(canonicalOf(p.source));
+				if (!parent || parent.id === e.id) continue;
+				const list = childrenOf.get(parent.id) ?? [];
+				list.push({ child: e, relation: p.relation });
+				childrenOf.set(parent.id, list);
+				nested.add(e.id);
+				break;
+			}
+		}
+		const tree = groupByFamily(rows.filter((e) => !nested.has(e.id)));
+		const memberWithChildren = (e: Entry, edge: string | null, home: string | null): HTMLElement => {
+			const li = renderMember(e, edge, home);
+			const kids = childrenOf.get(e.id);
+			if (kids?.length) {
+				const ul = el("ul", { class: "member-children" });
+				for (const k of kids) {
+					const childLin = lineageOf(k.child.source);
+					const edgeWord = k.relation ?? (childLin.variants[0] ?? "derivative");
+					ul.append(memberWithChildren(k.child, `${edgeWord} of ${lineageOf(e.source).member ?? "this"}`, home));
+				}
+				li.append(ul);
+			}
+			return li;
+		};
+		for (const fam of tree) {
+			const art = el("article", { class: `family${fam.key === null ? " family-unnamed" : ""}` });
+			const wanted = tally(fam.generations.flatMap((g) => g.rows.map((r) => r.row)));
+			const meta: string[] = [plural(fam.count, "work")];
+			if (fam.homePublisher) meta.push(`published by ${fam.homePublisher}`);
+			if (fam.generations.length > 1) meta.push(plural(fam.generations.length, "generation"));
+			if (wanted.wantBytes > 0) meta.push(`${humanSize(wanted.wantBytes)} wanted`);
+			if (wanted.haveBytes > 0) meta.push(`${humanSize(wanted.haveBytes)} in vaults`);
+			const title = el("h2", { class: "family-name" }, fam.family ?? "No family in the name");
+			const famBtn = el("button", { type: "button", class: "family-why", "aria-label": "What a family is" }, "✦");
+			famBtn.addEventListener("click", () => openGuide("family", famBtn));
+			art.append(el("header", { class: "family-head" }, title, el("span", { class: "family-meta" }, meta.join(" · ")), famBtn));
+			const gens = el("ol", { class: "generations" });
+			for (const gen of fam.generations) {
+				const li = el("li", { class: "generation" });
+				li.append(el("div", { class: "gen-label" }, el("span", { class: "gen-kicker" }, fam.key === null ? "" : "generation"), el("span", { class: "gen-value" }, gen.generation ?? "—")));
+				const members = el("ul", { class: "members" });
+				for (const { row } of gen.rows) members.append(memberWithChildren(row, null, fam.homePublisher));
+				li.append(members);
+				gens.append(li);
+			}
+			art.append(gens);
+			section.append(art);
+		}
+		const foot = el("p", { class: "lineage-foot muted" });
+		foot.append("Family, generation, and member are read from each work's name; a derivative hangs under the parent its card declares. ");
+		const read = el("button", { type: "button", class: "linkish" }, "✦ How the tree is read");
+		read.addEventListener("click", () => openGuide("family", read));
+		foot.append(read);
+		section.append(foot);
+		return section;
+	}
+
 	function renderAdd(): HTMLElement {
 		const add = el("form", { class: "add-card", "aria-labelledby": "add-title" });
 		const source = el("input", {
 			type: "text",
-			placeholder: "owner/name, datasets/owner/name, or a Hugging Face URL",
+			placeholder: "owner/name, datasets/owner/name, a Hugging Face URL, or a closed work's home page",
 			required: "true",
 			id: "add-source",
 			autocomplete: "off",
@@ -1228,7 +1488,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const addBtn = el("button", { type: "submit", class: "btn" }, "Add source");
 		const addErr = el("p", { class: "add-err", role: "alert" });
 		const help = el("p", { class: "add-help muted" });
-		help.append("Priced from the Hub as it lands — size, parameters, dtype. Rate it 1–9; ");
+		help.append("Priced from the Hub as it lands — size, parameters, precision, family. A home page on another site holds a place for a closed work. Rate it 1–9; ");
 		const fg = el("button", { type: "button", class: "linkish" }, "✦ what desire does");
 		fg.addEventListener("click", () => openGuide("desire", fg));
 		help.append(fg, ".");

@@ -121,32 +121,44 @@ describe("effectiveHints", () => {
 
 describe("lenses", () => {
 	const rows = [
-		row({ source: "huggingface:MiniMaxAI/MiniMax-H3", payload_bytes: 330 * GiB, hints: ["large", "redundant"], policy: "masters", claim: { state: "archiving" } }),
+		row({ source: "huggingface:MiniMaxAI/MiniMax-H3", payload_bytes: 330 * GiB, hints: ["large", "redundant"], policy: "negatives", claim: { state: "archiving" } }),
 		row({ source: "huggingface:zai-org/GLM-5.3", payload_bytes: 704 * GiB, dominant_dtype: "F8_E4M3", status: "have" }),
 		row({ source: "huggingface:Uniboshi/Kimi-K3-Abliterated-V1", payload_bytes: 1454 * GiB, gated: true, dominant_dtype: "U8" }),
 		row({ source: "huggingface:Qwen/Qwen3-8B-Base", payload_bytes: 15 * GiB }),
 		row({ source: "huggingface:Qwen/Qwen3.5-397B-A17B", payload_bytes: 751 * GiB }),
 		row({ source: "huggingface:datasets/saidutta69/fable-5-premium", artifact_type: "dataset", payload_bytes: 2 * GiB }),
 		row({ source: "huggingface:biohub/esm3-sm-open-v1", payload_bytes: null, dominant_dtype: null }),
+		row({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902", payload_bytes: null, dominant_dtype: null, closed: true }),
 	];
 	it("reads each row through every lens it passes", () => {
-		expect([...lensesFor(rows[0])].sort()).toEqual(["claimed", "large", "masters", "redundant", "want"]);
+		expect([...lensesFor(rows[0])].sort()).toEqual(["claimed", "large", "negatives", "redundant", "want"]);
 		expect([...lensesFor(rows[1])].sort()).toEqual(["have", "large", "quant"]);
 		expect([...lensesFor(rows[2])].sort()).toEqual(["abliterated", "gated", "large", "quant", "want"]);
 		expect([...lensesFor(rows[3])].sort()).toEqual(["base", "want"]);
 		expect([...lensesFor(rows[4])].sort()).toEqual(["large", "moe", "want"]);
 		expect([...lensesFor(rows[5])].sort()).toEqual(["dataset", "want"]);
 		expect([...lensesFor(rows[6])].sort()).toEqual(["unpriced", "want"]);
+		// A closed work is closed, not unpriced: there is nothing to price.
+		expect([...lensesFor(rows[7])].sort()).toEqual(["closed", "want"]);
+	});
+	it("narrows to a family read from the names", () => {
+		expect(applyLenses(rows, [], "qwen").map((r) => r.source)).toEqual([
+			"huggingface:Qwen/Qwen3-8B-Base",
+			"huggingface:Qwen/Qwen3.5-397B-A17B",
+			"https://www.qwencloud.com/models/qwen3.8-max-0902",
+		]);
+		expect(applyLenses(rows, ["want"], "kimi").map((r) => r.source)).toEqual(["huggingface:Uniboshi/Kimi-K3-Abliterated-V1"]);
 	});
 	it("ANDs active lenses and counts per lens", () => {
-		expect(applyLenses(rows, []).length).toBe(7);
+		expect(applyLenses(rows, []).length).toBe(8);
 		expect(applyLenses(rows, ["large"]).length).toBe(4);
 		expect(applyLenses(rows, ["large", "want"]).length).toBe(3);
 		expect(applyLenses(rows, ["abliterated", "gated"]).map((r) => r.source)).toEqual([
 			"huggingface:Uniboshi/Kimi-K3-Abliterated-V1",
 		]);
 		const counts = lensCounts(rows);
-		expect(counts.get("want")).toBe(6);
+		expect(counts.get("want")).toBe(7);
+		expect(counts.get("closed")).toBe(1);
 		expect(counts.get("have")).toBe(1);
 		expect(counts.get("spec")).toBe(0);
 		expect(counts.get("unpriced")).toBe(1);
@@ -158,11 +170,12 @@ describe("lenses", () => {
 		expect(given.get("abliterated")).toBe(1);
 		expect(given.get("want")).toBe(1);
 		expect(lensCountsGiven(rows, []).get("large")).toBe(4);
+		expect(lensCountsGiven(rows, []).get("closed")).toBe(1);
 	});
 	it("tallies bytes by status and counts the unsized", () => {
 		const t = tally(rows);
-		expect(t.n).toBe(7);
-		expect(t.unsized).toBe(1);
+		expect(t.n).toBe(8);
+		expect(t.unsized).toBe(1); // the closed row is not "unsized" — it has no size to have
 		expect(t.haveBytes).toBe(704 * GiB);
 		expect(t.wantBytes).toBe((330 + 1454 + 15 + 751 + 2) * GiB);
 		expect(t.bytes).toBe(t.haveBytes + t.wantBytes);
@@ -184,14 +197,22 @@ describe("view state in the hash", () => {
 			lenses: ["abliterated", "large"],
 			sort: "size",
 			dir: "asc",
+			family: null,
+			view: null,
 		});
-		expect(parseView("")).toEqual({ lenses: [], sort: null, dir: null });
-		expect(parseView("#sort=nope:asc")).toEqual({ lenses: [], sort: null, dir: null });
-		expect(formatView({ lenses: ["gated"], sort: "desire", dir: "desc" }, defaults)).toBe("#lens=gated");
-		expect(formatView({ lenses: [], sort: "size", dir: "desc" }, defaults)).toBe("#sort=size:desc");
-		expect(formatView({ lenses: ["moe", "large"], sort: "size", dir: "asc" }, defaults)).toBe(
+		expect(parseView("")).toEqual({ lenses: [], sort: null, dir: null, family: null, view: null });
+		expect(parseView("#sort=nope:asc")).toEqual({ lenses: [], sort: null, dir: null, family: null, view: null });
+		expect(parseView("#view=lineage&family=qwen")).toMatchObject({ view: "lineage", family: "qwen" });
+		expect(parseView("#view=nope&family=Not%20A%20Key")).toMatchObject({ view: null, family: null });
+		expect(formatView({ lenses: [], sort: "desire", dir: "desc", family: "kimi", view: "lineage" }, defaults)).toBe(
+			"#view=lineage&family=kimi",
+		);
+		const bare = { family: null, view: null } as const;
+		expect(formatView({ lenses: ["gated"], sort: "desire", dir: "desc", ...bare }, defaults)).toBe("#lens=gated");
+		expect(formatView({ lenses: [], sort: "size", dir: "desc", ...bare }, defaults)).toBe("#sort=size:desc");
+		expect(formatView({ lenses: ["moe", "large"], sort: "size", dir: "asc", ...bare }, defaults)).toBe(
 			"#lens=moe,large&sort=size:asc",
 		);
-		expect(formatView({ lenses: [], sort: "desire", dir: "desc" }, defaults)).toBe("");
+		expect(formatView({ lenses: [], sort: "desire", dir: "desc", ...bare }, defaults)).toBe("");
 	});
 });

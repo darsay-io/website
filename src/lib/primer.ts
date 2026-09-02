@@ -8,7 +8,7 @@
 import type { LensKey } from "./lenses.ts";
 
 export type PrimerKey =
-	| "masters"
+	| "negatives"
 	| "quant"
 	| "formats"
 	| "dtype"
@@ -24,10 +24,12 @@ export type PrimerKey =
 	| "moe"
 	| "spec"
 	| "dataset"
+	| "family"
+	| "closed"
 	| "desire"
 	| "claims";
 
-export type PrimerGroup = "Policy" | "Formats" | "Anatomy" | "Names" | "The ledger";
+export type PrimerGroup = "Policy" | "Formats" | "Anatomy" | "Names" | "Lineage" | "The ledger";
 
 export type PrimerCard = {
 	key: PrimerKey;
@@ -53,31 +55,31 @@ export type PrimerCard = {
 
 export const PRIMER: PrimerCard[] = [
 	{
-		key: "masters",
+		key: "negatives",
 		group: "Policy",
 		title: "Negatives and prints",
-		lede: "The `masters` chip means this row is priced for the weights nothing can regenerate — the negatives — with the prints a script can remake left out.",
+		lede: "The `negatives` chip means this row is priced for the weights nothing can regenerate — the negatives — with the prints a script can remake left out.",
 		body: [
-			"Photography had the word first. A negative is the original exposure; a print is anything you can make from it again. darsay keeps the same line. A **master** is a weight file that cannot be re-derived — the full-fidelity BF16 or FP16 safetensors, a quant with calibration baked in, the only weight format a repo ships. A **print** is a mechanical transformation of a master — a GGUF made by `llama-quantize` with no importance matrix, a shard byte-identical to one the bundle already keeps.",
-			"`darsay archive` is masters-first by default. It reads a few tens of megabytes of headers from a multi-hundred-gigabyte repo, sorts every weight set into master, print, support or unknown, and fetches everything except confident prints. Support files — config, tokenizer, license — always come along. Unknown means darsay will not guess, so the bytes are fetched.",
+			"Photography had the words first. A negative is the original exposure; a print is anything you can make from it again. darsay keeps the same line, and there is no third word. A **negative** is a weight set that cannot be re-derived — the full-fidelity BF16 or F16 safetensors, a native FP8 or MXFP4 release with no higher-fidelity public copy, a quant with calibration baked in, the only weight format a repo ships. A **print** is a mechanical transformation of a negative the repo also holds — a GGUF made by `llama-quantize` with no importance matrix, a shard byte-identical to one the bundle already keeps.",
+			"`darsay archive` keeps the negatives by default. It reads a few tens of megabytes of headers from a multi-hundred-gigabyte repo, sorts every weight set into negative, print, support or unknown, and fetches everything except confident prints. Support files — config, tokenizer, license — always come along. Unknown means darsay will not guess, so the bytes are fetched.",
 			"The skip is loud and on the record: the preflight names each print and its rule, the manifest keeps the full omitted inventory with sizes and hashes, and `--full` fetches the whole repo whenever you want the historical bytes people actually ran.",
 		],
 		collect:
-			"Collect the negative. When disk forces a choice, the master is the only file every future format can be built from.",
+			"Collect the negative. When disk forces a choice, it is the only file every future format can be built from.",
 		cmd: {
 			label: "the evidence table",
 			lines: [
 				"darsay classify owner/model",
-				"darsay archive  owner/model          # masters-first, on the record",
+				"darsay archive  owner/model          # the negatives, on the record",
 				"darsay archive  owner/model --full   # every published byte instead",
 			],
 		},
 		doc: {
-			href: "/docs/quantization/#implemented-masters-first-acquisition-the-archive-default-and-darsay-classify",
-			label: "Quantization → masters-first acquisition",
+			href: "/docs/quantization/#4-mechanics",
+			label: "Quantization → mechanics",
 		},
-		related: ["quant", "redundant", "formats"],
-		lens: "masters",
+		related: ["quant", "dtype", "redundant", "formats"],
+		lens: "negatives",
 	},
 	{
 		key: "quant",
@@ -85,8 +87,8 @@ export const PRIMER: PrimerCard[] = [
 		title: "Quants",
 		lede: "A quant is a model stored with fewer bits per weight. Some are prints; some are negatives in their own right.",
 		body: [
-			"Full fidelity is the precision the weights were trained in — for today's models sixteen bits, BF16 or F16, two bytes a parameter. Quantization rounds those weights into eight, four, even two bits, trading a little accuracy for a lot of memory: a 27B model is about 52 GiB at BF16 and 15 GiB at Q4_K_M. The names encode the recipe. `Q4_K_M` is llama.cpp's 4-bit K-quant, medium; `IQ2_XS` a 2-bit importance-weighted one; `FP8`, `AWQ`, `GPTQ` and `NF4` are other families.",
-			"What matters to a collector is not the bit count but the provenance. A **derived** quant is a mechanical cast of archived weights — regenerable from the master under a recorded toolchain, so it is cache, not archive. A **published** quant is a repo in its own right and often cannot be regenerated bit-exact: AWQ and GPTQ need calibration data and a GPU run, an imatrix GGUF bakes in an importance matrix computed on a private corpus, an official FP8 is a curated layer map. When a model ships *only* in FP8 or INT4, that release is the master.",
+			"Full fidelity is the precision the weights were trained in — for today's models sixteen bits, BF16 or F16, two bytes a parameter. Quantization rounds those weights into eight, four, even two bits, trading a little accuracy for a lot of memory: a 27B model is about 52 GiB at BF16 and 15 GiB at Q4_K_M. The names encode the recipe. `Q4_K_M` is llama.cpp's 4-bit K-quant, medium; `IQ2_XS` a 2-bit importance-weighted one; `FP8`, `MXFP4`, `AWQ`, `GPTQ` and `NF4` are other families.",
+			"What matters to a collector is not the bit count but the provenance. A **derived** quant is a mechanical cast of archived weights — regenerable from the negative under a recorded toolchain, so it is cache, not archive. A **published** quant is a repo in its own right and often cannot be regenerated bit-exact: AWQ and GPTQ need calibration data and a GPU run, an imatrix GGUF bakes in an importance matrix computed on a private corpus, an official FP8 is a curated layer map. When a model ships *only* in FP8 or MXFP4, that release is the negative.",
 			"The `quant` chip is the CLI's verdict, never a guess from the name: the weight bytes are mostly GGUF, or the dominant safetensors dtype is below full fidelity.",
 		],
 		collect:
@@ -99,14 +101,14 @@ export const PRIMER: PrimerCard[] = [
 			],
 		},
 		doc: { href: "/docs/quantization/#1-the-two-kinds-of-quantized-artifact", label: "Quantization → two kinds of quant" },
-		related: ["masters", "formats", "dtype", "subset"],
+		related: ["negatives", "formats", "dtype", "subset"],
 		lens: "quant",
 	},
 	{
 		key: "formats",
 		group: "Formats",
 		title: "GGUF, safetensors, and the rest",
-		lede: "The file extension tells you which loader the weights were made for — and, sometimes, whether they are a master.",
+		lede: "The file extension tells you which loader the weights were made for — and, sometimes, whether they are a negative.",
 		body: [
 			"**safetensors** is the Hub's native format: a JSON header naming every tensor with its shape and dtype, then raw bytes. Big models shard into `model-00001-of-00028.safetensors` with a `model.safetensors.index.json` that says which shards make the loadable set. darsay reads that index, and a header only for a file no index accounts for — a few dozen kilobytes each — to classify a repo without downloading it.",
 			"**GGUF** is llama.cpp's single-file container: a key/value header (architecture, context length, quantization level, and `quantize.imatrix.*` keys when an importance matrix was used) followed by the tensors. One repo often ships twenty of them at different levels — a pack. The pack is the wrong unit; `--include '*Q4_K_M*'` prices and archives one.",
@@ -121,7 +123,7 @@ export const PRIMER: PrimerCard[] = [
 			],
 		},
 		collect:
-			"One safetensors master beats a pack of GGUFs. Want the GGUF people actually ran? Archive that one file with --include, as a satellite.",
+			"One safetensors negative beats a pack of GGUFs. Want the GGUF people actually ran? Archive that one file with --include, as a satellite.",
 		cmd: {
 			label: "one quant of a pack",
 			lines: [
@@ -135,26 +137,26 @@ export const PRIMER: PrimerCard[] = [
 	{
 		key: "dtype",
 		group: "Formats",
-		title: "Reading a dtype",
-		lede: "Bytes per parameter is the one number that tells you what a repo really contains.",
+		title: "Precision and bytes per parameter",
+		lede: "Every size is parameters × bytes per parameter. The second factor is the precision the publisher released at — and it is why two models of the same size on paper can differ threefold on disk.",
 		body: [
-			"Every row with a safetensors header shows its parameter count and dominant dtype — `27.78B · BF16`. Multiply the width by the count and you have what one copy of the weights should weigh. `BF16` and `F16` are two bytes a parameter; `F32` four; `F8_E4M3` and `I8` one. A native INT4 release packs two weights into each byte — half — inside `U8` or `I32` containers.",
-			"So a 27.78B BF16 model should weigh about 51.7 GiB. When the repo weighs 223 GiB it is not a bigger model — it ships several weight sets. `estimate` flags that ratio at 1.75× as `redundant`, and `classify` lays the sets out.",
-			"A native FP8 or INT4 release — DeepSeek, Kimi K2 — is not a downgrade. There is no higher-fidelity release to prefer, so it is the master.",
+			"Every model row shows three numbers — `2.45T · BF16 · 2.00 B/param`: the parameter count, the release precision, and what the repo actually spends per weight. `BF16` and `F16` are two bytes a parameter; `F32` four; `FP8` and `INT8` one. A native 4-bit release — `MXFP4`, `NVFP4`, `AWQ INT4` — packs two weights into each byte plus a shared scale, about half a byte. The CLI reads the label from `config.json` (wherever a multimodal config nests it), the dominant dtype, or a GGUF's file name, and measures bytes per parameter from the priced bytes.",
+			"So Qwen3.8-2.4T-A95B, 2.45T parameters at BF16, is 4.4 TiB and one negative set. Kimi-K3, 2.78T parameters at MXFP4, is 1.4 TiB. The second has *more* parameters and costs a third of the disk, because it was exposed at a quarter of the precision. Neither is bigger; both are negatives — a native low-precision release has no higher-fidelity public copy to prefer.",
+			"Far above two bytes a parameter is the other story: a 27.78B BF16 model should weigh 51.7 GiB, and when the repo weighs 223 GiB it ships several weight sets. `estimate` flags that ratio at 1.75× as `redundant`, and `classify` lays the sets out.",
 		],
 		table: {
-			head: ["dtype", "bytes / param", "27.78B weighs"],
+			head: ["release precision", "bytes / param", "27.78B weighs", "2.45T weighs"],
 			rows: [
-				["F32", "4", "103 GiB"],
-				["BF16 · F16", "2", "51.7 GiB"],
-				["F8_E4M3 · I8", "1", "25.9 GiB"],
-				["INT4, packed in U8 · I32", "0.5", "12.9 GiB"],
+				["F32", "4", "103 GiB", "8.9 TiB"],
+				["BF16 · F16", "2", "51.7 GiB", "4.4 TiB"],
+				["FP8 · INT8", "1", "25.9 GiB", "2.2 TiB"],
+				["MXFP4 · NVFP4 · INT4", "≈ 0.5–0.6", "13–16 GiB", "1.2–1.4 TiB"],
 			],
 		},
 		collect:
-			"Read the stat before the size. Near two bytes a parameter is one full-fidelity copy; far above it, several; below it, a quant.",
+			"Read the three numbers before the size. Near two bytes a parameter is one full-fidelity copy; near a half, a native 4-bit release; far above two, several weight sets in one box.",
 		doc: { href: "/docs/catalogs/#estimate-digest", label: "Catalogs → the estimate digest" },
-		related: ["redundant", "quant", "formats"],
+		related: ["negatives", "redundant", "quant", "formats"],
 	},
 	{
 		key: "bundle",
@@ -180,7 +182,7 @@ export const PRIMER: PrimerCard[] = [
 			],
 		},
 		doc: { href: "/docs/concepts/#bundle", label: "Concepts → bundle" },
-		related: ["pin", "dataset", "masters"],
+		related: ["pin", "dataset", "negatives"],
 	},
 	{
 		key: "pin",
@@ -188,7 +190,7 @@ export const PRIMER: PrimerCard[] = [
 		title: "The pin",
 		lede: "archive does not mean “download main”. It means resolve, freeze, then transfer until every file verifies.",
 		body: [
-			"First the ref — `main`, a tag, a commit — resolves to an immutable revision. Then the file set is frozen: by default the masters-first selection, with `--full` the whole repo, with `--include` exactly what you named. Only then do bytes move.",
+			"First the ref — `main`, a tag, a commit — resolves to an immutable revision. Then the file set is frozen: by default the negatives, with `--full` the whole repo, with `--include` exactly what you named. Only then do bytes move.",
 			"Rerunning `archive` on the same source continues that pin — same files, same selection. That is why resume needs no special subcommand, and why a 700 GiB job can be seventy evenings of `--max-gb 10`. It never chases a moving `main`; to take a new snapshot, `--force` pins again.",
 			"A row on this board may carry a revision; unpinned rows resolve at the collector's first run. A **skeleton** is a pin whose verified bytes were handed to another disk with `assemble --handoff`: the hashes stay, the payload travels, and nothing is fetched twice.",
 		],
@@ -243,11 +245,11 @@ export const PRIMER: PrimerCard[] = [
 		body: [
 			"The `large` chip is the CLI's line — a priced payload of 20 GiB or more, the same constant this board draws. Above it, think in sessions: `--max-gb` caps tonight, `--min-free` keeps a floor on the disk, `--max-minutes` ends before the café closes. Completed files are trusted; partial files resume with a Range request.",
 			"Above a few hundred gibibytes, think in disks and people. `assemble --handoff` hands a fetched half to the drive that has room and leaves a skeleton behind, so the laptop never re-fetches what it gave away. `--shard 1/2` lets two collectors prefer different halves and merge offline.",
-			"The size on the row is the masters-first price where the CLI has classified the repo (the `masters` chip), and the whole repo otherwise.",
+			"The size on the row is the negative set where the CLI has classified the repo (the `negatives` chip), and the whole repo otherwise. Beside it, the precision and bytes per parameter say why it weighs what it weighs.",
 		],
 		collect: "Large is not a reason to skip — it is a reason to budget. The recipe card under each row writes the flags for you.",
 		doc: { href: "/docs/examples/#pause-and-resume-a-large-archive", label: "Cookbook → pause and resume" },
-		related: ["pin", "masters", "claims"],
+		related: ["pin", "negatives", "dtype", "claims"],
 		lens: "large",
 	},
 	{
@@ -265,7 +267,7 @@ export const PRIMER: PrimerCard[] = [
 			lines: ["hf auth login                 # after accepting the terms on huggingface.co", "darsay archive owner/model"],
 		},
 		doc: { href: "/docs/catalogs/#hints", label: "Catalogs → hints" },
-		related: ["masters", "pin"],
+		related: ["negatives", "pin"],
 		lens: "gated",
 	},
 	{
@@ -275,24 +277,24 @@ export const PRIMER: PrimerCard[] = [
 		lede: "The repo weighs far more than one copy of its own parameter count: it ships several weight sets.",
 		body: [
 			"The smell is arithmetic. `estimate` multiplies the published per-dtype parameter counts by their widths to get one copy's weight bytes; when the repo's weight files total 1.75× that or more, the row gets `redundant`. An exact second copy is 2.0×.",
-			"What the extra bytes *are* is the interesting part. Sometimes a BF16 master plus every GGUF of it — prints, skipped by default. Sometimes a multi-pipeline repo shipping the same 60 GiB text encoder three times — byte-identical twins, kept once. Sometimes two *different* builds under one index and an orphaned shard set nobody references — undecidable, so fetched in full.",
+			"What the extra bytes *are* is the interesting part. Sometimes a BF16 negative plus every GGUF of it — prints, skipped by default. Sometimes a multi-pipeline repo shipping the same 60 GiB text encoder three times — byte-identical twins, kept once. Sometimes two *different* builds under one index and an orphaned shard set nobody references — undecidable, so fetched in full.",
 			"`darsay classify` lays the sets out with rule ids and evidence. The case that motivated it: a 27.78B abliterated Qwen weighing 223 GiB against a 51.7 GiB base.",
 		],
 		collect:
-			"Redundant is an invitation to look, not a verdict. Run classify; keep what it calls master or unknown; let it skip confident prints.",
+			"Redundant is an invitation to look, not a verdict. Run classify; keep what it calls negative or unknown; let it skip confident prints.",
 		cmd: {
 			label: "what is in the box",
 			lines: [
 				"darsay classify owner/model",
-				"darsay estimate owner/model            # priced masters-first",
+				"darsay estimate owner/model            # priced as the negative set",
 				"darsay estimate owner/model --full     # the shipping box",
 			],
 		},
 		doc: {
-			href: "/docs/quantization/#3-why-not-archive-the-quant-skip-the-55-gb-master",
-			label: "Quantization → why keep the master",
+			href: "/docs/quantization/#4-mechanics",
+			label: "Quantization → mechanics",
 		},
-		related: ["dtype", "masters", "quant"],
+		related: ["dtype", "negatives", "quant"],
 		lens: "redundant",
 	},
 	{
@@ -305,7 +307,7 @@ export const PRIMER: PrimerCard[] = [
 			"The pin is the subset. Later reruns without `--include` resume it rather than expand it. The manifest records the subset honestly — the include patterns and the full upstream inventory with sizes and hashes — so the bundle states what it deliberately does not contain.",
 		],
 		collect:
-			"Use a subset for packs and for satellites. For a model you are preserving, prefer the masters-first default: it already skips the prints.",
+			"Use a subset for packs and for satellites. For a model you are preserving, prefer the default: the negatives, with the prints already skipped.",
 		cmd: {
 			label: "one glob",
 			lines: [
@@ -327,17 +329,17 @@ export const PRIMER: PrimerCard[] = [
 		lede: "A model whose refusal behaviour was surgically removed from the weights — ablated, then obliterated: abliterated.",
 		body: [
 			"The technique follows a 2024 finding that refusal in chat models is mediated by a single direction in activation space. Find that direction with a few hundred harmful and harmless prompts, project it out of the weight matrices, and the model stops declining without any fine-tuning — its knowledge is still the base model's; only the reflex is gone. Community releases carry it in the name — *abliterated*, or a coinage like *OBLITERATED* or *heretic*. (*Uncensored* usually means a fine-tune on permissive data: a different operation, the same collecting logic.)",
-			"For a collector these are a distinct kind of artifact. The edit is a one-way operation in weight space, and the prompt sets that found the direction are usually unpublished — so the result cannot be regenerated from the base. In darsay's terms they are masters, not prints, even though they descend from a model you may already hold.",
+			"For a collector these are a distinct kind of artifact. The edit is a one-way operation in weight space, and the prompt sets that found the direction are usually unpublished — so the result cannot be regenerated from the base. In darsay's terms they are negatives, not prints, even though they descend from a model you may already hold.",
 			"The repo that motivated `classify` was one of these, and a messy one: two differing weight sets, GGUFs whose headers named a build that was never published, provenance that disagreed with itself. `classify` refuses to guess in exactly those cases and fetches everything undecidable; the `redundant` chip is often the first sign.",
 		],
 		collect:
-			"Collect the base and the abliteration as two masters of one lineage: the base for what the model knows, the abliteration for a form of it that nothing can rebuild.",
+			"Collect the base and the abliteration as two negatives of one lineage: the base for what the model knows, the abliteration for a form of it that nothing can rebuild.",
 		link: {
 			href: "https://arxiv.org/abs/2406.11717",
 			label: "Arditi et al., 2024 — Refusal in language models is mediated by a single direction",
 		},
 		doc: { href: "/docs/quantization/#2-policy", label: "Quantization → policy" },
-		related: ["masters", "redundant", "base"],
+		related: ["negatives", "family", "redundant", "base"],
 		lens: "abliterated",
 	},
 	{
@@ -351,7 +353,7 @@ export const PRIMER: PrimerCard[] = [
 		],
 		collect:
 			"For a model family you care about, keep one base and the post-trained release you use. The base is the seed; the instruct is the harvest.",
-		related: ["abliterated", "moe", "masters"],
+		related: ["abliterated", "family", "moe", "negatives"],
 		lens: "base",
 	},
 	{
@@ -409,6 +411,45 @@ export const PRIMER: PrimerCard[] = [
 		doc: { href: "/docs/datasets/", label: "Datasets" },
 		related: ["bundle", "base"],
 		lens: "dataset",
+	},
+	{
+		key: "family",
+		group: "Lineage",
+		title: "Families, generations, members",
+		lede: "Works come in families, families in generations, generations have members — and darsay reads all three from the name the publisher gave the work.",
+		body: [
+			"`Qwen3.8-2.4T-A95B` says family **Qwen**, generation **3.8**, member **2.4T-A95B**. `Kimi-K2-Base` says Kimi, K2, the flagship, variant *base*. `GLM-5.3-Flash-Uncensored-GGUF` says GLM, 5.3, member Flash, variant *uncensored*, format *gguf*. The grammar is documented, runs identically on this board and in the CLI, and is labeled *read from the name* wherever it shows — a name is evidence, never a verdict about the bytes.",
+			"Generations order numerically within a family, so a family's timeline is mechanical: Qwen 3 → 3.5 → 3.8; Kimi K2 → K2.5 → K3. A member with a different publisher than its family — an abliteration, a community GGUF pack — is a derivative, and when upstream declared its parent (a `finetune`, `quantized`, or `trained_on` edge on the model card), the board nests it under that parent.",
+			"The **Lineage** view draws the tree: every family on this board, its generations oldest first, the members of each with their size, precision, and status. A closed work sits in the same tree beside its open siblings. The `Qwen 3.8` chip on a row is the same fact, one click from the whole family.",
+		],
+		collect:
+			"Collect a lineage, not a list: one base, the post-trained release you use, and the next generation when it lands. The tree tells you what you are missing.",
+		cmd: {
+			label: "the tree, on the command line",
+			lines: ["darsay list summer --sort family    # family · generation · size, with FAMILY and PRECISION columns"],
+		},
+		doc: { href: "/docs/concepts/", label: "Concepts → lineage" },
+		related: ["closed", "base", "abliterated", "dtype"],
+	},
+	{
+		key: "closed",
+		group: "Lineage",
+		title: "Closed weights",
+		lede: "An API-only model, an announced release: a work that exists but cannot be fetched still belongs in the tree.",
+		body: [
+			"Paste the work's home page — `https://www.qwencloud.com/models/qwen3.8-max-0902` — and the row is **closed**: no price, nothing to fetch, `--next` never picks it. The name at the end of the address is read by the same grammar as a repo name, so `qwen3.8-max-0902` lands in Qwen generation 3.8 beside `2.4T-A95B` and `27B`, and the Lineage view shows the flagship the open members stand next to.",
+			"A closed row carries no pin and no include globs — there is nothing to pin. It carries desire and a note, like any row, and it exports in the catalog as its address. When the weights are published, add the source ref as a new row and drop the home; the family is unchanged, the place is filled.",
+			"The CLI's `catalog add` accepts the same address and shows the row as `closed` in `list`.",
+		],
+		collect:
+			"Hold the place. A family with its flagship missing is a story with a hole in it; a closed row says the hole is known, and what would fill it.",
+		cmd: {
+			label: "when the weights ship",
+			lines: ["darsay catalog add  summer Qwen/Qwen3.8-Max --desire 7", "darsay catalog drop summer 'https://www.qwencloud.com/models/qwen3.8-max-0902'"],
+		},
+		doc: { href: "/docs/catalogs/#overlay-not-in-the-file", label: "Catalogs → overlay" },
+		related: ["family", "desire", "pin"],
+		lens: "closed",
 	},
 	{
 		key: "desire",

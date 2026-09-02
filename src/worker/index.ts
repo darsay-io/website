@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { exportCatalog, entryToApi, parseClaim, sanitizeDigest, type BoardRow, type EntryRow } from "./catalog.ts";
+import { CATALOG_SCHEMA_VERSION, exportCatalog, entryToApi, parseClaim, sanitizeDigest, type BoardRow, type EntryRow } from "./catalog.ts";
 import { fetchEstimate } from "./estimate.ts";
 import { canonicalizeSource, type HfCanonical } from "./sources.ts";
 import {
@@ -284,7 +284,10 @@ app.post("/boards/:id/catalog.json", async (c) => {
 	const body = parsed.body;
 	if (body.kind !== "darsay.catalog") return jsonError(c, "not a catalog", 400);
 	const version = String(body.catalog_schema_version ?? "");
-	if (!/^1\./.test(version)) return jsonError(c, "unsupported catalog schema", 400);
+	// Fix forward: the board speaks one catalog major, the CLI's current one.
+	if (version.split(".")[0] !== CATALOG_SCHEMA_VERSION.split(".")[0]) {
+		return jsonError(c, "unsupported catalog schema", 400);
+	}
 	if (typeof body.id === "string" && foldSlug(body.id) !== board.catalog_id) {
 		return jsonError(c, "catalog_id mismatch", 409);
 	}
@@ -325,6 +328,7 @@ app.post("/boards/:id/catalog.json", async (c) => {
 		}
 		const inc = parseInclude(entry.include);
 		if (!inc.ok) return jsonError(c, inc.error, 400);
+		if (src.kind === "home" && (revIn || inc.include)) return jsonError(c, "a closed work has nothing to pin or include", 400);
 		const des = parseDesire(entry.desire);
 		if (!des.ok) return jsonError(c, des.error, 400);
 		const entryNote = clampStr(entry.note ?? "", MAX_ENTRY_NOTE);
@@ -435,6 +439,8 @@ app.post("/boards/:id/entries", async (c) => {
 	if (typeof revIn !== "string" || revIn.length > MAX_REVISION) return jsonError(c, "invalid revision", 400);
 	const inc = parseInclude(parsed.body.include);
 	if (!inc.ok) return jsonError(c, inc.error, 400);
+	// A closed work (a home page) has nothing to pin or include — and no price.
+	if (src.kind === "home" && (revIn || inc.include)) return jsonError(c, "a closed work has nothing to pin or include", 400);
 	const des = parseDesire(parsed.body.desire);
 	if (!des.ok) return jsonError(c, des.error, 400);
 	const note = clampStr(parsed.body.note ?? "", MAX_ENTRY_NOTE);
@@ -624,6 +630,9 @@ app.patch("/boards/:id/entries/:eid", async (c) => {
 	let payloadBytes = existing.payload_bytes;
 	const identityChanged =
 		canonical !== existing.source || rev !== existing.revision || key !== existing.include_key;
+	if ((srcKind ?? canonicalizeSource(canonical)).kind === "home" && (rev || include)) {
+		return jsonError(c, "a closed work has nothing to pin or include", 400);
+	}
 	if (identityChanged) {
 		const parsedSrc = srcKind ?? canonicalizeSource(canonical);
 		if (parsedSrc.kind === "hf") {

@@ -7,13 +7,14 @@
  */
 import { FULL_FIDELITY_DTYPES, LARGE_PAYLOAD_BYTES, type Hint } from "../worker/hints.ts";
 import { artifactTypeFromSource, canonicalizeSource } from "../worker/sources.ts";
+import { familyKey, lineageOf } from "./lineage.ts";
 import type { PrimerKey } from "./primer.ts";
 
 export type LensKey =
 	| "want"
 	| "have"
 	| "claimed"
-	| "masters"
+	| "negatives"
 	| "large"
 	| "quant"
 	| "redundant"
@@ -24,6 +25,7 @@ export type LensKey =
 	| "moe"
 	| "spec"
 	| "dataset"
+	| "closed"
 	| "unpriced";
 
 export type LensEntry = {
@@ -36,8 +38,17 @@ export type LensEntry = {
 	dominant_dtype?: string | null;
 	hints?: string[] | null;
 	policy?: string | null;
+	precision?: string | null;
+	bytes_per_param?: number | null;
+	closed?: boolean | null;
 	claim?: { state: "archiving" | "paused" | "done" } | null;
 };
+
+/** A closed work: the API says so, else the address does (a home URL). */
+export function isClosed(e: Pick<LensEntry, "source" | "closed">): boolean {
+	if (typeof e.closed === "boolean") return e.closed;
+	return canonicalizeSource(e.source).kind === "home";
+}
 
 export type LensGroup = "ledger" | "policy" | "name" | "kind";
 
@@ -128,6 +139,11 @@ function kind(e: LensEntry): "model" | "dataset" | null {
 	return artifactTypeFromSource(e.source);
 }
 
+/** Rows of one family (case-folded key), read from each work's name. */
+export function inFamily(e: Pick<LensEntry, "source">, key: string): boolean {
+	return familyKey(lineageOf(e.source)) === key;
+}
+
 export function inFlight(e: LensEntry): boolean {
 	return !!e.claim && e.claim.state !== "done";
 }
@@ -161,13 +177,13 @@ export const LENSES: Lens[] = [
 		test: inFlight,
 	},
 	{
-		key: "masters",
-		label: "Masters",
-		noun: "masters-priced",
+		key: "negatives",
+		label: "Negatives",
+		noun: "negatives-priced",
 		group: "policy",
-		primer: "masters",
-		blurb: "Priced masters-first: the CLI classified the repo and the size shown is what `archive` will actually fetch — negatives, not prints.",
-		test: (e) => e.policy === "masters",
+		primer: "negatives",
+		blurb: "Priced as the negative set: the CLI classified the repo and the size shown is what `archive` will actually fetch — negatives, not prints.",
+		test: (e) => e.policy === "negatives",
 	},
 	{
 		key: "large",
@@ -264,13 +280,22 @@ export const LENSES: Lens[] = [
 		test: (e) => kind(e) === "dataset",
 	},
 	{
+		key: "closed",
+		label: "Closed",
+		noun: "closed",
+		group: "kind",
+		primer: "closed",
+		blurb: "A home page, not a source: an API-only model or an announced release. No price, nothing to fetch — a place held in its family until weights ship.",
+		test: (e) => isClosed(e),
+	},
+	{
 		key: "unpriced",
 		label: "Unpriced",
 		noun: "unpriced",
 		group: "kind",
 		primer: "large",
 		blurb: "No size on record yet — upstream returned nothing to price. `darsay estimate` prices it from Hub metadata without writing a file.",
-		test: (e) => e.payload_bytes === null,
+		test: (e) => e.payload_bytes === null && !isClosed(e),
 	},
 ];
 
@@ -290,11 +315,12 @@ export function lensesFor(e: LensEntry): Set<LensKey> {
 	return out;
 }
 
-/** Rows matching every active lens (AND). */
-export function applyLenses<T extends LensEntry>(rows: T[], active: Iterable<LensKey>): T[] {
+/** Rows matching every active lens (AND), and the family when one is chosen. */
+export function applyLenses<T extends LensEntry>(rows: T[], active: Iterable<LensKey>, family: string | null = null): T[] {
 	const keys = [...active];
-	if (keys.length === 0) return rows;
-	return rows.filter((r) => keys.every((k) => LENS_BY_KEY[k].test(r)));
+	const inFam = family ? rows.filter((r) => inFamily(r, family)) : rows;
+	if (keys.length === 0) return inFam;
+	return inFam.filter((r) => keys.every((k) => LENS_BY_KEY[k].test(r)));
 }
 
 /** Rows each lens would match on its own. */
@@ -326,7 +352,7 @@ export function tally(rows: LensEntry[]): Tally {
 	const t: Tally = { n: rows.length, bytes: 0, wantBytes: 0, haveBytes: 0, unsized: 0 };
 	for (const r of rows) {
 		if (typeof r.payload_bytes !== "number") {
-			t.unsized += 1;
+			if (!isClosed(r)) t.unsized += 1;
 			continue;
 		}
 		t.bytes += r.payload_bytes;
@@ -338,13 +364,22 @@ export function tally(rows: LensEntry[]): Tally {
 
 /* ── View state in the URL fragment: shareable, never sent to the server ── */
 
-export type SortKey = "desire" | "source" | "type" | "size" | "status";
-export type ViewState = { lenses: LensKey[]; sort: SortKey | null; dir: "asc" | "desc" | null };
+export type SortKey = "desire" | "source" | "type" | "size" | "status" | "family";
+export type ViewMode = "ledger" | "lineage";
+export type ViewState = {
+	lenses: LensKey[];
+	sort: SortKey | null;
+	dir: "asc" | "desc" | null;
+	/** A family key (case-folded), read from the names on the board. */
+	family: string | null;
+	view: ViewMode | null;
+};
 
-const SORT_KEYS = new Set<string>(["desire", "source", "type", "size", "status"]);
+const SORT_KEYS = new Set<string>(["desire", "source", "type", "size", "status", "family"]);
+const FAMILY_KEY_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 
 export function parseView(hash: string): ViewState {
-	const out: ViewState = { lenses: [], sort: null, dir: null };
+	const out: ViewState = { lenses: [], sort: null, dir: null, family: null, view: null };
 	const raw = hash.replace(/^#/, "");
 	if (!raw) return out;
 	const params = new URLSearchParams(raw);
@@ -352,6 +387,10 @@ export function parseView(hash: string): ViewState {
 	if (lens) {
 		for (const k of lens.split(",")) if (isLensKey(k) && !out.lenses.includes(k)) out.lenses.push(k);
 	}
+	const family = params.get("family");
+	if (family && FAMILY_KEY_RE.test(family)) out.family = family;
+	const view = params.get("view");
+	if (view === "lineage" || view === "ledger") out.view = view;
 	const sort = params.get("sort");
 	if (sort) {
 		const [key, dir] = sort.split(":");
@@ -365,6 +404,8 @@ export function parseView(hash: string): ViewState {
 
 export function formatView(v: ViewState, defaults: { sort: SortKey; dir: "asc" | "desc" }): string {
 	const params: string[] = [];
+	if (v.view === "lineage") params.push("view=lineage");
+	if (v.family) params.push(`family=${encodeURIComponent(v.family)}`);
 	if (v.lenses.length) params.push(`lens=${v.lenses.join(",")}`);
 	if (v.sort && v.dir && (v.sort !== defaults.sort || v.dir !== defaults.dir)) params.push(`sort=${v.sort}:${v.dir}`);
 	return params.length ? `#${params.join("&")}` : "";

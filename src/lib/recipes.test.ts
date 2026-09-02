@@ -115,6 +115,7 @@ describe("numbers", () => {
 		expect(halfBudgetGb(1 * GiB)).toBe(5);
 	});
 	it("prints parameters like the CLI", () => {
+		expect(humanParams(2_446_180_000_000)).toBe("2.45T");
 		expect(humanParams(27_780_000_000)).toBe("27.78B");
 		expect(humanParams(596_000_000)).toBe("596.0M");
 	});

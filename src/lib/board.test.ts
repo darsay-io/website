@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareEntries, entryArtifactType } from "./board.ts";
+import { compareEntries, compareFamily, entryArtifactType, factPrimer } from "./board.ts";
 
 const row = (
 	id: number,
@@ -46,6 +46,34 @@ describe("compareEntries", () => {
 		];
 		rows.sort((a, b) => compareEntries(a, b, "type", "asc"));
 		expect(rows.map((r) => r.id)).toEqual([2, 1]);
+	});
+});
+
+describe("compareFamily", () => {
+	it("reads the tree: family, generation oldest first, then size; no-family rows last", () => {
+		const rows = [
+			row(1, { source: "huggingface:Qwen/Qwen3.8-2.4T-A95B" }),
+			row(2, { source: "huggingface:moonshotai/Kimi-K3" }),
+			row(3, { source: "huggingface:Qwen/Qwen3-8B-Base" }),
+			row(4, { source: "https://www.qwencloud.com/models/qwen3.8-max-0902" }),
+			row(5, { source: "huggingface:Qwen/Qwen3.8-27B" }),
+			row(6, { source: "test:acme/toy" }),
+		];
+		rows.sort((a, b) => compareEntries(a, b, "family", "asc"));
+		expect(rows.map((r) => r.id)).toEqual([2, 3, 4, 5, 1, 6]);
+		expect(compareFamily({ source: "huggingface:Qwen/Qwen3-8B" }, { source: "huggingface:Qwen/Qwen3-8B" })).toBe(0);
+	});
+});
+
+describe("factPrimer", () => {
+	it("routes the precision facts and closed to their cards", () => {
+		expect(factPrimer("2.45T BF16")).toBe("dtype");
+		expect(factPrimer("0.56 B/param")).toBe("dtype");
+		expect(factPrimer("closed")).toBe("closed");
+		expect(factPrimer("gated")).toBe("gated");
+		expect(factPrimer("4.4 TiB")).toBe("large");
+		expect(factPrimer("pin abc123")).toBe("pin");
+		expect(factPrimer("whatever")).toBeNull();
 	});
 });
 

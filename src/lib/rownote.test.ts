@@ -34,7 +34,12 @@ describe("rowNote", () => {
 		expect(rowNote("dtype", row({ dominant_dtype: "FP4" }))).toBeNull();
 		expect(rowNote("dtype", row({ parameters: null }))).toBeNull();
 		expect(rowNote("dtype", row({ payload_bytes: null }))).toContain("no size yet");
-		expect(rowNote("dtype", row({ policy: "masters" }))).toContain("priced masters-first at");
+		expect(rowNote("dtype", row({ policy: "negatives" }))).toContain("priced as the negative set at");
+		// The CLI's measured figure wins over the dtype arithmetic.
+		expect(rowNote("dtype", row({ precision: "MXFP4", bytes_per_param: 0.562, parameters: 2_779_931_837_184 }))).toBe(
+			"`2.78T` at `MXFP4`, **0.56 B/param** measured: about half a byte per weight — a 4-bit release — **223 GiB** on the row.",
+		);
+		expect(rowNote("dtype", row({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902", closed: true }))).toContain("closed work");
 	});
 
 	it("plans a large download in evenings and link hours, in GiB", () => {
@@ -53,6 +58,15 @@ describe("rowNote", () => {
 		);
 		expect(rowNote("moe", row())).toBeNull();
 		expect(rowNote("abliterated", row())).toContain("Read from the name.");
+		expect(rowNote("family", row())).toBe(
+			"**Qwen 3.8**, member `27B`, variant *abliterated* — read from the name, published by OBLITERATUS.",
+		);
+		expect(rowNote("family", row({ parents: [{ source: "huggingface:Qwen/Qwen3.8-27B", relation: "finetune" }] }))).toContain(
+			"declares it a **finetune** of `huggingface:Qwen/Qwen3.8-27B`",
+		);
+		expect(rowNote("family", row({ source: "test:acme/toy" }))).toContain("**toy**");
+		expect(rowNote("closed", row({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902" }))).toContain("**qwen 3.8**");
+		expect(rowNote("negatives", row({ policy: "negatives" }))).toContain("Priced as the negative set");
 		expect(rowNote("pin", row())).toContain("Unpinned");
 		expect(rowNote("pin", row({ revision: "c1899de289a0f1e2d3c4b5a6" }))).toContain("Pinned to `c1899de289a0`");
 		expect(rowNote("pin", row({ revision: "v1.2" }))).toContain("Pinned to `v1.2`");

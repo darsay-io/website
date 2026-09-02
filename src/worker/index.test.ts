@@ -461,7 +461,7 @@ describe("boards API", () => {
 		expect(await res.json()).toEqual({ error: "create_cap" });
 	});
 
-	it("canonicalizes HF sources, upserts identity, and exports catalog 1.2.0 without holders", async () => {
+	it("canonicalizes HF sources, upserts identity, and exports catalog 2.0.0 without holders", async () => {
 		const { env: e } = env();
 		const created = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
 		const { id } = (await created.json()) as { id: string };
@@ -495,7 +495,7 @@ describe("boards API", () => {
 		expect(catRes.status).toBe(200);
 		expect(catRes.headers.get("Content-Disposition")).toBe('attachment; filename="summer-2026.json"');
 		const cat = (await catRes.json()) as Record<string, unknown>;
-		expect(cat.catalog_schema_version).toBe("1.2.0");
+		expect(cat.catalog_schema_version).toBe("2.0.0");
 		expect(JSON.stringify(cat)).not.toContain("holders");
 		expect(JSON.stringify(cat)).not.toContain(id);
 		expect(JSON.stringify(cat)).not.toMatch(/"status"/);
@@ -583,7 +583,7 @@ describe("boards API", () => {
 		expect(updated.artifact_type).toBe("dataset");
 	});
 
-	it("stores opaque scheme:locator rows and 400s unknown https hosts", async () => {
+	it("stores opaque scheme:locator rows, and a home URL as a closed work", async () => {
 		const { env: e } = env();
 		const created = await req(e, "/api/boards", postBoard());
 		const { id } = (await created.json()) as { id: string };
@@ -593,12 +593,41 @@ describe("boards API", () => {
 			body: JSON.stringify({ source: "modelscope:qwen/Qwen-7B" }),
 		});
 		expect(ok.status).toBe(201);
-		const bad = await req(e, `/api/boards/${id}/entries`, {
+		// An API-only model's page holds its place: no price, nothing to fetch.
+		const home = await req(e, `/api/boards/${id}/entries`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ source: "https://example.com/foo" }),
+			body: JSON.stringify({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902/#top", desire: 7 }),
 		});
-		expect(bad.status).toBe(400);
+		expect(home.status).toBe(201);
+		const row = (await home.json()) as Record<string, unknown>;
+		expect(row.source).toBe("https://www.qwencloud.com/models/qwen3.8-max-0902");
+		expect(row.closed).toBe(true);
+		expect(row.payload_bytes).toBeNull();
+		expect(row.artifact_type).toBeNull();
+		// Nothing to pin or include on a closed work; http and bare hosts are not homes.
+		const pinned = await req(e, `/api/boards/${id}/entries`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ source: "https://example.com/foo", revision: "v1" }),
+		});
+		expect(pinned.status).toBe(400);
+		for (const bad of ["http://example.com/foo", "https://example.com/", "https://localhost/x"]) {
+			const res = await req(e, `/api/boards/${id}/entries`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ source: bad }),
+			});
+			expect(res.status, bad).toBe(400);
+		}
+		// The export carries the home verbatim, at the current catalog schema.
+		const cat = (await (await req(e, `/api/boards/${id}/catalog.json`)).json()) as {
+			catalog_schema_version: string;
+			entries: Array<{ source: string; estimate: unknown }>;
+		};
+		expect(cat.catalog_schema_version).toBe("2.0.0");
+		const exported = cat.entries.find((x) => x.source.startsWith("https://"))!;
+		expect(exported.estimate).toBeNull();
 	});
 
 	it("returns 409 when a PATCH identity collides", async () => {
@@ -723,7 +752,7 @@ describe("catalog import (the CLI round trip)", () => {
 			method: "POST" as const,
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
-				catalog_schema_version: "1.2.0",
+				catalog_schema_version: "2.0.0",
 				kind: "darsay.catalog",
 				id: "summer-2026",
 				title: "Summer 2026",
@@ -742,11 +771,16 @@ describe("catalog import (the CLI round trip)", () => {
 							parameters: 27_781_427_952,
 							dominant_dtype: "BF16",
 							hints: ["large", "redundant"],
-							policy: "masters",
+							policy: "negatives",
+							precision: "BF16",
+							bytes_per_param: 4.0,
+							architecture: "qwen3_5",
+							parents: [{ source: "huggingface:Qwen/Qwen3.8-27B", relation: "finetune", declared_by: "tag" }, "junk"],
 							extra: "drop me",
 						},
 					},
 					{ source: "huggingface:acme/three", desire: 7 },
+					{ source: "https://www.qwencloud.com/models/qwen3.8-max-0902", desire: 6, note: "API only" },
 				],
 				...over,
 			}),
@@ -759,24 +793,42 @@ describe("catalog import (the CLI round trip)", () => {
 		const res = await req(e, `/api/boards/${id}/catalog.json`, importDoc());
 		expect(res.status).toBe(200);
 		const out = (await res.json()) as Record<string, unknown>;
-		expect(out).toMatchObject({ ok: true, added: 1, updated: 1, removed: 1, entries: 2 });
+		expect(out).toMatchObject({ ok: true, added: 2, updated: 1, removed: 1, entries: 3 });
 
 		const board = (await (await req(e, `/api/boards/${id}`)).json()) as {
 			entries: Array<Record<string, unknown>>;
 		};
 		const sources = board.entries.map((x) => x.source).sort();
-		expect(sources).toEqual(["huggingface:acme/one", "huggingface:acme/three"]);
+		expect(sources).toEqual([
+			"https://www.qwencloud.com/models/qwen3.8-max-0902",
+			"huggingface:acme/one",
+			"huggingface:acme/three",
+		]);
 		const one = board.entries.find((x) => x.source === "huggingface:acme/one")!;
 		// Catalog facts came from the import; board-side facts survived.
 		expect(one.desire).toBe(5);
 		expect(one.note).toBe("reclassified");
 		expect(one.payload_bytes).toBe(111_140_000_000);
 		expect(one.hints).toEqual(["large", "redundant"]);
-		expect(one.policy).toBe("masters");
+		expect(one.policy).toBe("negatives");
+		expect(one.precision).toBe("BF16");
+		expect(one.bytes_per_param).toBe(4.0);
+		expect(one.architecture).toBe("qwen3_5");
+		expect(one.parents).toEqual([{ source: "huggingface:Qwen/Qwen3.8-27B", relation: "finetune" }]);
 		expect(one.status).toBe("have");
 		expect(one.holders).toBe("external SSD (2TB)");
 		const three = board.entries.find((x) => x.source === "huggingface:acme/three")!;
 		expect(three.status).toBe("want");
+		const closed = board.entries.find((x) => String(x.source).startsWith("https://"))!;
+		expect(closed.closed).toBe(true);
+		expect(closed.note).toBe("API only");
+	});
+
+	it("refuses a catalog of another major", async () => {
+		const { env: e } = env();
+		const id = await boardWithRows(e);
+		const old = await req(e, `/api/boards/${id}/catalog.json`, importDoc({ catalog_schema_version: "1.2.0" }));
+		expect(old.status).toBe(400);
 	});
 
 	it("rejects a catalog_id mismatch and non-catalog bodies", async () => {

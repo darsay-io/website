@@ -8,13 +8,18 @@ describe("canonicalizeSource", () => {
 		ok: boolean;
 		canonical?: string;
 		error?: string;
-		website?: "opaque" | "400";
+		website?: "opaque" | "home" | "400";
 	}>) {
 		it(JSON.stringify(row.input), () => {
 			const got = canonicalizeSource(row.input);
 			if (row.website === "opaque") {
 				expect(got.kind).toBe("opaque");
 				if (got.kind === "opaque") expect(got.canonical).toBe(row.input);
+				return;
+			}
+			if (row.website === "home") {
+				expect(got.kind).toBe("home");
+				if (got.kind === "home") expect(got.canonical).toBe(row.canonical);
 				return;
 			}
 			if (row.website === "400" || !row.ok) {

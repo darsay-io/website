@@ -3277,3 +3277,342 @@ dialog.guide {
 		display: none;
 	}
 }
+
+
+/* ── Precision, family, and closed chips ─────────────────────────────────── */
+
+.chip-family {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.78rem;
+	letter-spacing: 0.01em;
+	color: var(--d-gold-hi);
+	background: transparent;
+}
+
+.chip-closed {
+	color: var(--d-muted);
+	border-style: dashed;
+	background: transparent;
+}
+
+.work-card.is-closed {
+	border-style: dashed;
+	box-shadow: inset 3px 0 0 rgba(181, 168, 148, 0.45);
+}
+
+.work-card.is-closed .src-link {
+	color: var(--d-muted);
+}
+
+.work-closed-note {
+	align-self: center;
+	font-size: 0.78rem;
+	color: var(--d-muted);
+	font-style: italic;
+}
+
+.work-card.is-spotlit {
+	box-shadow:
+		inset 3px 0 0 var(--d-gold-hi),
+		0 0 0 3px rgba(212, 176, 106, 0.35);
+	transition: box-shadow 0.4s ease;
+}
+
+/* ── View pills: Ledger | Lineage ─────────────────────────────────────────── */
+
+.view-pills {
+	display: inline-flex;
+	border: 1px solid var(--d-border);
+	border-radius: 999px;
+	padding: 0.15rem;
+	gap: 0.15rem;
+	flex-shrink: 0;
+}
+
+.view-btn {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: var(--d-muted);
+	font: inherit;
+	font-size: 0.8rem;
+	letter-spacing: 0.04em;
+	padding: 0.25rem 0.75rem;
+	border-radius: 999px;
+	cursor: pointer;
+}
+
+.view-btn.is-active {
+	color: var(--d-ink);
+	background: var(--d-gold);
+}
+
+.lens-group-family .lens-chip {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.86rem;
+}
+
+/* ── The lineage view: families → generations → members ──────────────────── */
+
+.lineage {
+	display: flex;
+	flex-direction: column;
+	gap: 1.4rem;
+}
+
+.family {
+	border: 1px solid var(--d-border);
+	border-radius: 14px;
+	background: var(--d-bg-raised);
+	padding: 1.05rem 1.2rem 1.1rem;
+	box-shadow: inset 3px 0 0 rgba(212, 176, 106, 0.55);
+}
+
+.family-unnamed {
+	box-shadow: none;
+	border-style: dashed;
+}
+
+.family-head {
+	display: flex;
+	align-items: baseline;
+	gap: 0.85rem;
+	flex-wrap: wrap;
+	margin-bottom: 0.9rem;
+}
+
+.family-name {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-weight: 600;
+	font-size: 1.5rem;
+	margin: 0;
+	color: var(--d-gold-hi);
+}
+
+.family-meta {
+	font-size: 0.82rem;
+	color: var(--d-muted);
+}
+
+.family-why,
+.member-why {
+	appearance: none;
+	background: none;
+	border: 0;
+	padding: 0 0.2rem;
+	color: var(--d-gold);
+	font-size: 0.85rem;
+	cursor: pointer;
+	line-height: 1;
+}
+
+.generations {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.generation {
+	display: grid;
+	grid-template-columns: 6.5rem minmax(0, 1fr);
+	gap: 0.8rem;
+	align-items: start;
+	padding-top: 0.75rem;
+	border-top: 1px dashed var(--d-border);
+}
+
+.generation:first-child {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.gen-label {
+	display: flex;
+	flex-direction: column;
+	gap: 0.1rem;
+	padding-top: 0.35rem;
+}
+
+.gen-kicker {
+	font-size: 0.66rem;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--d-muted);
+}
+
+.gen-value {
+	font-family: var(--d-mono);
+	font-size: 1.15rem;
+	color: var(--d-fg);
+}
+
+.members,
+.member-children {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+	gap: 0.6rem;
+}
+
+.member-children {
+	grid-column: 1 / -1;
+	margin-top: 0.5rem;
+	padding-left: 0.9rem;
+	border-left: 2px solid rgba(212, 176, 106, 0.35);
+}
+
+.member {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	padding: 0.7rem 0.85rem 0.65rem;
+	border: 1px solid var(--d-border);
+	border-radius: 10px;
+	background: var(--d-bg);
+	min-width: 0;
+}
+
+.member.is-have {
+	border-color: var(--d-gold);
+	background: var(--d-gold-dim);
+}
+
+.member.is-closed {
+	border-style: dashed;
+	background: transparent;
+}
+
+.member.is-claimed {
+	border-color: rgba(212, 176, 106, 0.7);
+}
+
+.member-head {
+	display: flex;
+	align-items: baseline;
+	gap: 0.45rem;
+	flex-wrap: wrap;
+}
+
+.member-name {
+	font-family: var(--d-mono);
+	font-size: 0.95rem;
+	color: var(--d-gold-hi);
+	text-decoration: none;
+	overflow-wrap: anywhere;
+}
+
+.member.is-closed .member-name {
+	color: var(--d-muted);
+}
+
+.member-tags {
+	display: inline-flex;
+	gap: 0.3rem;
+	flex-wrap: wrap;
+}
+
+.member-tag {
+	font-family: var(--d-mono);
+	font-size: 0.64rem;
+	letter-spacing: 0.04em;
+	padding: 0.05rem 0.4rem;
+	border-radius: 999px;
+	border: 1px dashed var(--d-border);
+	color: var(--d-muted);
+}
+
+.member-tag-closed {
+	border-style: solid;
+	color: var(--d-fg);
+}
+
+.member-by,
+.member-edge {
+	font-size: 0.74rem;
+	color: var(--d-muted);
+	font-style: italic;
+}
+
+.member-facts {
+	font-family: var(--d-mono);
+	font-size: 0.74rem;
+	color: var(--d-fg);
+	font-variant-numeric: tabular-nums;
+}
+
+.member-status {
+	font-size: 0.74rem;
+	color: var(--d-muted);
+}
+
+.member.is-have .member-status {
+	color: var(--d-gold-hi);
+}
+
+.member-actions {
+	position: absolute;
+	top: 0.45rem;
+	right: 0.5rem;
+	display: inline-flex;
+	gap: 0.2rem;
+	align-items: center;
+}
+
+.member-row-btn {
+	appearance: none;
+	background: none;
+	border: 0;
+	padding: 0.1rem 0.3rem;
+	color: var(--d-muted);
+	font-size: 0.7rem;
+	letter-spacing: 0.04em;
+	cursor: pointer;
+	border-radius: 999px;
+}
+
+.member-row-btn:hover,
+.member-why:hover,
+.family-why:hover {
+	color: var(--d-gold-hi);
+	background: rgba(212, 176, 106, 0.12);
+}
+
+.member-note {
+	margin: 0.25rem 0 0;
+	font-size: 0.78rem;
+	color: var(--d-muted);
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+.lineage-foot {
+	font-size: 0.8rem;
+	margin: 0;
+}
+
+@media (max-width: 40rem) {
+	.generation {
+		grid-template-columns: 1fr;
+		gap: 0.35rem;
+	}
+
+	.gen-label {
+		flex-direction: row;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+
+	.members,
+	.member-children {
+		grid-template-columns: 1fr;
+	}
+}

@@ -16,13 +16,41 @@ export type OpaqueCanonical = {
 	canonical: string;
 };
 
+/**
+ * A closed work: an https page on a host with no provider — an API-only
+ * model, an announced release. It holds its place on a board with no
+ * price and nothing to fetch; the CLI's `catalog add` accepts the same
+ * address. Stored as given, minus fragment and trailing slash.
+ */
+export type HomeCanonical = {
+	kind: "home";
+	canonical: string;
+	host: string;
+};
+
 export type SourceError = {
 	kind: "error";
 	status: 400;
 	error: string;
 };
 
-export type CanonicalizeResult = HfCanonical | OpaqueCanonical | SourceError;
+export type CanonicalizeResult = HfCanonical | OpaqueCanonical | HomeCanonical | SourceError;
+
+function parseHome(s: string): CanonicalizeResult {
+	let u: URL;
+	try {
+		u = new URL(s);
+	} catch {
+		return { kind: "error", status: 400, error: "invalid url" };
+	}
+	if (u.protocol !== "https:") return { kind: "error", status: 400, error: "a home URL must be https" };
+	if (u.username || u.password) return { kind: "error", status: 400, error: "invalid url" };
+	if (!u.hostname.includes(".")) return { kind: "error", status: 400, error: "invalid url" };
+	if (u.pathname === "/" || u.pathname === "") return { kind: "error", status: 400, error: "a home URL needs a path to the work" };
+	u.hash = "";
+	const canonical = u.toString().replace(/\/+$/, "");
+	return { kind: "home", canonical, host: u.hostname.replace(/^www\./, "") };
+}
 
 function parseHuggingFace(
 	locator: string,
@@ -93,7 +121,7 @@ export function canonicalizeSource(input: string): CanonicalizeResult {
 			return { kind: "error", status: 400, error: "invalid url" };
 		}
 		if (!HF_HOSTS.has(host)) {
-			return { kind: "error", status: 400, error: "unknown host" };
+			return parseHome(s);
 		}
 		return parseHuggingFace(path, true, s);
 	}
@@ -114,6 +142,11 @@ export function canonicalizeSource(input: string): CanonicalizeResult {
 export function hfUrlFromCanonical(canonical: string): string | null {
 	if (!canonical.startsWith("huggingface:")) return null;
 	return `https://huggingface.co/${canonical.slice("huggingface:".length)}`;
+}
+
+/** A closed work's address, when the source is one. */
+export function isHome(source: string): boolean {
+	return canonicalizeSource(source).kind === "home";
 }
 
 export function asDatasetCanonical(parsed: HfCanonical): HfCanonical {

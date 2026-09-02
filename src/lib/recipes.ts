@@ -7,6 +7,7 @@
  * server round-trip. Wording mirrors `examples/README.md` in darsay-io/darsay;
  * user text is only ever placed inside single quotes, never in comments.
  */
+import { humanBytesPerParam } from "../worker/precision.ts";
 import { canonicalizeSource } from "../worker/sources.ts";
 
 /** ≳ 20 GiB: more than one sitting, and often more than one disk. */
@@ -52,10 +53,13 @@ export type RecipeInput = {
 	revision: string | null;
 	include: string[] | null;
 	payload_bytes: number | null;
+	desire?: number | null;
 	artifact_type?: string | null;
 	gated?: boolean | null;
 	parameters?: number | null;
 	dominant_dtype?: string | null;
+	precision?: string | null;
+	bytes_per_param?: number | null;
 };
 
 export type RecipeKey =
@@ -67,9 +71,10 @@ export type RecipeKey =
 	| "subset"
 	| "shards"
 	| "adopt"
-	| "after";
+	| "after"
+	| "whenopen";
 
-export type Trait = "large" | "gated" | "subset" | "pack" | "dataset" | "opaque" | "unsized";
+export type Trait = "large" | "gated" | "subset" | "pack" | "dataset" | "opaque" | "closed" | "unsized";
 
 export type Recipe = {
 	key: RecipeKey;
@@ -145,8 +150,9 @@ export function humanSize(n: number | null | undefined): string {
 	return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
-/** Mirrors the CLI's human_params: 27.78B, 596.0M. */
+/** Mirrors the CLI's human_params: 2.45T, 27.78B, 596.0M. */
 export function humanParams(n: number): string {
+	if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
 	if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
 	if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
 	return String(n);
@@ -175,6 +181,7 @@ export function alignComments(rows: Row[]): string[] {
 export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: string): RecipeSet {
 	const parsed = canonicalizeSource(e.source);
 	const hf = parsed.kind === "hf" ? parsed : null;
+	const closed = parsed.kind === "home";
 	const kind: "model" | "dataset" | null =
 		e.artifact_type === "dataset" || e.artifact_type === "model"
 			? e.artifact_type
@@ -197,18 +204,24 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 	const cat = shellQuote(catalogId);
 
 	const traits: Trait[] = [];
-	if (!hf) traits.push("opaque");
+	if (closed) traits.push("closed");
+	else if (!hf) traits.push("opaque");
 	if (large) traits.push("large");
 	if (gated) traits.push("gated");
 	if (include) traits.push("subset");
 	if (pack) traits.push("pack");
 	if (dataset) traits.push("dataset");
-	if (bytes === null) traits.push("unsized");
+	if (bytes === null && !closed) traits.push("unsized");
 
 	const facts: string[] = [];
-	if (bytes !== null) facts.push(include ? `${size} before --include` : size);
+	if (closed) facts.push("closed");
+	else if (bytes !== null) facts.push(include ? `${size} before --include` : size);
 	else facts.push("size unknown");
-	if (e.parameters) facts.push(humanParams(e.parameters) + (e.dominant_dtype ? ` ${e.dominant_dtype}` : ""));
+	if (e.parameters) {
+		const label = e.precision ?? e.dominant_dtype;
+		facts.push(humanParams(e.parameters) + (label ? ` ${label}` : ""));
+		if (typeof e.bytes_per_param === "number") facts.push(humanBytesPerParam(e.bytes_per_param));
+	}
 	if (kind) facts.push(kind);
 	if (gated) facts.push("gated");
 	if (include) facts.push(include.length === 1 ? "1 glob" : `${include.length} globs`);
@@ -216,7 +229,11 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 
 	let headline: string;
 	let verdict: string;
-	if (!hf) {
+	if (closed) {
+		headline = "Closed weights, a place held";
+		verdict =
+			"A home page, not a source. Nothing to fetch and no price; the row keeps this work's place in its family until the weights are published.";
+	} else if (!hf) {
 		headline = "Another provider";
 		verdict =
 			"Not a Hugging Face address. darsay resolves it through its provider registry — the same verbs, if a provider claims the scheme.";
@@ -396,11 +413,27 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 		doc: DOCS.export,
 	};
 
+	const whenOpen: Recipe = {
+		key: "whenopen",
+		title: "When the weights ship",
+		why: "Add the source ref as its own row — priced, in the same family — and drop the home. The place is filled; the tree is unchanged.",
+		label: "fill the place",
+		lines: alignComments([
+			[`darsay catalog add  ${cat} owner/name --desire ${e.desire ?? 7}`, "the published weights"],
+			[`darsay catalog drop ${cat} ${shellQuote(e.source)}`, "the home page it stood in for"],
+		]),
+		doc: DOCS.adopt,
+		download: true,
+	};
+
 	// With a board URL the report-back card joins the hero four; whatever it
 	// displaces leads "More ways" so nothing is lost, only reordered.
 	let hero: Recipe[];
 	let more: Recipe[];
-	if (!hf) {
+	if (closed) {
+		hero = [whenOpen];
+		more = [];
+	} else if (!hf) {
 		hero = [estimate, archive, ...(board ? [board] : []), adopt];
 		more = [];
 	} else if (large) {

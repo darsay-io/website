@@ -4,7 +4,9 @@
  * the same arithmetic the CLI does, shown for the thing the reader clicked.
  */
 import { DTYPE_WIDTHS, LARGE_PAYLOAD_BYTES, REDUNDANT_FACTOR } from "../worker/hints.ts";
-import { moeFromName } from "./lenses.ts";
+import { describeBytesPerParam, humanBytesPerParam } from "../worker/precision.ts";
+import { isClosed, moeFromName } from "./lenses.ts";
+import { displayGeneration, lineageOf, publisherOf } from "./lineage.ts";
 import type { PrimerKey } from "./primer.ts";
 import { BUDGET_GB, bundleName, halfBudgetGb, humanParams, humanSize, revision12 } from "./recipes.ts";
 
@@ -21,6 +23,10 @@ export type RowFacts = {
 	dominant_dtype?: string | null;
 	hints?: string[] | null;
 	policy?: string | null;
+	precision?: string | null;
+	bytes_per_param?: number | null;
+	parents?: Array<{ source: string; relation: string | null }> | null;
+	closed?: boolean | null;
 	holders?: string;
 	claim?: { client: string; state: "archiving" | "paused" | "done"; percent: number | null } | null;
 };
@@ -52,14 +58,38 @@ function hoursAtLink(bytes: number): string {
 }
 
 function dtypeNote(row: RowFacts): string | null {
+	if (isClosed(row)) return "A closed work: no weights to weigh yet.";
+	// The CLI's measured figure wins when the digest carries it.
+	if (row.precision && typeof row.bytes_per_param === "number" && row.parameters) {
+		const desc = describeBytesPerParam(row.bytes_per_param);
+		const size = row.payload_bytes === null ? "" : ` — **${humanSize(row.payload_bytes)}** on the row`;
+		return `\`${humanParams(row.parameters)}\` at \`${row.precision}\`, **${humanBytesPerParam(row.bytes_per_param)}** measured: ${desc}${size}.`;
+	}
 	const one = oneCopyBytes(row);
 	if (one === null || !row.parameters || !row.dominant_dtype) return null;
 	const width = DTYPE_WIDTHS[row.dominant_dtype.toUpperCase()];
 	const lead = `\`${humanParams(row.parameters)}\` × ${width} ${width === 1 ? "byte" : "bytes"} (\`${row.dominant_dtype}\`) ≈ **${humanSize(one)}** for one copy.`;
 	if (row.payload_bytes === null) return `${lead} The row has no size yet.`;
 	const ratio = row.payload_bytes / one;
-	const priced = row.policy === "masters" ? "priced masters-first at" : "priced at";
+	const priced = row.policy === "negatives" ? "priced as the negative set at" : "priced at";
 	return `${lead} The row is ${priced} **${humanSize(row.payload_bytes)}** — ${ratio.toFixed(ratio >= 10 ? 0 : 1)}×, ${ratioBand(ratio)}.`;
+}
+
+function familyNote(row: RowFacts): string {
+	const lin = lineageOf(row.source);
+	if (!lin.family) return "The name carries no family darsay can read — it stays out of the tree.";
+	const head = displayGeneration(lin.family, lin.generation);
+	const bits = [
+		lin.member ? `member \`${lin.member}\`` : "the flagship",
+		...lin.variants.map((v) => `variant *${v}*`),
+		...lin.formats.map((f) => `format *${f}*`),
+	];
+	const publisher = publisherOf(row.source);
+	const parents = row.parents ?? [];
+	const edge = parents.length
+		? ` Upstream declares it a **${parents[0].relation ?? "derivative"}** of \`${parents[0].source}\`.`
+		: "";
+	return `**${head}**, ${bits.join(", ")} — read from the name${publisher ? `, published by ${publisher}` : ""}.${edge}`;
 }
 
 /** The row's revision as the row shows it: a 12-character pin, or the ref itself. */
@@ -81,13 +111,19 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 			const evenings = Math.ceil(bytes / GiB / BUDGET_GB);
 			return `**${humanSize(bytes)}**: ${evenings} evenings at \`--max-gb ${BUDGET_GB}\`, or about ${hoursAtLink(bytes)} of link time at ${LINK_MIB_S} MiB/s. In halves, ${halfBudgetGb(bytes)} GiB to each disk.`;
 		}
-		case "masters":
-			if (row.policy === "masters") return `Priced masters-first: **${humanSize(bytes)}** is what \`archive\` will fetch, prints skipped on the record.`;
-			return `Not yet classified by the CLI, so the size is the whole repo. \`darsay estimate <board-url>\` re-prices every row masters-first.`;
+		case "negatives":
+			if (isClosed(row)) return "A closed work has no bytes to classify.";
+			if (row.policy === "negatives") return `Priced as the negative set: **${humanSize(bytes)}** is what \`archive\` will fetch, prints skipped on the record.`;
+			return `Not yet classified by the CLI, so the size is the whole repo. \`darsay estimate <board-url>\` re-prices every row as its negative set.`;
+		case "family":
+			return familyNote(row);
+		case "closed":
+			if (isClosed(row)) return `A home page, not a source: nothing to fetch, no price. It holds the **${displayGeneration(lineageOf(row.source).family, lineageOf(row.source).generation)}** place until weights ship.`;
+			return "An open work: a source darsay can fetch.";
 		case "quant": {
 			const dt = row.dominant_dtype;
 			if (hints.includes("quant") && dt) {
-				return `Dominant dtype \`${dt}\` — below full fidelity, so the chip is on. If no higher-fidelity release exists upstream, this is the master; if one does, this is a satellite of it.`;
+				return `Dominant dtype \`${dt}\` — below full fidelity, so the chip is on. If no higher-fidelity release exists upstream, this is the negative; if one does, this is a satellite of it.`;
 			}
 			if (hints.includes("quant")) return "The weight bytes are mostly GGUF — a published quant.";
 			if (dt) return `Dominant dtype \`${dt}\` — full fidelity. Not a quant; derive one at run time if you need it smaller.`;
@@ -119,7 +155,7 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 			return "Names itself a mixture of experts; the whole set of experts is the archive.";
 		}
 		case "abliterated":
-			return "Read from the name. Keep it beside its base — two masters of one lineage.";
+			return "Read from the name. Keep it beside its base — two negatives of one lineage.";
 		case "base":
 			return "Read from the name. The seed of a lineage; pair it with the post-trained release you use.";
 		case "spec":
