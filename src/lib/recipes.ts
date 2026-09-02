@@ -27,8 +27,8 @@ export const DOCS = {
 		label: "Cookbook → Pause and resume",
 	},
 	halves: {
-		href: "/docs/incremental/#across-disks-assemble---move-and-skeletons",
-		label: "Design → assemble --move and skeletons",
+		href: "/docs/incremental/#across-disks-assemble---handoff-and-skeletons",
+		label: "Design → assemble --handoff and skeletons",
 	},
 	subset: {
 		href: "/docs/examples/#price-one-quant-from-a-pack-repo",
@@ -315,20 +315,20 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 	const halves: Recipe = {
 		key: "halves",
 		title: "Fetch it in halves across two disks",
-		why: "The laptop has the bandwidth, the big drive has the room, and they never meet. Hand a half over with --move; the laptop keeps a skeleton — the pin and the hashes — and never re-fetches what it gave away.",
+		why: "The laptop has the bandwidth, the big drive has the room, and they never meet. Hand a half over with --handoff; the laptop keeps a skeleton — the pin and the hashes — and never re-fetches what it gave away.",
 		label: "café · big drive · café · big drive",
 		lines: [
 			`# laptop, at the café — the first ${half} GB`,
 			`darsay archive ${srcInc} --max-gb ${half}`,
 			"",
 			"# laptop plugged into the big drive — hand the half over, keep the skeleton",
-			`darsay --vault /Volumes/big assemble ${dir(DEFAULT_VAULT)} --move`,
+			`darsay --vault /Volumes/big assemble ${dir(DEFAULT_VAULT)} --handoff`,
 			"",
-			`# laptop, back at the café — the other ${half} GB (the moved half is never re-fetched)`,
+			`# laptop, back at the café — the other ${half} GB (the handed-off half is never re-fetched)`,
 			`darsay archive ${srcInc} --max-gb ${half}`,
 			"",
 			"# big drive — the second hand-over completes it and dissolves the skeleton",
-			`darsay --vault /Volumes/big assemble ${dir(DEFAULT_VAULT)} --move`,
+			`darsay --vault /Volumes/big assemble ${dir(DEFAULT_VAULT)} --handoff`,
 			...alignComments([[`darsay --vault /Volumes/big archive ${srcInc}`, "registers, zero network"]]),
 		],
 		doc: DOCS.halves,
@@ -349,7 +349,7 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 	const shards: Recipe = {
 		key: "shards",
 		title: "Split it with a friend",
-		why: "--shard N/T is a priority, not a partition: each of you prefers a different half, and either can finish alone. Merge offline with the same assemble that --move uses — two people, or one person and two disks.",
+		why: "--shard N/T is a priority, not a partition: each of you prefers a different half, and either can finish alone. Merge offline with the same assemble that --handoff uses — two people, or one person and two disks.",
 		label: "alice · bob · assemble",
 		lines: [
 			"# alice, on her machine",

@@ -7,8 +7,8 @@ description: "**You have five minutes.**"
 
 | | Current |
 |---|---|
-| Tool | **0.14.8** |
-| Manifest schema | **1.7.0** |
+| Tool | **0.14.9** |
+| Manifest schema | **1.8.0** |
 | Catalog schema | **1.2.0** |
 | MVB format | **1.2** |
 | License | Apache 2.0 |
@@ -30,6 +30,10 @@ payload vs metadata, why the formats outlive the tool.
 [Examples](/docs/examples/) — estimate, resume, datasets, catalogs,
 export, shards, verify. Then the spec for the command you are about to run.
 
+**A bundle is on the wrong disk, or you are not sure which verb.**
+[FAQ](/docs/faq/) — moving and copying bundles between vaults, rsync's standing (first-class,
+always), `darsay mv` versus `assemble --handoff`, what travels and what stays.
+
 **You are reading this in 2040 and the CLI is gone.**
 [Manifest](/docs/manifest/) and [MVB format](/docs/mvb-format/) are the two
 documents that must survive to open a bundle. [Catalogs](/docs/catalogs/)
@@ -38,7 +42,7 @@ required to open a bundle. Everything else is how we got there.
 
 **You are changing the tool.**
 [Design](/docs/design/) for why, [Testing](/docs/testing/) and
-[Contributing](https://github.com/darsay-io/darsay/blob/8e71a3648b31431416630118e7aefa89a354189c/CONTRIBUTING.md) for how,
+[Contributing](https://github.com/darsay-io/darsay/blob/aaec0cade9542d4e5fa22bc526a98696fe60746e/CONTRIBUTING.md) for how,
 [Distribution](/docs/distribution/) for how a release is consumed.
 
 ## Using the vault
@@ -49,7 +53,8 @@ required to open a bundle. Everything else is how we got there.
 | [**Concepts**](/docs/concepts/) | You want the objects named before the flags |
 | [**Examples**](/docs/examples/) | You want a copy-paste recipe |
 | [**Hydration**](/docs/hydration/) | `hydrate` / `run` / `envs` — isolated engines, offline inference |
-| [**Incremental transfer**](/docs/incremental/) | Budgets, Ctrl-C, Range partials, the free-space floor and `config.toml`, `--shard N/T`, `assemble` |
+| [**Incremental transfer**](/docs/incremental/) | Budgets, Ctrl-C, Range partials, the free-space floor and `config.toml`, `--shard N/T`, `assemble`, `assemble --handoff` |
+| [**FAQ**](/docs/faq/) | Moving or copying a bundle to another disk (`mv` / `cp`, or rsync — always valid); `mv` vs `assemble --handoff`; what travels, what stays |
 | [**Datasets**](/docs/datasets/) | The source is `datasets/owner/name`; payload under `data/` |
 | [**Sources**](/docs/sources/) | Provider-qualified refs; Hugging Face is a plugin |
 | [**Quantization**](/docs/quantization/) | Masters-first archiving, `darsay classify`, satellite quants, derived precision |
@@ -89,6 +94,8 @@ The short list that every document, and every change, is measured against:
    ledger loss, and copying to another vault. No source-machine absolute
    paths in the ledger. rsync is a first-class copy: the next darsay
    command trusts dest ledger + size and fetches only what is still missing.
+   `darsay mv` / `darsay cp` are that contract as verbs (copy, verify where
+   it landed, then remove or keep the source) and are never a requirement.
 3. **Export determinism.** The same bundle state produces a byte-identical
    `.mvb.tar`. Volatile machine-local files are excluded.
 4. **Record, don't fabricate.** Manifests contain only what was established.
@@ -111,4 +118,4 @@ The short list that every document, and every change, is measured against:
 | A new acquisition host | `SourceProvider` in `src/darsay/providers/`, wired in `sources.py` |
 
 Field changes to `manifest.json` or `.mvb.tar` need a docs update here and
-a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/8e71a3648b31431416630118e7aefa89a354189c/CONTRIBUTING.md).
+a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/aaec0cade9542d4e5fa22bc526a98696fe60746e/CONTRIBUTING.md).

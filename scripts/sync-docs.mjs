@@ -28,6 +28,7 @@ const MAP = {
 	"DISTRIBUTION.md": "distribution.mdx",
 	"TESTING.md": "testing.mdx",
 	"DOCTOR.md": "doctor.mdx",
+	"FAQ.md": "faq.mdx",
 	"README.md": "index.mdx",
 };
 
@@ -79,6 +80,9 @@ function rewriteLinks(md, sha, repo) {
 		}
 		if (file === "../CONTRIBUTING.md") {
 			return `](https://github.com/${repo}/blob/${sha}/CONTRIBUTING.md${hash})`;
+		}
+		if (file === "../CLAUDE.md") {
+			return `](https://github.com/${repo}/blob/${sha}/CLAUDE.md${hash})`;
 		}
 		if (file === "../examples/README.md" || file === "examples/README.md") {
 			return `](/docs/examples/${hash})`;

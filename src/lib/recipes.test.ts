@@ -182,7 +182,7 @@ describe("deriveRecipes", () => {
 		}
 	});
 
-	it("large model: pause/resume and the two-disk --move flow lead, with a half-size budget", () => {
+	it("large model: pause/resume and the two-disk --handoff flow lead, with a half-size budget", () => {
 		const set = deriveRecipes(entry({ source: "huggingface:Qwen/Qwen3-235B-A22B", payload_bytes: 438 * GiB }), "summer");
 		expect(set.traits).toEqual(["large"]);
 		expect(set.headline).toBe("Too big for one sitting");
@@ -197,9 +197,9 @@ describe("deriveRecipes", () => {
 		]);
 		const halves = set.hero[2];
 		expect(halves.lines).toContain("darsay archive huggingface:Qwen/Qwen3-235B-A22B --max-gb 220");
-		expect(halves.lines).toContain("darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3-235b-a22b/<rev> --move");
-		expect(halves.lines.filter((l) => l.includes("--move"))).toHaveLength(2);
-		expect(halves.doc?.href).toBe("/docs/incremental/#across-disks-assemble---move-and-skeletons");
+		expect(halves.lines).toContain("darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3-235b-a22b/<rev> --handoff");
+		expect(halves.lines.filter((l) => l.includes("--handoff"))).toHaveLength(2);
+		expect(halves.doc?.href).toBe("/docs/incremental/#across-disks-assemble---handoff-and-skeletons");
 		const shards = set.hero[3];
 		expect(text([shards])).toContain("--shard 1/2 --max-gb 20");
 		expect(text([shards])).toContain("--shard 2/2 --max-gb 20");
@@ -270,7 +270,7 @@ describe("deriveRecipes", () => {
 				expect(line).toContain("--revision c1899de289a0f1e2");
 			}
 		}
-		expect(text(all(set))).toContain("~/darsay/qwen--qwen3-0.6b/c1899de289a0 --move");
+		expect(text(all(set))).toContain("~/darsay/qwen--qwen3-0.6b/c1899de289a0 --handoff");
 		expect(set.facts).toContain("pin c1899de289a0");
 	});
 

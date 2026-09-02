@@ -189,7 +189,7 @@ export const PRIMER: PrimerCard[] = [
 		body: [
 			"First the ref — `main`, a tag, a commit — resolves to an immutable revision. Then the file set is frozen: by default the masters-first selection, with `--full` the whole repo, with `--include` exactly what you named. Only then do bytes move.",
 			"Rerunning `archive` on the same source continues that pin — same files, same selection. That is why resume needs no special subcommand, and why a 700 GiB job can be seventy evenings of `--max-gb 10`. It never chases a moving `main`; to take a new snapshot, `--force` pins again.",
-			"A row on this board may carry a revision; unpinned rows resolve at the collector's first run. A **skeleton** is a pin whose verified bytes were handed to another disk with `assemble --move`: the hashes stay, the payload travels, and nothing is fetched twice.",
+			"A row on this board may carry a revision; unpinned rows resolve at the collector's first run. A **skeleton** is a pin whose verified bytes were handed to another disk with `assemble --handoff`: the hashes stay, the payload travels, and nothing is fetched twice.",
 		],
 		collect:
 			"Pin when it matters which bytes — a paper's exact checkpoint, a release you are matching with a friend. Otherwise let the first archive freeze it.",
@@ -211,7 +211,7 @@ export const PRIMER: PrimerCard[] = [
 		lede: "Twenty gibibytes is where a download stops being one sitting and starts being a plan.",
 		body: [
 			"The `large` chip is the CLI's line — a priced payload of 20 GiB or more, the same constant this board draws. Above it, think in sessions: `--max-gb` caps tonight, `--min-free` keeps a floor on the disk, `--max-minutes` ends before the café closes. Completed files are trusted; partial files resume with a Range request.",
-			"Above a few hundred gibibytes, think in disks and people. `assemble --move` hands a fetched half to the drive that has room and leaves a skeleton behind, so the laptop never re-fetches what it gave away. `--shard 1/2` lets two collectors prefer different halves and merge offline.",
+			"Above a few hundred gibibytes, think in disks and people. `assemble --handoff` hands a fetched half to the drive that has room and leaves a skeleton behind, so the laptop never re-fetches what it gave away. `--shard 1/2` lets two collectors prefer different halves and merge offline.",
 			"The size on the row is the masters-first price where the CLI has classified the repo (the `masters` chip), and the whole repo otherwise.",
 		],
 		collect: "Large is not a reason to skip — it is a reason to budget. The recipe card under each row writes the flags for you.",

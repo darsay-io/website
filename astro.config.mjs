@@ -41,6 +41,7 @@ export default defineConfig({
 						{ label: 'Quantization', slug: 'docs/quantization' },
 						{ label: 'Catalogs', slug: 'docs/catalogs' },
 						{ label: 'Doctor', slug: 'docs/doctor' },
+						{ label: 'FAQ', slug: 'docs/faq' },
 					],
 				},
 				{
