@@ -272,7 +272,8 @@ export function groupByFamily<T extends { source: string }>(rows: T[]): FamilyGr
 		fam.rows.push({ row, lineage: lin });
 		const publisher = publisherOf(row.source);
 		if (publisher) fam.publishers.set(publisher, (fam.publishers.get(publisher) ?? 0) + 1);
-		if (lin.family) fam.spellings.set(lin.family, (fam.spellings.get(lin.family) ?? 0) + 1);
+		// A provider ref's spelling (the publisher's own) outweighs a home URL's, which the web lowercases.
+		if (lin.family) fam.spellings.set(lin.family, (fam.spellings.get(lin.family) ?? 0) + (publisher ? 2 : 1));
 	}
 	const out: FamilyGroup<T>[] = [];
 	for (const [key, fam] of families) {

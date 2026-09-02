@@ -86,6 +86,11 @@ describe("the tree", () => {
 		expect(tree[1].homePublisher).toBe("moonshotai");
 		expect(tree[1].generations.map((g) => g.generation)).toEqual(["K2", "K3"]);
 	});
+	it("lets a repo name set the family's spelling, not a home URL", () => {
+		const first = [{ source: "https://www.qwencloud.com/models/qwen3.8-max-0902" }, { source: "huggingface:Qwen/Qwen3.8-27B" }];
+		expect(groupByFamily(first)[0].family).toBe("Qwen");
+		expect(groupByFamily([first[0]])[0].family).toBe("qwen");
+	});
 	it("lists the families a board holds", () => {
 		expect(familiesOf(rows)).toEqual([
 			{ key: "qwen", family: "Qwen", count: 5 },
