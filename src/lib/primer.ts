@@ -14,6 +14,7 @@ export type PrimerKey =
 	| "dtype"
 	| "bundle"
 	| "pin"
+	| "mv"
 	| "large"
 	| "gated"
 	| "redundant"
@@ -202,7 +203,37 @@ export const PRIMER: PrimerCard[] = [
 			],
 		},
 		doc: { href: "/docs/concepts/#pin", label: "Concepts → pin" },
-		related: ["bundle", "large", "subset"],
+		related: ["bundle", "large", "subset", "mv"],
+	},
+	{
+		key: "mv",
+		group: "Anatomy",
+		title: "Move and hand-off",
+		lede: "Two verbs carry a pin across a disk boundary, and they are not interchangeable: one moves a bundle you finished, the other hands over one you did not.",
+		body: [
+			"`darsay mv <bundle> <vault>` takes a **registered** bundle — one that has a `manifest.json` — and a destination vault root that already exists. On one filesystem it is a rename: instant, nothing rewritten. Across filesystems it copies into a staging directory beside the destination, re-hashes every payload file *there* against the manifest, stamps the new location, renames the copy into place, and only then removes the source. A failed verification deletes the staging copy and leaves the source exactly as it was. `-n` says which of the two it will do, and where the bundle lands, before it does either.",
+			"`assemble --handoff` acts on the other object: a **partial**, still a `transfer.json` with no manifest, crossing one verified payload file at a time and leaving a skeleton — the pin, the expected inventory, every hash, no bytes. Each verb refuses the other's object and names the right one. That refusal is why the flag stopped being spelled `--move` the day `darsay mv` arrived: two things called *move*, acting on different objects, is a trap for the reader and for the shell history.",
+			"Neither changes the bundle hash — it covers the payload, and the payload is never touched. The manifest does change (location, host, and a `moves` record naming `rename` or `copy`), so an export taken after a move is not byte-identical to one taken before. `darsay cp` is `mv` without the removal: the same copy, the same verification at the destination, and afterwards both manifests carry the other as a replica.",
+		],
+		table: {
+			head: ["Verb", "Acts on", "Leaves behind"],
+			rows: [
+				["darsay mv", "a registered bundle, whole", "nothing — the empty folder is swept"],
+				["assemble --handoff", "a partial, one file at a time", "a skeleton, until the last file crosses"],
+			],
+		},
+		collect:
+			"A finished bundle changing disks is `mv`. One pin crossing two disks that never mount together is `--handoff`. If the destination is a file rather than a vault — a shelf, a stranger — it is `export` instead.",
+		cmd: {
+			label: "move it, or keep a second copy",
+			lines: [
+				"darsay mv qwen--qwen3-0.6b /Volumes/big -n   # rename or copy? where it lands",
+				"darsay mv qwen--qwen3-0.6b /Volumes/big",
+				"darsay cp qwen--qwen3-0.6b /Volumes/backup   # same verification, source kept",
+			],
+		},
+		doc: { href: "/docs/faq/#moving-bundles", label: "FAQ → moving bundles" },
+		related: ["bundle", "pin", "large"],
 	},
 	{
 		key: "large",
