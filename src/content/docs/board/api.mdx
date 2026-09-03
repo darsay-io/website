@@ -112,9 +112,9 @@ retargeted on add.
 The whole board: `title`, `curator`, `note`, `catalog_id`, `revision`,
 `access` (how you got in and with which scopes), `counts` (`rows`, `want`,
 `have`, `claimed`, `dropped`), `entries` in the canonical order — desire
-high to low, unrated last, then as added — and `links` to the page, the
-JSON address, the catalog, the OpenAPI document, the MCP server and its
-card, and these docs. `?dropped=all` includes dropped rows; `?dropped=only` shows just
+high to low, unrated last, then as added — and `links` to the page (add
+`#row=<id>` to open it at a row), the JSON address, the catalog, the
+OpenAPI document, the MCP server and its card, and these docs. `?dropped=all` includes dropped rows; `?dropped=only` shows just
 them.
 
 ### Edit the board
@@ -483,6 +483,22 @@ answers the same way; a browser gets the page. The page itself carries
 `<link rel="alternate" type="application/json">` to this address and a
 `Link` header that says the same, so a program that fetched the HTML
 finds the document without guessing.
+
+A link can open the page at one row. Add `#row=` and either the row's
+`id` or its source the way a person would write it — `owner/name`,
+`datasets/owner/name`, a Hub URL, a closed work's home page:
+
+```
+https://darsay.io/b/<board>#row=orcarouter/DeepSeek-V4-Flash-Vision-Uncensored
+https://darsay.io/b/<board>#row=42
+```
+
+The page scrolls to that row and lights it; a lens or the lineage view
+that would hide it gives way. The fragment never reaches the server. A
+row's **Link** button copies the first form — it names the source rather
+than the id, so the link still lands after the row is removed and added
+again. A source on the board twice (another revision, another include
+set) lights both rows.
 
 ## This document
 

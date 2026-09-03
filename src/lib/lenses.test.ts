@@ -199,20 +199,41 @@ describe("view state in the hash", () => {
 			dir: "asc",
 			family: null,
 			view: null,
+			row: null,
 		});
-		expect(parseView("")).toEqual({ lenses: [], sort: null, dir: null, family: null, view: null });
-		expect(parseView("#sort=nope:asc")).toEqual({ lenses: [], sort: null, dir: null, family: null, view: null });
+		expect(parseView("")).toEqual({ lenses: [], sort: null, dir: null, family: null, view: null, row: null });
+		expect(parseView("#sort=nope:asc")).toEqual({ lenses: [], sort: null, dir: null, family: null, view: null, row: null });
 		expect(parseView("#view=lineage&family=qwen")).toMatchObject({ view: "lineage", family: "qwen" });
 		expect(parseView("#view=nope&family=Not%20A%20Key")).toMatchObject({ view: null, family: null });
-		expect(formatView({ lenses: [], sort: "desire", dir: "desc", family: "kimi", view: "lineage" }, defaults)).toBe(
+		expect(formatView({ lenses: [], sort: "desire", dir: "desc", family: "kimi", view: "lineage", row: null }, defaults)).toBe(
 			"#view=lineage&family=kimi",
 		);
-		const bare = { family: null, view: null } as const;
+		const bare = { family: null, view: null, row: null } as const;
 		expect(formatView({ lenses: ["gated"], sort: "desire", dir: "desc", ...bare }, defaults)).toBe("#lens=gated");
 		expect(formatView({ lenses: [], sort: "size", dir: "desc", ...bare }, defaults)).toBe("#sort=size:desc");
 		expect(formatView({ lenses: ["moe", "large"], sort: "size", dir: "asc", ...bare }, defaults)).toBe(
 			"#lens=moe,large&sort=size:asc",
 		);
 		expect(formatView({ lenses: [], sort: "desire", dir: "desc", ...bare }, defaults)).toBe("");
+	});
+
+	it("carries a row target, slashes and all", () => {
+		expect(parseView("#row=orcarouter/DeepSeek-V4-Flash-Vision-Uncensored")).toMatchObject({
+			row: "orcarouter/DeepSeek-V4-Flash-Vision-Uncensored",
+		});
+		expect(parseView("#lens=gated&row=42")).toMatchObject({ lenses: ["gated"], row: "42" });
+		expect(parseView("#row=")).toMatchObject({ row: null });
+		expect(parseView("#row=%20%20")).toMatchObject({ row: null });
+		expect(parseView(`#row=${"x".repeat(600)}`)).toMatchObject({ row: null });
+		expect(parseView("#row=https://example.com/a%3Fb%3D1%26c%3D2")).toMatchObject({ row: "https://example.com/a?b=1&c=2" });
+		const bare = { lenses: [], sort: "desire" as const, dir: "desc" as const, family: null, view: null };
+		expect(formatView({ ...bare, row: "datasets/ESCAD/OpenRTLSet" }, defaults)).toBe("#row=datasets/ESCAD/OpenRTLSet");
+		expect(formatView({ ...bare, lenses: ["gated"], row: "42" }, defaults)).toBe("#lens=gated&row=42");
+		expect(formatView({ ...bare, row: "https://example.com/a?b=1&c=2" }, defaults)).toBe(
+			"#row=https://example.com/a%3Fb%3D1%26c%3D2",
+		);
+		// What a link says is what the page reads back.
+		const link = formatView({ ...bare, row: "https://example.com/a?b=1&c=2" }, defaults);
+		expect(parseView(link).row).toBe("https://example.com/a?b=1&c=2");
 	});
 });

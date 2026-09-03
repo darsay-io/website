@@ -373,13 +373,21 @@ export type ViewState = {
 	/** A family key (case-folded), read from the names on the board. */
 	family: string | null;
 	view: ViewMode | null;
+	/**
+	 * A row to open the page at: its integer `id`, or its source the way a
+	 * person would write it — `owner/name`, `datasets/owner/name`, a Hub
+	 * URL, a closed work's home page. `resolveRowLink` in `board.ts` finds
+	 * the row; the link outlives a remove and re-add when it names the source.
+	 */
+	row: string | null;
 };
 
 const SORT_KEYS = new Set<string>(["desire", "source", "type", "size", "status", "family"]);
 const FAMILY_KEY_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
+const ROW_TARGET_MAX = 512;
 
 export function parseView(hash: string): ViewState {
-	const out: ViewState = { lenses: [], sort: null, dir: null, family: null, view: null };
+	const out: ViewState = { lenses: [], sort: null, dir: null, family: null, view: null, row: null };
 	const raw = hash.replace(/^#/, "");
 	if (!raw) return out;
 	const params = new URLSearchParams(raw);
@@ -399,7 +407,14 @@ export function parseView(hash: string): ViewState {
 			out.dir = dir === "asc" ? "asc" : dir === "desc" ? "desc" : null;
 		}
 	}
+	const row = params.get("row")?.trim();
+	if (row && row.length <= ROW_TARGET_MAX) out.row = row;
 	return out;
+}
+
+/** A row target as it should read in a link: `/` and `:` stay themselves, the rest is escaped. */
+export function encodeRowTarget(row: string): string {
+	return encodeURIComponent(row).replace(/%2F/gi, "/").replace(/%3A/gi, ":");
 }
 
 export function formatView(v: ViewState, defaults: { sort: SortKey; dir: "asc" | "desc" }): string {
@@ -408,5 +423,6 @@ export function formatView(v: ViewState, defaults: { sort: SortKey; dir: "asc" |
 	if (v.family) params.push(`family=${encodeURIComponent(v.family)}`);
 	if (v.lenses.length) params.push(`lens=${v.lenses.join(",")}`);
 	if (v.sort && v.dir && (v.sort !== defaults.sort || v.dir !== defaults.dir)) params.push(`sort=${v.sort}:${v.dir}`);
+	if (v.row) params.push(`row=${encodeRowTarget(v.row)}`);
 	return params.length ? `#${params.join("&")}` : "";
 }

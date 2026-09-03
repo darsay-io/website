@@ -2165,6 +2165,16 @@ a.src-link:hover .src-name {
 	background: rgba(212, 132, 122, 0.08);
 }
 
+.work-link {
+	color: var(--d-muted);
+	border-color: transparent;
+}
+
+.work-link:hover {
+	color: var(--d-gold-hi);
+	border-color: var(--d-gold-hi);
+}
+
 .work-bar input:hover {
 	border-color: rgba(212, 176, 106, 0.45);
 }
@@ -3023,7 +3033,7 @@ dialog.guide {
 		justify-content: flex-start;
 	}
 
-	.work-drop {
+	.work-link {
 		margin-left: auto;
 	}
 
@@ -3310,6 +3320,11 @@ dialog.guide {
 	font-size: 0.78rem;
 	color: var(--d-muted);
 	font-style: italic;
+}
+
+/* The row a link named keeps its rule; the spotlight below is the moment of arrival. */
+.work-card.is-linked {
+	box-shadow: inset 3px 0 0 var(--d-gold-hi);
 }
 
 .work-card.is-spotlit {

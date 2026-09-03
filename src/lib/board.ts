@@ -36,6 +36,7 @@ import {
 	LENS_BY_KEY,
 	applyLenses,
 	effectiveHints,
+	encodeRowTarget,
 	formatView,
 	inFlight,
 	isAbliterated,
@@ -279,6 +280,45 @@ export function factPrimer(fact: string): PrimerKey | null {
 	return null;
 }
 
+/* ── Deep links: one row, by id or by source ─────────────────────────────── */
+
+/** The identity two spellings share when they name the same work. */
+function sourceKey(source: string): string | null {
+	const c = canonicalizeSource(source);
+	if (c.kind === "error") return null;
+	// Hub ids are case-insensitive; a home URL is whatever it is.
+	return c.kind === "hf" ? c.canonical.toLowerCase() : c.canonical;
+}
+
+/**
+ * A row's target for `#row=`: `owner/name` for a Hub work (a dataset keeps
+ * its `datasets/` prefix), the home URL for a closed one. Reads well in a
+ * message, and still names the row after a remove and re-add — the id
+ * would not.
+ */
+export function rowLinkTarget(source: string): string {
+	return source.startsWith("huggingface:") ? source.slice("huggingface:".length) : source;
+}
+
+/**
+ * The rows a `#row=` target names, in the order given. All digits is an
+ * id; anything else is a source in any spelling `canonicalizeSource`
+ * accepts, so a pasted Hub URL finds the row too. The same source can sit
+ * on a board more than once (another revision, another include set), so
+ * a source may answer with several rows.
+ */
+export function resolveRowLink<T extends { id: number; source: string }>(entries: T[], target: string): T[] {
+	const t = target.trim();
+	if (!t) return [];
+	if (/^\d{1,12}$/.test(t)) {
+		const id = Number(t);
+		return entries.filter((e) => e.id === id);
+	}
+	const key = sourceKey(t);
+	if (key === null) return [];
+	return entries.filter((e) => sourceKey(e.source) === key);
+}
+
 type GaugeRef = {
 	kind: GaugeKind;
 	face: HTMLElement;
@@ -317,6 +357,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	let lenses: LensKey[] = initial.lenses;
 	let family: string | null = initial.family;
 	let view: ViewMode = initial.view ?? "ledger";
+	/** The row the link names, if any — kept in the hash, so the address bar is the link. */
+	let linked: string | null = initial.row;
+	/** Arrival by link: scroll to the row once, after the next paint. */
+	let arriving = linked !== null;
+	let linkedIds = new Set<number>();
 	let dials: DialIndices = { ...DEFAULT_DIAL_INDICES };
 	let target: Target = "file";
 	let installFlavor: InstallFlavor = "pipx";
@@ -367,7 +412,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	}
 
 	function syncHash() {
-		const hash = formatView({ lenses, sort: sortKey, dir: sortDir, family, view }, DEFAULT_SORT);
+		const hash = formatView({ lenses, sort: sortKey, dir: sortDir, family, view, row: linked }, DEFAULT_SORT);
 		const url = `${location.pathname}${location.search}${hash}`;
 		if (`${location.pathname}${location.search}${location.hash}` !== url) history.replaceState(null, "", url);
 	}
@@ -379,7 +424,12 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		sortDir = v.dir ?? DEFAULT_SORT.dir;
 		family = v.family;
 		view = v.view ?? "ledger";
+		if (v.row !== linked) {
+			linked = v.row;
+			arriving = linked !== null;
+		}
 		paintLedger();
+		if (arriving) arrive();
 	});
 
 	document.addEventListener("keydown", (ev) => {
@@ -813,7 +863,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const claimed = inFlight(e);
 		const closed = isClosed(e);
 		const card = el("article", {
-			class: `work-card${e.status === "have" ? " is-have" : ""}${claimed ? " is-claimed" : ""}${closed ? " is-closed" : ""}`,
+			class: `work-card${e.status === "have" ? " is-have" : ""}${claimed ? " is-claimed" : ""}${closed ? " is-closed" : ""}${linkedIds.has(e.id) ? " is-linked" : ""}`,
 			id: `row-${e.id}`,
 		});
 		if (firstPaint && !reducedMotion()) card.style.animationDelay = `${Math.min(index, 10) * 45}ms`;
@@ -999,7 +1049,27 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				el("label", { class: "work-who" }, el("span", {}, "Who"), who),
 			);
 		}
-		bar.append(rm);
+
+		// A link to this row: the page address plus `#row=owner/name`. It
+		// names the source, not the id, so it still lands after a remove
+		// and re-add; the address bar takes the same fragment.
+		const link = el(
+			"button",
+			{ type: "button", class: "btn compact secondary work-link", title: "Copy a link that opens this board at this row" },
+			"Link",
+		);
+		link.addEventListener("click", async () => {
+			linked = rowLinkTarget(e.source);
+			linkedIds = new Set(resolveRowLink(board.entries, linked).map((r) => r.id));
+			for (const c of shells.ledger.querySelectorAll<HTMLElement>(".work-card")) {
+				c.classList.toggle("is-linked", linkedIds.has(Number(c.id.slice("row-".length))));
+			}
+			syncHash();
+			const href = `${boardUrl()}#row=${encodeRowTarget(linked)}`;
+			if (await copyText(href)) flashCopied(link, "Link copied ✓");
+			else toast("Select the address bar and copy it — it is the link.", "error");
+		});
+		bar.append(link, rm);
 
 		const claimRow = renderClaim(e);
 		card.append(
@@ -1330,6 +1400,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	}
 
 	function paintLedger() {
+		linkedIds = new Set(linked ? resolveRowLink(board.entries, linked).map((r) => r.id) : []);
 		const sorted = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
 		const visible = applyLenses(sorted, lenses, family);
 		paintToolbar(visible);
@@ -1367,17 +1438,45 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		firstPaint = false;
 	}
 
+	/** Center a row and light it for a moment. */
+	function spotlight(card: HTMLElement) {
+		card.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
+		card.classList.add("is-spotlit");
+		window.setTimeout(() => card.classList.remove("is-spotlit"), 1800);
+	}
+
 	/** Jump from a lineage card to its ledger row. */
 	function showRow(e: Entry) {
 		view = "ledger";
 		syncHash();
 		paintLedger();
 		const card = document.getElementById(`row-${e.id}`);
-		if (card) {
-			card.scrollIntoView({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });
-			card.classList.add("is-spotlit");
-			window.setTimeout(() => card.classList.remove("is-spotlit"), 1800);
+		if (card) spotlight(card);
+	}
+
+	/**
+	 * Open the page at the linked row: the ledger, nothing in the way, the
+	 * row centered and lit. Once per link, after a paint — a reload keeps
+	 * the mark on the row but does not scroll again.
+	 */
+	function arrive() {
+		arriving = false;
+		if (!linked) return;
+		const rows = resolveRowLink(board.entries, linked);
+		if (!rows.length) {
+			toast(`No row here for ${linked} — a dropped row waits under ✦ Agents.`, "error");
+			return;
 		}
+		if (view !== "ledger" || !rows.some((r) => document.getElementById(`row-${r.id}`))) {
+			// The link names the row; a lens or the lineage view that hides it gives way.
+			view = "ledger";
+			lenses = [];
+			family = null;
+			syncHash();
+			paintLedger();
+		}
+		const card = shells.ledger.querySelector<HTMLElement>(".work-card.is-linked");
+		if (card) requestAnimationFrame(() => spotlight(card));
 	}
 
 	/** One work in the tree: name, what it is, what it weighs, where it stands. */
@@ -1599,6 +1698,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		paintLedger();
 		paintArchive();
 		syncHash();
+		if (arriving) arrive();
 	}
 
 	render();

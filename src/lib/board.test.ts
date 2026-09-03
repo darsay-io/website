@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareEntries, compareFamily, entryArtifactType, factPrimer } from "./board.ts";
+import { compareEntries, compareFamily, entryArtifactType, factPrimer, resolveRowLink, rowLinkTarget } from "./board.ts";
 
 const row = (
 	id: number,
@@ -84,5 +84,36 @@ describe("entryArtifactType", () => {
 			entryArtifactType(row(1, { source: "huggingface:datasets/acme/reviews", artifact_type: null })),
 		).toBe("dataset");
 		expect(entryArtifactType(row(1, { source: "modelscope:qwen/Qwen-7B", artifact_type: null }))).toBe("—");
+	});
+});
+
+describe("row links", () => {
+	const rows = [
+		row(7, { source: "huggingface:orcarouter/DeepSeek-V4-Flash-Vision-Uncensored" }),
+		row(8, { source: "huggingface:datasets/ESCAD/OpenRTLSet" }),
+		row(9, { source: "https://example.com/models/closed-one" }),
+		row(10, { source: "huggingface:orcarouter/DeepSeek-V4-Flash-Vision-Uncensored" }),
+	];
+	const ids = (target: string) => resolveRowLink(rows, target).map((r) => r.id);
+
+	it("names a row the way a person would, and finds it in any spelling", () => {
+		expect(rowLinkTarget(rows[0].source)).toBe("orcarouter/DeepSeek-V4-Flash-Vision-Uncensored");
+		expect(rowLinkTarget(rows[1].source)).toBe("datasets/ESCAD/OpenRTLSet");
+		expect(rowLinkTarget(rows[2].source)).toBe("https://example.com/models/closed-one");
+		expect(ids("orcarouter/DeepSeek-V4-Flash-Vision-Uncensored")).toEqual([7, 10]);
+		expect(ids("ORCAROUTER/deepseek-v4-flash-vision-uncensored")).toEqual([7, 10]);
+		expect(ids("https://huggingface.co/orcarouter/DeepSeek-V4-Flash-Vision-Uncensored")).toEqual([7, 10]);
+		expect(ids("huggingface:orcarouter/DeepSeek-V4-Flash-Vision-Uncensored")).toEqual([7, 10]);
+		expect(ids("datasets/ESCAD/OpenRTLSet")).toEqual([8]);
+		expect(ids("https://example.com/models/closed-one")).toEqual([9]);
+	});
+
+	it("takes an id, and answers nothing for a stranger", () => {
+		expect(ids("8")).toEqual([8]);
+		expect(ids(" 9 ")).toEqual([9]);
+		expect(ids("11")).toEqual([]);
+		expect(ids("nobody/nothing")).toEqual([]);
+		expect(ids("")).toEqual([]);
+		expect(ids("not a source at all")).toEqual([]);
 	});
 });
