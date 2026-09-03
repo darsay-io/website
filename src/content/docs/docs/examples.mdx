@@ -469,7 +469,8 @@ verified (size match), then skeletonizes the laptop copy. It does not
 re-hash dest over SMB:
 
 ```bash
-rsync -a ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
+rsync -aP --exclude=hydration.json --exclude=transfer.lock --exclude=.DS_Store \
+  ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
 darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --handoff
 ```
 
@@ -512,7 +513,8 @@ Moved qwen--qwen3-0.6b@c1899de289a0 → /Volumes/big/qwen--qwen3-0.6b/c1899de289
 rsync is the same move without the verb, and always will be:
 
 ```bash
-rsync -a ~/darsay/qwen--qwen3-0.6b/<rev>/ /Volumes/big/qwen--qwen3-0.6b/<rev>/
+rsync -aP --exclude=hydration.json --exclude=transfer.lock --exclude=.DS_Store \
+  ~/darsay/qwen--qwen3-0.6b/<rev>/ /Volumes/big/qwen--qwen3-0.6b/<rev>/
 darsay --vault /Volumes/big verify qwen--qwen3-0.6b     # on the host that owns the disk
 darsay rm qwen--qwen3-0.6b --yes
 ```
@@ -545,9 +547,24 @@ them and `darsay rm` for either side. When the destination's `curation.md`
 differs from the bundle's, the plan says so before anything moves; the
 bundle's lands.
 
-Over SMB or NFS, prefer the rsync form: `mv` verifies by reading the
-destination back, which over the wire is a second trip of the whole
-payload, and it says so before it starts. `mv` refuses a partial — that is
+Over SMB or NFS, name the machine that owns the disk once and `mv`
+hashes there instead of reading the mount back:
+
+```bash
+darsay --vault /Volumes/big config host.ssh=root@nas host.path=/volume1/big
+darsay mv qwen--qwen3-0.6b /Volumes/big        # plan says: hash: on root@nas
+```
+
+That machine needs `sh` and `sha256sum` (or `shasum`, `sha256`,
+`openssl`), not darsay or Python — one ssh call carries a short POSIX
+script, and the hashes come back. Without it, `mv` verifies by reading
+the destination back, which over the wire is a trip of the whole
+payload, and it says so before it starts — with the lines to paste, paths
+filled in: the rsync above, `darsay verify` on the host that owns the
+disk, `darsay rm` here, and the `config` line above. With the bytes
+already there, the rsync carries only the record. rsync `--delete` is
+never part of it ([FAQ](/docs/faq/#should-the-rsync-use---delete)).
+`mv` refuses a partial — that is
 [`assemble --handoff`](#archive-in-halves-across-two-disks) or the recipe
 below. Which verb when: [FAQ](/docs/faq/#moving-bundles).
 
@@ -614,7 +631,8 @@ bundle at `<vault>/<slug>/<rev>/`, not at the vault root.
 
 ```bash
 # resume a partial on the other disk
-rsync -a ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
+rsync -aP --exclude=hydration.json --exclude=transfer.lock --exclude=.DS_Store \
+  ~/darsay/qwen--qwen3.8-27b/<rev>/ /Volumes/big/qwen--qwen3.8-27b/<rev>/
 darsay --vault /Volumes/big archive Qwen/Qwen3.8-27B
 
 # or free the laptop after the copy (trust dest ledger + size, delete source payload)
@@ -624,12 +642,40 @@ darsay --vault /Volumes/big assemble ~/darsay/qwen--qwen3.8-27b/<rev> --handoff
 Hash dest where it is a local disk — `assemble --rehash` or `darsay
 verify` on the NAS, not from a laptop over SMB (that reads the whole
 payload back over the wire). `assemble` warns before it hashes a dest
-that sits on a network mount.
+that sits on a network mount — unless the vault's `config.toml` names
+the NAS in `[host]`, in which case the hashing runs there over ssh and
+the plan says `hashed on root@nas`
+([FAQ](/docs/faq/#how-do-i-stop-mv-and-verify-reading-a-nas-back-over-the-wire)).
 A registered payload is frozen: rsync it, verify dest on the dest host,
 then `darsay rm` the source — or [`darsay mv`](#move-a-bundle-to-another-vault),
 which is those three steps with the refusals built in, and after an rsync
 lands on the copy instead of making another. `--handoff` is the verb for
 partials.
+
+---
+
+## Verify a bundle with nothing but coreutils
+
+Every bundle carries `SHA256SUMS`, the payload's hash list in the format
+`sha256sum` reads. No darsay, no Python:
+
+```bash
+cd ~/darsay/qwen--qwen3-0.6b/c1899de289a0
+sha256sum -c SHA256SUMS          # shasum -a 256 -c SHA256SUMS on a Mac
+sha256sum SHA256SUMS             # the bundle hash: inventory.bundle_hash.value in manifest.json
+```
+
+```
+model/LICENSE: OK
+model/config.json: OK
+model/model.safetensors: OK
+…
+4b0c2f…  SHA256SUMS
+```
+
+The first command checks the bytes; the second binds the list to the
+record, because darsay's bundle hash is the SHA-256 of exactly that
+text. Why it works: [FAQ](/docs/faq/#can-i-verify-a-bundle-without-darsay-or-without-python).
 
 ---
 

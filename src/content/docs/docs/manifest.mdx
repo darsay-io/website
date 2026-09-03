@@ -92,7 +92,7 @@ Provenance of the download.
 | Field | Meaning |
 |---|---|
 | `file_count`, `total_size_bytes` | Payload totals. |
-| `bundle_hash` | `{algorithm, value, covers}`. SHA-256 over the sorted `"<sha256>  <path>"` lines of the payload — one value that fingerprints the whole payload. Covers the payload root only; bundle-root metadata is mutable by design. |
+| `bundle_hash` | `{algorithm, value, covers}`. SHA-256 over the sorted `"<sha256>  <path>"` lines of the payload — one value that fingerprints the whole payload. Those lines, with a trailing newline, are the bundle's `SHA256SUMS` file, so `sha256sum SHA256SUMS` prints this value and `sha256sum -c SHA256SUMS` from the bundle root verifies the payload with no darsay. Covers the payload root only; bundle-root metadata is mutable by design. |
 | `layout` | `payload_root` (`model/` for model bundles, `data/` for dataset bundles — readers must take the root from here, writers from the registry) and the list of mutable bundle-root metadata files, including machine-local transfer/export/hydration state. |
 | `files[]` | Per file: `path`, `size`, `sha256`, `blake3` (null if blake3 wasn't installed), `upstream_lfs_sha256` (LFS files), `upstream_git_sha1` (small git-blob files), `verified_against_upstream` (true/false/null = no upstream expectation). |
 
@@ -215,7 +215,7 @@ lineage — family, generation, member — lives in `identity`
 |---|---|
 | `date_archived` | Creation time of the bundle. Also the fixed mtime used in exports. |
 | `archived_by` | **curator** (or automation identity). |
-| `location`, `host` | Absolute path and machine. Rewritten on import, by `darsay mv`, and on both sides of `darsay cp`. |
+| `location`, `host` | Absolute path and machine where darsay last attested the bundle. Rewritten on import, by `darsay mv`, on both sides of `darsay cp`, and by `darsay verify` when it runs somewhere other than the record says — an rsync'd copy verified where it landed. Each `verification.json` entry carries the pair as well. |
 | `storage_tier` | `local-disk` until a curator or workflow records otherwise. |
 | `backup_status`, `replicas` | `none` / `[]` until `darsay cp` records a verified copy; then `backup_status` is `replicated` and `replicas` lists the *other* known locations of this bundle as `{at, location, host}`, written on both sides of the copy and keyed by location (a second `cp` to the same disk updates the timestamp rather than adding a row). An rsync leaves no entry — it is a first-class copy darsay never sees happen. Entry shape and `replicated` since 1.8.0. |
 | `last_integrity_check`, `last_accessed` | Maintained by `verify`, `smoke`, `hydrate` / `run`, import. `info` is read-only and does not rewrite the manifest. |
