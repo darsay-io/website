@@ -33,6 +33,11 @@ describe("llms.txt", () => {
 		const urls = machineInterfaces().map((i) => i.url);
 		expect(urls).toEqual(["https://darsay.io/.well-known/mcp-server-card", "https://darsay.io/mcp", "https://darsay.io/openapi.json", "https://darsay.io/api/guide"]);
 		for (const u of urls) expect(text).toContain(`](${u})`);
+		expect(text).toContain("](https://darsay.io/agents/)");
+	});
+
+	it("names no board", () => {
+		expect(text).not.toMatch(/[0-9a-f]{32}/);
 	});
 
 	it("keeps the board's words", () => {

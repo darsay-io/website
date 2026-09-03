@@ -4281,3 +4281,124 @@ code.agents-key-label {
 .sl-markdown-content .docs-note strong {
 	color: var(--d-gold-hi);
 }
+
+/* ── The site footer, and the walk to /agents/ ───────────────────────────── */
+
+.site-foot {
+	max-width: 52rem;
+	margin: 0 auto;
+	padding: 1.15rem 1.25rem 2.25rem;
+	border-top: 1px solid var(--d-border);
+}
+
+.site-foot.wide {
+	max-width: 70rem;
+	min-width: 0;
+}
+
+.site-foot nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.55rem 1.15rem;
+	font-size: 0.84rem;
+	letter-spacing: 0.04em;
+}
+
+.site-foot a {
+	color: var(--d-muted);
+	text-decoration: none;
+}
+
+.site-foot a:hover {
+	color: var(--d-gold-hi);
+}
+
+/* A board page's own line for programs: its JSON, and the interfaces. */
+.board-links {
+	margin: 2.25rem 0 0;
+	font-size: 0.88rem;
+	letter-spacing: 0.02em;
+}
+
+.board-links a {
+	color: var(--d-gold);
+	text-decoration: none;
+	border-bottom: 1px solid transparent;
+}
+
+.board-links a:hover {
+	color: var(--d-gold-hi);
+	border-bottom-color: var(--d-gold-hi);
+}
+
+/* /agents/: each interface is its address, then what it is for. */
+.plain h2 {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-weight: 600;
+	font-size: 1.35rem;
+	letter-spacing: -0.01em;
+	margin: 2rem 0 0.6rem;
+	color: var(--d-gold-hi);
+}
+
+.iface {
+	display: grid;
+	gap: 1rem;
+	margin: 0.5rem 0 1.25rem;
+}
+
+.iface dt {
+	font-family: var(--d-mono);
+	font-size: 0.95rem;
+	color: var(--d-gold-hi);
+}
+
+.iface dt a {
+	color: inherit;
+	text-decoration: none;
+	border-bottom: 1px solid var(--d-border);
+}
+
+.iface dt a:hover {
+	border-bottom-color: var(--d-gold-hi);
+}
+
+.iface dd {
+	margin: 0.3rem 0 0;
+	padding-left: 0.9rem;
+	border-left: 1px solid var(--d-border);
+	color: var(--d-muted);
+	line-height: 1.55;
+}
+
+.iface-more {
+	padding-left: 1.1rem;
+	color: var(--d-muted);
+	line-height: 1.6;
+}
+
+.iface-more li + li {
+	margin-top: 0.35rem;
+}
+
+/* The docs: Starlight's footer, then the same line every Plain page has. */
+.docs-foot {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.15rem;
+	margin-top: 1.25rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--sl-color-hairline);
+	font-size: var(--sl-text-xs);
+	letter-spacing: 0.04em;
+}
+
+.docs-foot a {
+	color: var(--sl-color-gray-3);
+	text-decoration: none;
+}
+
+.docs-foot a:hover {
+	color: var(--sl-color-white);
+}

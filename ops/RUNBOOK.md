@@ -168,14 +168,19 @@ What a program that knows only darsay.io can fetch, and what each is for:
 | `/mcp` | The server. `server/discover` answers any bearer, with or without `_meta`. Revision 2026-07-28 and the `initialize` era share it. |
 | `/openapi.json` | Cacheable for ten minutes. |
 | `/llms.txt` | Built from the docs page list (`scripts/llms.mjs`); a static asset, no Worker. |
+| `/agents/` | The same surface as a page (`src/pages/agents.astro`): every interface an ordinary `<a href>` in the static HTML, and how a board's id names its operations — for a reader that sees neither `<head>` nor headers, and for a search for "darsay MCP". Public and indexable; it names no board. |
 
-Every HTML page carries `<link rel="mcp" href="/.well-known/mcp-server-card">` (the Plain layout and Starlight's `head`) and `public/_headers` adds the same as a `Link` header. The board shell gets `<link rel="alternate">` to its JSON from the worker. `robots.txt` needs nothing: none of these is under `/b/`, `/api/`, or `/boards` (the `/api/mcp/server-card` spelling is, on purpose — the well-known address is the one to publish).
+Every HTML page carries `<link rel="mcp" href="/.well-known/mcp-server-card">` (the Plain layout and Starlight's `head`) and `public/_headers` adds the same as a `Link` header. Every page's footer links to `/agents/` (the Plain layout; the docs through the Starlight `Footer` override in `src/components/starlight/`). The board shell gets `<link rel="alternate">` to its JSON from the worker, which also turns the shell's `data-board-json` marker into the same address as an anchor in the body, beside the shell's own link to `/agents/`. `robots.txt` needs nothing: none of these is under `/b/`, `/api/`, or `/boards` (the `/api/mcp/server-card` spelling is, on purpose — the well-known address is the one to publish).
+
+Boards stay out of search, and the walk above never leads back to one: `robots.txt` disallows `/b/`, `_headers` and the worker send `X-Robots-Tag: noindex, nofollow` on board pages and the API, the shell and the create page carry the `robots` meta, the sitemap filters `/b/` and `/boards` out, and neither `/agents/` nor `/llms.txt` names a board (`src/lib/discovery.test.ts`, `scripts/llms.test.mjs`). A fetcher that honors `robots.txt` on user-directed fetches cannot read a board page at all; it still finds `/agents/` from the site root or `/llms.txt`. Relaxing the `/b/` disallow while keeping `noindex` would open that door and is a policy call, not a bug.
 
 Check after a deploy:
 
 ```sh
 curl -s https://darsay.io/.well-known/mcp-server-card | jq '.remotes[0].supportedProtocolVersions'
 curl -sI https://darsay.io/docs/ | grep -i '^link:'
+curl -s https://darsay.io/agents/ | grep -o 'href="/[^"]*"' | sort -u          # every interface, as an anchor
+curl -s https://darsay.io/b/<a board id> | grep -o '<a href="/b/[^"]*"'         # the board's JSON, in the body
 curl -s -X POST https://darsay.io/mcp -H 'content-type: application/json' \
   -H 'Authorization: Bearer <a board id>' \
   -d '{"jsonrpc":"2.0","id":1,"method":"server/discover"}' | jq '.result.supportedVersions'

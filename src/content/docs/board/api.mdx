@@ -482,7 +482,10 @@ link. `GET /b/{id}` with `Accept: application/json` (and not `text/html`)
 answers the same way; a browser gets the page. The page itself carries
 `<link rel="alternate" type="application/json">` to this address and a
 `Link` header that says the same, so a program that fetched the HTML
-finds the document without guessing.
+finds the document without guessing. The body says it too, in words: an
+ordinary link to this address and one to [`/agents/`](/agents/), the
+machine interfaces as a page, for a reader that sees neither the head nor
+the headers.
 
 A link can open the page at one row. Add `#row=` and either the row's
 `id` or its source the way a person would write it — `owner/name`,

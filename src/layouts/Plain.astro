@@ -2,9 +2,12 @@
 import "../styles/site.css";
 interface Props {
 	title: string;
+	description?: string;
 	wide?: boolean;
+	/** A private page — a board, the create form: out of search, whatever a header layer does. */
+	noindex?: boolean;
 }
-const { title, wide = false } = Astro.props;
+const { title, description, wide = false, noindex = false } = Astro.props;
 const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 ---
 <!doctype html>
@@ -13,7 +16,9 @@ const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="referrer" content="no-referrer" />
+		{noindex && <meta name="robots" content="noindex, nofollow" />}
 		<title>{title}</title>
+		{description && <meta name="description" content={description} />}
 		<link rel="icon" href="/favicon.svg" />
 		<link rel="mcp" href="/.well-known/mcp-server-card" type="application/json" />
 	</head>
@@ -27,5 +32,14 @@ const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 			</nav>
 		</header>
 		<slot />
+		<footer class:list={["site-foot", { wide }]}>
+			<nav aria-label="darsay.io">
+				<a href="/docs/">Documentation</a>
+				<a href="/agents/">Agents &amp; API</a>
+				<a href="/privacy/">Privacy</a>
+				<a href="/terms/">Terms</a>
+				<a href="https://github.com/darsay-io/darsay" rel="noreferrer">GitHub</a>
+			</nav>
+		</footer>
 	</body>
 </html>

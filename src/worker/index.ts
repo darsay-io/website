@@ -586,13 +586,18 @@ function wantsJson(request: Request): boolean {
 	return accept.includes("application/json") && !accept.includes("text/html");
 }
 
+/** The shell's placeholder for a link to this board's own JSON (src/pages/b/index.astro). */
+const BOARD_JSON_MARK = /<span data-board-json[^>]*><\/span>/;
+
 /**
  * The board shell, told which board it is. The page is one static file for
  * every board — the id lives in the URL and the script reads it there — so
  * a program that fetched the HTML would otherwise find nothing to follow.
  * `rel="alternate"` is the registered word for "the same thing, as JSON";
- * the header says it too, for a HEAD. No lookup: the id is what the
- * requester already holds, and nothing about the board is read for this.
+ * the header says it too, for a HEAD; and the body says it as an ordinary
+ * anchor, for a reader that sees neither `<head>` nor headers. No lookup:
+ * the id is what the requester already holds, and nothing about the board
+ * is read for this.
  */
 async function withAlternate(shell: Response, href: string): Promise<Response> {
 	if (shell.status !== 200 || !(shell.headers.get("content-type") || "").includes("text/html")) return shell;
@@ -602,7 +607,8 @@ async function withAlternate(shell: Response, href: string): Promise<Response> {
 	const html = await shell.text();
 	const at = html.indexOf("<head>");
 	const tag = '<link rel="alternate" type="application/json" href="' + href + '">';
-	const body = at === -1 ? html : html.slice(0, at + 6) + tag + html.slice(at + 6);
+	const anchor = '<a href="' + href + '" rel="alternate" type="application/json">this board as JSON</a> · ';
+	const body = (at === -1 ? html : html.slice(0, at + 6) + tag + html.slice(at + 6)).replace(BOARD_JSON_MARK, anchor);
 	return new Response(body, { status: shell.status, headers });
 }
 

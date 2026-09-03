@@ -92,7 +92,11 @@ trail.
 ## Discovery
 
 A program handed nothing but a board's link can walk to the tools without
-being told they exist.
+being told they exist. The first step is plain text, for a reader that
+sees neither a page's `<head>` nor its headers: every page's footer links
+to [`/agents/`](/agents/), where each machine interface is an ordinary
+`<a href>` in the first byte of HTML, and a board page's body names its
+own JSON the same way. Then:
 
 1. **The page.** `GET /b/{id}` with `Accept: application/json` answers the
    board document; the HTML carries `<link rel="alternate" type="application/json">`

@@ -32,6 +32,9 @@ export default defineConfig({
 			// JSON. Not yet a registered relation; the Link header in
 			// public/_headers says the same.
 			head: [{ tag: 'link', attrs: { rel: 'mcp', href: '/.well-known/mcp-server-card', type: 'application/json' } }],
+			// Starlight's footer plus the site's own line — Agents & API, Privacy,
+			// Terms — so every docs page carries an ordinary anchor to /agents/.
+			components: { Footer: './src/components/starlight/Footer.astro' },
 			// Computed from the pages that exist (scripts/sidebar.mjs), so a new
 			// CLI docs page reaches the sidebar with no edit here.
 			sidebar: buildSidebar(),

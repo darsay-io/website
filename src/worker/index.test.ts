@@ -361,6 +361,28 @@ describe("boards API", () => {
 		expect(await empty.text()).toBe("shell:/b/");
 	});
 
+	it("tells the shell which board it is: a head link, a header, and an anchor in the body", async () => {
+		const { env: e } = env();
+		const shell =
+			'<!DOCTYPE html><html><head><title>Board</title></head><body>' +
+			'<p class="board-links">For a program: <span data-board-json hidden></span><a href="/agents/">the API and the MCP server</a>.</p>' +
+			"</body></html>";
+		e.ASSETS = {
+			fetch: async () => new Response(shell, { headers: { "Content-Type": "text/html", "Content-Length": String(shell.length) } }),
+		} as Fetcher;
+		const id = "b".repeat(32);
+		const res = await worker.fetch(new Request(`http://127.0.0.1:8787/b/${id}`), e, {} as ExecutionContext);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Link")).toContain(`</b/${id}.json>; rel="alternate"; type="application/json"`);
+		const html = await res.text();
+		expect(html).toContain(`<head><link rel="alternate" type="application/json" href="/b/${id}.json">`);
+		expect(html).toContain(`<a href="/b/${id}.json" rel="alternate" type="application/json">this board as JSON</a> · <a href="/agents/">`);
+		expect(html).not.toContain("data-board-json");
+		// The page at /b/ names no board: the marker stays, hidden, and the walk to /agents/ is still there.
+		const bare = await (await worker.fetch(new Request("http://127.0.0.1:8787/b/"), e, {} as ExecutionContext)).text();
+		expect(bare).toBe(shell);
+	});
+
 	it("requires confirm delete and counts lookups", async () => {
 		const { db, env: e } = env();
 		const created = await req(e, "/api/boards", postBoard());

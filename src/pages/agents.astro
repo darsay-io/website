@@ -1,0 +1,80 @@
+---
+import Layout from "../layouts/Plain.astro";
+---
+<Layout
+	title="Agents & API — darsay"
+	description="Everything on darsay.io a program can read or write, as plain links: the MCP server and its card, the OpenAPI document, llms.txt, the field guide, and how a board's link names its operations."
+>
+	<main class="plain">
+		<h1>For agents and programs</h1>
+		<p class="lede">
+			Everything on darsay.io that a program can read or write, as plain links. A board is one JSON
+			document with stable row ids; the same board is an MCP server and an API. Nothing on this
+			page needs a script to appear.
+		</p>
+
+		<h2>The machine interfaces</h2>
+		<dl class="iface">
+			<dt><a href="/.well-known/mcp-server-card">/.well-known/mcp-server-card</a></dt>
+			<dd>
+				The MCP server card: where the server is, which protocol revisions it speaks, and the
+				header that opens it. The same document at <a href="/mcp/server-card">/mcp/server-card</a>;
+				every page of the site links to it with <code>rel="mcp"</code>.
+			</dd>
+			<dt><a href="/mcp">/mcp</a></dt>
+			<dd>
+				The MCP server. Streamable HTTP, JSON-RPC over POST, stateless. Revision 2026-07-28
+				(<code>server/discover</code>, <code>tools/list</code>, <code>tools/call</code>) and
+				the <code>initialize</code> era on one endpoint. <code>Authorization: Bearer</code> a board
+				key or a board id.
+			</dd>
+			<dt><a href="/openapi.json">/openapi.json</a></dt>
+			<dd>The board API as OpenAPI 3.1: every call with its scope, body, and errors.</dd>
+			<dt><a href="/llms.txt">/llms.txt</a></dt>
+			<dd>This site for a language model: the machine interfaces and every documentation page, one line each.</dd>
+			<dt><a href="/api/guide">/api/guide</a></dt>
+			<dd>
+				The field guide as JSON: what every chip on a board row means and what a collector should
+				do about it. One card at <code>/api/guide/&lbrace;chip&rbrace;</code>.
+			</dd>
+		</dl>
+
+		<h2>From a board's link</h2>
+		<p>
+			A board lives at <code>/b/&lt;id&gt;</code>. The id in that address is the whole credential,
+			and it is how the board's operations are named:
+		</p>
+		<dl class="iface">
+			<dt><code>/b/&lt;id&gt;.json</code></dt>
+			<dd>
+				The board as a document. <code>GET /b/&lt;id&gt;</code> with <code>Accept: application/json</code>
+				answers the same way, and the page links to it with <code>rel="alternate"</code>.
+				Its <code>links</code> name the server, the card, the OpenAPI document, and the docs.
+			</dd>
+			<dt><code>/api/boards/&lt;id&gt;/…</code></dt>
+			<dd>
+				The API, addressed by the link: rows, apply, keys, webhooks, the audit
+				trail — <a href="/docs/board/api/">the reference</a>.
+			</dd>
+			<dt><code>Authorization: Bearer &lt;id or key&gt;</code></dt>
+			<dd>
+				Opens <a href="/mcp">/mcp</a> and <code>/api/board/…</code>. A key is the link narrowed to
+				one board and a few scopes; mint one at <code>POST /api/boards/&lt;id&gt;/keys</code> or
+				from the board's ✦ Agents panel. Give an agent a key, not the link.
+			</dd>
+		</dl>
+
+		<h2>Read on</h2>
+		<ul class="iface-more">
+			<li><a href="/docs/board/">The board, for agents</a> — what a program expects and what it gets, in the board's words.</li>
+			<li><a href="/docs/board/api/">API reference</a> — every route, scope, and error.</li>
+			<li><a href="/docs/board/agents/">Agents &amp; MCP</a> — keys, connecting Claude, ChatGPT, and Codex, the tools, the loop a careful agent runs.</li>
+			<li><a href="/docs/">The darsay CLI</a> — the archiver the board is a want-list for.</li>
+		</ul>
+
+		<p class="muted">
+			Boards are listed nowhere — not here, not in search. A board is reachable only by its link,
+			and the link is the password.
+		</p>
+	</main>
+</Layout>

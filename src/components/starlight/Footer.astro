@@ -1,0 +1,13 @@
+---
+// Starlight's footer, then the site's own line: the same links every Plain
+// page carries, so a reader of any docs page has an ordinary anchor to the
+// machine interfaces — no <head>, no headers, no script.
+import Default from "@astrojs/starlight/components/Footer.astro";
+---
+<Default><slot /></Default>
+<nav class="docs-foot" aria-label="darsay.io">
+	<a href="/">darsay</a>
+	<a href="/agents/">Agents &amp; API</a>
+	<a href="/privacy/">Privacy</a>
+	<a href="/terms/">Terms</a>
+</nav>

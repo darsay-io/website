@@ -1,11 +1,20 @@
 ---
 import Layout from "../../layouts/Plain.astro";
 ---
-<Layout title="Board — darsay" wide>
+<Layout title="Board — darsay" wide noindex>
 	<main class="plain wide">
 		<div id="board-root">
 			<p class="muted">Paste a board URL or create one from the homepage.</p>
 		</div>
+		<!--
+			Ordinary anchors, in the static HTML, for a reader that sees neither
+			<head> nor headers. The worker turns the marker into a link to this
+			board's own JSON when the address names a board; the script never
+			touches this line.
+		-->
+		<p class="board-links muted">
+			For a program: <span data-board-json hidden></span><a href="/agents/">the API and the MCP server</a>.
+		</p>
 	</main>
 </Layout>
 <script>
