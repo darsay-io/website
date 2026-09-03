@@ -27,7 +27,8 @@ export type PrimerKey =
 	| "family"
 	| "closed"
 	| "desire"
-	| "claims";
+	| "claims"
+	| "agents";
 
 export type PrimerGroup = "Policy" | "Formats" | "Anatomy" | "Names" | "Lineage" | "The ledger";
 
@@ -489,8 +490,26 @@ export const PRIMER: PrimerCard[] = [
 			lines: ["darsay archive --next https://darsay.io/b/<board> --max-gb 10"],
 		},
 		doc: { href: "/docs/catalogs/#boards-darsayio", label: "Catalogs → boards" },
-		related: ["desire", "large"],
+		related: ["desire", "large", "agents"],
 		lens: "claimed",
+	},
+	{
+		key: "agents",
+		group: "The ledger",
+		title: "The board, for programs",
+		lede: "Everything on this page is one JSON document with stable row ids — readable at one address, writable through one API, and open to an agent through a key that never sees the URL.",
+		body: [
+			"Add `.json` to this board's address and a program gets the ledger: every row in desire order with its canonical `source` (the row's identity), its `address` and `lineage`, the chips, the claim, and a `revision` that changes on every write. `/openapi.json` describes every call; `/mcp` is the same board as an MCP server for Claude, ChatGPT, Codex and their kin, with an `explain` tool that opens this field guide.",
+			"A row has no column to move between. Where a kanban card travels, a darsay row changes `desire` (which orders the list) or `status` (want → have). Adding is an upsert by address, so an agent can say *make sure this is on the board* as often as it likes; `apply` does that for a whole list in one transaction, with a dry run first. Dropping is undoable; removing is not.",
+			"A key is this URL narrowed — one board, a few scopes (`read`, `write`, `claim`, `remove`), and a label that signs every write in the activity log. Mint one from the ✦ Agents panel, hand it to the agent instead of the URL, revoke it when the job is done. Nothing a key does can destroy a row unless you gave it `remove`.",
+		],
+		collect: "Give an agent a key, not the URL. Let it apply a list with a dry run first, then read the activity log — every change it made is there, before and after.",
+		cmd: {
+			label: "read the board",
+			lines: ["curl -s https://darsay.io/b/<board>.json | jq '.entries[] | [.desire, .status, .source]'"],
+		},
+		doc: { href: "/docs/board/", label: "Docs → The board, for agents" },
+		related: ["desire", "claims"],
 	},
 ];
 

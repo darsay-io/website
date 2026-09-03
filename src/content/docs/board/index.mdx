@@ -1,0 +1,139 @@
+---
+title: "The board, for agents"
+description: "A darsay.io board is one JSON document with stable row ids: readable at one address, writable through one API, open to an agent through a key that never sees the URL."
+slug: docs/board
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+<p class="docs-lede">
+A board is a ledger, not a pinboard. Every row wants or has a work, is rated by desire, and is priced from the Hub. Everything you can see on the page, a program can read at one address and write through one API — in the board's own words.
+</p>
+
+<div class="docs-doors">
+	<div class="docs-door">
+		<p class="docs-door-k">Read</p>
+		<h3>The board as JSON</h3>
+		<p>Add <code>.json</code> to a board's page address, or send <code>Accept: application/json</code>. Rows come in desire order with their canonical <code>source</code>, <code>address</code>, <code>lineage</code>, chips, claim, and a <code>revision</code> that moves on every write.</p>
+		<p><a href="/docs/board/api/#the-page-address">The page address →</a></p>
+	</div>
+	<div class="docs-door">
+		<p class="docs-door-k">Write</p>
+		<h3>The API</h3>
+		<p>Add a row by address (an upsert), change any column, apply a whole list in one transaction with a dry run first, drop and restore, read the audit trail. Described at <code>/openapi.json</code>.</p>
+		<p><a href="/docs/board/api/">API reference →</a></p>
+	</div>
+	<div class="docs-door">
+		<p class="docs-door-k">Act</p>
+		<h3>The MCP server</h3>
+		<p>The same board at <code>/mcp</code>, as tools: <code>get_board</code>, <code>find_rows</code>, <code>add_row</code>, <code>apply</code>, <code>explain</code>… A key names the board; the agent never holds the URL.</p>
+		<p><a href="/docs/board/agents/">Agents &amp; MCP →</a></p>
+	</div>
+</div>
+
+## The words
+
+Agents arrive speaking kanban. The board answers in the vocabulary of the
+[north star](/docs/design/): the same five words the CLI, the manifest, and
+a catalog use. What a program expects, and what it gets:
+
+<dl class="docs-words">
+	<dt>card</dt><dd class="docs-arrow">→</dd><dd class="docs-word">row</dd><dd class="docs-why">One work the group wants or has. Stable integer <code>id</code>.</dd>
+	<dt>column</dt><dd class="docs-arrow">→</dd><dd class="docs-word">status</dd><dd class="docs-why">There are no columns. A row is <code>want</code> until somebody holds a copy, then <code>have</code>. That is the whole journey.</dd>
+	<dt>position</dt><dd class="docs-arrow">→</dd><dd class="docs-word">desire</dd><dd class="docs-why">1–9. Orders the ledger and is what <code>darsay archive --next</code> reads. The order is deterministic: desire high to low, unrated last, then as added.</dd>
+	<dt>external id</dt><dd class="docs-arrow">→</dd><dd class="docs-word">source</dd><dd class="docs-why">The canonical address is the identity — <code>huggingface:ESCAD/OpenRTLSet</code>, <code>huggingface:datasets/…</code>, or an https home page for a closed work — together with <code>revision</code> and <code>include</code>. Adding is an upsert on it.</dd>
+	<dt>tags</dt><dd class="docs-arrow">→</dd><dd class="docs-word">chips</dd><dd class="docs-why">Read from the work, never written on the card: <code>hints</code> (gated, large, quant, redundant, subset), <code>policy</code>, <code>precision</code>, <code>address.kind</code>, and <code>lineage</code> — family, generation, member, read from the name and labeled so.</dd>
+	<dt>description</dt><dd class="docs-arrow">→</dd><dd class="docs-word">note</dd><dd class="docs-why">One plain sentence for why this one. The facts live in the digest.</dd>
+	<dt>archive</dt><dd class="docs-arrow">→</dd><dd class="docs-word">drop</dd><dd class="docs-why">A soft removal: the row leaves the ledger and the catalog, and comes back exactly as it was. <em>Archive</em> means something else here — it is what the CLI does to a work.</dd>
+	<dt>delete</dt><dd class="docs-arrow">→</dd><dd class="docs-word">remove</dd><dd class="docs-why">Gone for good. Needs the <code>remove</code> scope; the audit trail keeps what the row was.</dd>
+</dl>
+
+Why no tags? *Record, don't fabricate.* A fact on a row comes from upstream
+or from the payload, or it is null — and every label is a doorway to the
+card that explains it. A free-text tag would be neither. If a chip you
+need is missing, it is missing from the model of the models, and that is
+where it gets added.
+
+## Five minutes
+
+Take a board's page address, `https://darsay.io/b/<board>`. Everything
+below uses only that.
+
+<Stage label="read it" lines={[
+	"curl -s https://darsay.io/b/<board>.json | jq '.entries[] | [.desire, .status, .source]'",
+]} />
+
+Add a row. The address is the identity, so sending it twice is safe: the
+first answer is `201`, the second `200` with the same `id`.
+
+<Stage label="add a row — an upsert by address" lines={[
+	"curl -s -X POST https://darsay.io/api/boards/<board>/entries \\",
+	"  -H 'content-type: application/json' \\",
+	"  -d '{\"source\": \"ESCAD/OpenRTLSet\", \"desire\": 9, \"note\": \"RTL corpus for training hardware-design models\"}'",
+]} />
+
+Apply a whole list. Match by address, add what is missing, update what
+differs, leave the identical alone — and see the plan before it lands.
+
+<Stage label="apply a list, dry run first" lines={[
+	"curl -s -X POST 'https://darsay.io/api/boards/<board>/apply?dry_run=true' \\",
+	"  -H 'content-type: application/json' -d @rows.json",
+	"# {\"dry_run\": true, \"summary\": {\"added\": 17, \"updated\": 3, \"unchanged\": 4, ...}, \"rows\": [...]}",
+	"curl -s -X POST https://darsay.io/api/boards/<board>/apply \\",
+	"  -H 'content-type: application/json' -H 'If-Match: \"184\"' -d @rows.json",
+]} />
+
+Hand an agent a key instead of the URL. It opens only this board, only for
+the scopes you name, and signs every write with its label.
+
+<Stage label="mint a key, connect an agent" lines={[
+	"curl -s -X POST https://darsay.io/api/boards/<board>/keys \\",
+	"  -H 'content-type: application/json' -d '{\"label\": \"chatgpt\", \"scopes\": [\"write\"]}'",
+	"# {\"key\": \"darsay_…\", \"scopes\": [\"read\", \"write\"], \"shown_once\": true, ...}",
+	"claude mcp add --transport http darsay https://darsay.io/mcp --header 'Authorization: Bearer darsay_…'",
+]} />
+
+The board's ✦ **Agents** panel does the same with buttons, and shows the
+recent activity: who did what, with the columns before and after.
+
+## How it stays honest
+
+**One write path.** The page, the CLI's round trip, a key, and the MCP
+server all go through the same commit: it bumps the board's `revision`,
+stamps `updated` on the row, appends to the audit trail, and tells the
+webhooks. There is no door that skips the ledger.
+
+**Revisions.** `GET` answers with `ETag: "184"` and `revision: 184` in the
+body. Send it back as `If-Match` and a write is refused with `412 stale` if
+anyone — a person, the CLI, another agent — moved the board first.
+
+**Idempotency.** Send `Idempotency-Key: <anything>` with a write. A retry
+with the same key and the same request gets the first answer back,
+marked `Idempotent-Replayed: true`; a different request under the same
+key is refused.
+
+**Dry runs.** `apply` and `batch` take `dry_run: true` and answer with the
+plan — what would be added, updated, restored, dropped — without writing
+it.
+
+**The audit trail.** Every decision is an event: the action, the actor
+(`url`, `cli`, or `key:<label>`), the row, and the decided columns before
+and after. The last thousand are kept per board.
+
+**Keys narrow, never widen.** The URL is the capability. A key is the URL
+with fewer powers: one board, the scopes `read` · `write` · `claim` ·
+`remove`, and no way to delete the board, mint keys, or register
+webhooks. A key without `remove` cannot destroy anything.
+
+## What the board is not
+
+It is not a place for bytes: the site never holds weights. It is not an
+account: there are no users, only the URL and the keys it mints. And it is
+not a kanban: a row has no column to travel to, because the only journey
+a work makes is from wanted to held — and that is a fact about somebody's
+vault, reported by the CLI or checked off by a person, not a card moved by
+hand.
+
+<div class="docs-note">
+<strong>Where next.</strong> The <a href="/docs/board/api/">API reference</a> describes every call with its scope and its errors. <a href="/docs/board/agents/">Agents &amp; MCP</a> covers keys, connecting Claude, ChatGPT, and Codex, the tool list, webhooks, and the loop a careful agent runs. The machine-readable version of all of it is <a href="/openapi.json"><code>/openapi.json</code></a>.
+</div>

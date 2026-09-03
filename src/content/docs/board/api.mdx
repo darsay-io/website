@@ -1,0 +1,472 @@
+---
+title: "Board API reference"
+description: "Every call a board answers: two address forms, scopes, revisions and If-Match, idempotency keys, rows, apply and batch, claims, the catalog round trip, the audit trail, keys, webhooks, and the MCP server."
+slug: docs/board/api
+tableOfContents:
+  maxHeadingLevel: 3
+---
+
+import Route from "../../../components/docs/Route.astro";
+import Stage from "../../../components/docs/Stage.astro";
+
+<p class="docs-lede">
+JSON in, JSON out, no cookies, no accounts. The URL is the capability; a key is that capability narrowed. This page is the same document as <a href="/openapi.json"><code>/openapi.json</code></a>, in prose.
+</p>
+
+## Addresses
+
+Every board operation has two spellings.
+
+**By URL.** `/api/boards/{id}/…` — the 32-hex `id` from the board's page
+address is the whole key. Whoever holds it holds the board. No header is
+needed; a bearer key sent here is honored for attribution and narrowing,
+never for widening.
+
+**By key.** `/api/board/…` — the bearer names the board. Send
+`Authorization: Bearer darsay_…` (a key minted for that board) or the
+board id itself as the bearer. A key never learns the id: the board
+document it reads has no `id` field and no page link.
+
+The two forms serve the same operations, minus what only the URL may do:
+deleting the board, minting or revoking keys, registering webhooks.
+
+<Stage label="the same board, two ways" lines={[
+	"curl -s https://darsay.io/api/boards/<id>",
+	"curl -s -H 'Authorization: Bearer darsay_…' https://darsay.io/api/board",
+]} />
+
+### Scopes
+
+A key carries a set of scopes; `read` is always implied.
+
+<dl class="docs-scopes">
+	<dt>read</dt><dd>Read the board, its rows, the catalog, and the audit trail.</dd>
+	<dt>write</dt><dd>Add and update rows, drop and restore them, apply a list, edit the board's title and note. Includes the catalog round trip — but rows the document leaves out are <em>dropped</em>, not removed.</dd>
+	<dt>claim</dt><dd>Claim a row and report archive progress on it — what the darsay CLI does.</dd>
+	<dt>remove</dt><dd>Remove rows permanently. Without it, nothing a key does can destroy a row.</dd>
+</dl>
+
+A call a key lacks the scope for answers `403 {"error": "forbidden", "scope": "…"}`.
+
+## Headers that matter
+
+| Header | On | Meaning |
+|---|---|---|
+| `ETag: "184"` | every `GET` | The board's revision. It moves on every write, by anyone. |
+| `If-None-Match: "184"` | `GET` | `304` when nothing changed. |
+| `If-Match: "184"` | any write | Refuse with `412 stale` (the body carries the current `revision`) if the board moved since you read it. `W/"184"` and a bare `184` are accepted; `*` means no check. |
+| `Idempotency-Key: …` | any write | A retry with the same key and the same request replays the first answer with `Idempotent-Replayed: true`. A different request under the same key is refused with `422 idempotency_mismatch`. Keys live a day, scoped to the board. |
+| `?dry_run=true` | `apply`, `batch` | Same as `dry_run: true` in the body. |
+
+`/api/*` answers with `Access-Control-Allow-Origin: *`, so a browser-side
+agent can call it directly. Bodies are JSON objects; `multipart` is
+refused with `415`; a body over 64 KiB (256 KiB for `apply`, `batch`, and
+the catalog) with `413`.
+
+## The row
+
+```json
+{
+  "id": 7,
+  "source": "huggingface:datasets/ESCAD/OpenRTLSet",
+  "revision": null,
+  "include": null,
+  "desire": 9,
+  "note": "RTL corpus for training hardware-design models",
+  "status": "want",
+  "holders": "",
+  "added": "2026-09-02T18:04:11+00:00",
+  "updated": "2026-09-02T18:04:11+00:00",
+  "dropped": null,
+  "address": { "kind": "dataset", "provider": "huggingface", "locator": "ESCAD/OpenRTLSet", "url": "https://huggingface.co/datasets/ESCAD/OpenRTLSet" },
+  "lineage": { "family": null, "generation": null, "member": null, "variants": [], "formats": [], "read_from": "name" },
+  "payload_bytes": 48318382080,
+  "artifact_type": "dataset",
+  "hints": ["large"],
+  "policy": null,
+  "precision": null,
+  "closed": false,
+  "claim": null
+}
+```
+
+Four columns are **decided** — `desire`, `note`, `status`, `holders` — and
+they are what the audit trail records before and after. Everything else
+is **read from the work**: the address, the lineage from the name, the
+digest the Hub and the CLI priced (`payload_bytes`, `parameters`,
+`precision`, `bytes_per_param`, `hints`, `policy`, `parents`), and the
+live `claim`. A row's identity is `source` + `revision` + `include`.
+
+Accepted spellings of a source: `owner/name`, `huggingface:owner/name`,
+`datasets/owner/name`, `hf:…`, a Hub URL, or an `https://` page on
+another host — a **closed** work with a place and no price. The stored
+form is canonical; a model-shaped id the Hub only knows as a dataset is
+retargeted on add.
+
+## The board
+
+### Read the board
+
+<Route method="GET" path="/api/boards/{id}" scope="read" />
+
+The whole board: `title`, `curator`, `note`, `catalog_id`, `revision`,
+`access` (how you got in and with which scopes), `counts` (`rows`, `want`,
+`have`, `claimed`, `dropped`), `entries` in the canonical order — desire
+high to low, unrated last, then as added — and `links` to the page, the
+JSON address, the catalog, the OpenAPI document, the MCP server, and these
+docs. `?dropped=all` includes dropped rows; `?dropped=only` shows just
+them.
+
+### Edit the board
+
+<Route method="PATCH" path="/api/boards/{id}" scope="write" />
+
+Any of `title`, `curator`, `note`, `catalog_id`. Answers `{ok, updated, catalog_id, revision}`.
+
+### Destroy the board
+
+<Route method="DELETE" path="/api/boards/{id}" urlOnly />
+
+Body `{"confirm": "delete"}`. Every row, note, key, and claim goes with
+it. Vaults are untouched — the board never held the bytes.
+
+### Create a board
+
+<Route method="POST" path="/api/boards" />
+
+`{"password": …, "title": …}` with the shared create password. Answers
+`201` with `id`, the page `url`, the `json` address, and `revision: 0`.
+
+## Rows
+
+### Find rows
+
+<Route method="GET" path="/api/boards/{id}/entries" scope="read" />
+
+Filters combine with AND. `?source=` matches an address in any accepted
+spelling after canonicalization — the cheap way to ask *is this already
+here?* `?status=want|have`, `?type=model|dataset|closed|opaque`,
+`?lens=` a comma-separated list of the board's own lens keys (`want`,
+`have`, `claimed`, `negatives`, `large`, `quant`, `redundant`, `gated`,
+`subset`, `abliterated`, `base`, `moe`, `spec`, `dataset`, `closed`,
+`unpriced`), `?family=qwen`, `?desire_min=`, `?desire_max=`, `?q=` free
+text over source, note, holders, family, and member, `?dropped=`,
+`?limit=`. Answers `{revision, count, entries}`.
+
+<Stage label="is it already on the board?" lines={[
+	"curl -s 'https://darsay.io/api/boards/<id>/entries?source=huggingface.co/datasets/ESCAD/OpenRTLSet' | jq .count",
+	"curl -s 'https://darsay.io/api/boards/<id>/entries?lens=gated,large&status=want' | jq '.entries[].source'",
+]} />
+
+### Add a row
+
+<Route method="POST" path="/api/boards/{id}/entries" scope="write" />
+
+An upsert by address. Body: `source` (required), `revision`, `include`,
+and any decided columns. A new address is priced from the Hub and added
+(`201`). An address already on the board is updated with the columns you
+sent (`200`), restored if it was dropped (`200`), or — when nothing
+differs and it is already priced — left untouched at no cost and no
+revision bump (`200`). A closed work refuses a `revision` or an `include`.
+
+### Read one row
+
+<Route method="GET" path="/api/boards/{id}/entries/{eid}" scope="read" />
+
+By id, dropped or not.
+
+### Update a row
+
+<Route method="PATCH" path="/api/boards/{id}/entries/{eid}" scope="write" />
+
+Any subset of `source`, `revision`, `include`, `desire`, `note`, `status`,
+`holders`. A changed address is priced again and must not collide with
+another row (`409 conflict`, with the other row's `entry_id`). Nothing
+changed: `200`, no write.
+
+### Drop a row
+
+<Route method="POST" path="/api/boards/{id}/entries/{eid}/drop" scope="write" />
+
+A soft removal: the row leaves the ledger and the catalog export, keeps
+its columns, and can be restored. Already dropped: `200`, no change.
+
+### Restore a row
+
+<Route method="POST" path="/api/boards/{id}/entries/{eid}/restore" scope="write" />
+
+Back exactly as it was. Adding a dropped address restores it too.
+
+### Remove a row
+
+<Route method="DELETE" path="/api/boards/{id}/entries/{eid}" scope="remove" />
+
+Gone for good. The audit trail keeps the row as it was. Prefer drop.
+
+## Lists
+
+### Apply a list
+
+<Route method="POST" path="/api/boards/{id}/apply" scope="write" />
+
+Ensure a whole list is on the board in one transaction. Body:
+
+```json
+{
+  "rows": [
+    { "ref": "openrtlset", "source": "datasets/ESCAD/OpenRTLSet", "desire": 9, "note": "RTL corpus" },
+    { "ref": "circuitnet", "source": "datasets/SKLP-EDA-LAB/CircuitNet3.0", "desire": 8 }
+  ],
+  "mode": "upsert",
+  "dry_run": false
+}
+```
+
+Each row is matched by address: missing rows are added, differing columns
+updated, dropped rows restored, identical rows left alone. `ref` is your
+own handle, echoed back. `mode: "sync"` also drops — never removes — every
+live row the list left out. One bad row fails the whole list with
+`400 {"error": "invalid rows", "failures": [{index, ref, error}]}` and
+nothing is written. Up to 100 rows per call; the first dozen new Hub rows
+are priced on the spot, the rest land unpriced until the CLI's next round
+trip prices them.
+
+The answer, with or without `dry_run`:
+
+```json
+{
+  "ok": true,
+  "dry_run": false,
+  "revision": 185,
+  "summary": { "added": 17, "updated": 3, "restored": 0, "unchanged": 4, "dropped": 0, "removed": 0 },
+  "rows": [
+    { "ref": "openrtlset", "action": "added", "id": 41, "source": "huggingface:datasets/ESCAD/OpenRTLSet", "priced": true },
+    { "ref": "circuitnet", "action": "updated", "id": 12, "source": "…", "changes": ["desire"] }
+  ]
+}
+```
+
+In a dry run, rows that would be added have `id: null`.
+
+### Run a batch
+
+<Route method="POST" path="/api/boards/{id}/entries/batch" scope="write" />
+
+Explicit operations, checked as a whole and written as a whole:
+
+```json
+{
+  "operations": [
+    { "op": "add", "ref": "new", "source": "Qwen/Qwen3.8-27B", "desire": 6 },
+    { "op": "update", "ref": "bump", "id": 12, "desire": 9, "status": "have" },
+    { "op": "drop", "id": 15 },
+    { "op": "restore", "id": 16 },
+    { "op": "remove", "id": 17 }
+  ],
+  "dry_run": false
+}
+```
+
+`add` takes an address and columns (an upsert, like a row in `apply`);
+`update` takes an id and decided columns; `drop`, `restore`, and `remove`
+take an id. `remove` needs the `remove` scope. A row may appear once. One
+bad operation fails the batch with `400 invalid operations` and nothing
+is written. The answer has the same shape as `apply`, plus `removed` in
+the summary.
+
+## Claims
+
+### Claim a row, report progress
+
+<Route method="POST" path="/api/boards/{id}/entries/{eid}/claim" scope="claim" />
+
+Board-side coordination: *this client is fetching this row*. Body
+`{"client": "amber-heron-3f", "state": "archiving" | "paused" | "done", "percent", "banked_bytes", "total_bytes"}`.
+A live claim by another client blocks a new one (`409 claimed`, with the
+claim) until it goes stale — 24 hours without a report — or reports done;
+`"force": true` overrides. A row checked off as `have` refuses un-marked
+claims (`409 have`) unless `"refetch": true` or `force`; a dropped row
+refuses all (`409 dropped`). Reporting `done` flips the row to `have` and
+fills empty `holders` with the client. Answers the row.
+
+### Release a claim
+
+<Route method="DELETE" path="/api/boards/{id}/entries/{eid}/claim" scope="claim" />
+
+`{"client": …}` releases the claimant's own; `"force": true` releases anyone's.
+
+## The catalog
+
+### Export
+
+<Route method="GET" path="/api/boards/{id}/catalog.json" scope="read" />
+
+A `darsay.catalog` document, schema 2.x: the rows without `holders`,
+`status`, claims, or the board id. Dropped rows are left out. This is
+what `darsay estimate <board-url>` fetches.
+
+### Import — the CLI round trip
+
+<Route method="POST" path="/api/boards/{id}/catalog.json" scope="write" />
+
+The same document, pushed back refreshed. Authoritative for entries,
+desire, note, and digests; matched by address. Board-side `status`,
+`holders`, and claims survive on kept rows; a dropped row the document
+names again is restored. Rows the document left out are **removed** by
+the URL and **dropped** by a key without `remove`. Answers
+`{ok, added, updated, restored, removed, dropped, entries, revision}`; a
+document of another schema major is refused (`400`), and a mismatched
+`id` with `409 catalog_id mismatch`.
+
+## The audit trail
+
+<Route method="GET" path="/api/boards/{id}/audit" scope="read" />
+
+Who did what, newest first. `?limit=` (≤ 200, default 50), `?before=` an
+event id to page, `?entry=` a row id to follow one row.
+
+```json
+{
+  "revision": 185,
+  "events": [
+    {
+      "id": 912,
+      "at": "2026-09-02T18:04:11+00:00",
+      "actor": { "via": "key", "key": { "id": "k_3f…", "label": "chatgpt" }, "client": "mcp", "label": "key:chatgpt" },
+      "action": "row.updated",
+      "entry_id": 12,
+      "before": { "source": "…", "desire": 8, "note": null, "status": "want", "holders": "", "dropped": null },
+      "after":  { "source": "…", "desire": 9, "note": null, "status": "want", "holders": "", "dropped": null, "changes": ["desire"] },
+      "revision": 185
+    }
+  ],
+  "next_before": 911
+}
+```
+
+Actions: `board.updated`, `row.added`, `row.updated`, `row.dropped`,
+`row.restored`, `row.removed`, `claim.reported` (at boundaries: start,
+pause, done, a new client), `claim.released`, `catalog.imported` (one
+event with counts), `key.created`, `key.revoked`, `webhook.created`,
+`webhook.removed`. The actor's `client` is `rest`, `mcp`, or `cli` (the
+darsay CLI says who it is). The last thousand events are kept per board.
+
+## Keys
+
+### List keys
+
+<Route method="GET" path="/api/boards/{id}/keys" urlOnly />
+
+`{keys: [{id, label, scopes, created, last_used}], scopes, max}`. Secrets
+are never listed; the board keeps only a hash.
+
+### Mint a key
+
+<Route method="POST" path="/api/boards/{id}/keys" urlOnly />
+
+`{"label": "chatgpt", "scopes": ["write"]}` → `201` with the `key`
+(`darsay_` and 48 hex characters), `shown_once: true`, and the `api` and
+`mcp` addresses it opens. Up to 20 keys per board. The label signs the
+key's writes in the audit trail.
+
+### Revoke a key
+
+<Route method="DELETE" path="/api/boards/{id}/keys/{kid}" urlOnly />
+
+Immediate: the next call with that key answers `401 bad_key`.
+
+## Webhooks
+
+### List webhooks
+
+<Route method="GET" path="/api/boards/{id}/webhooks" urlOnly />
+
+`{webhooks: [{id, url, events, created, last_at, last_status}], max}`.
+
+### Register a webhook
+
+<Route method="POST" path="/api/boards/{id}/webhooks" urlOnly />
+
+`{"url": "https://…", "events": ["row.added", "row.dropped"], "secret": "…"}`.
+The URL must be https on a public host — loopback, private ranges, and IP
+literals are refused. `events` defaults to `["*"]`; the secret is
+generated when absent and returned once. Up to five per board.
+
+A delivery is one `POST` per commit, carrying the events that commit
+produced, filtered to the subscription:
+
+```json
+{
+  "id": "dl_…",
+  "at": "2026-09-02T18:04:11+00:00",
+  "board": { "catalog_id": "genesis-stack", "title": "Semiconductor Genesis Stack", "revision": 185 },
+  "actor": { "via": "key", "label": "key:chatgpt", "client": "mcp" },
+  "events": [ { "action": "row.added", "entry_id": 41, "before": null, "after": { "source": "…", "desire": 9 } } ]
+}
+```
+
+Headers: `X-Darsay-Delivery`, `X-Darsay-Events` (comma-separated), and
+`X-Darsay-Signature: sha256=<hex HMAC-SHA256 of the body with the secret>`.
+The board id is never part of a delivery. Deliveries are best-effort with
+a 10-second timeout and no retries; the board records `last_status` (0
+when unreachable), and the audit trail is the durable record.
+
+### Remove a webhook
+
+<Route method="DELETE" path="/api/boards/{id}/webhooks/{wid}" urlOnly />
+
+## The field guide
+
+<Route method="GET" path="/api/guide" />
+
+Every teaching card the board shows — what a chip, lens, or column means
+and what a collector should do about it — with docs links made absolute.
+Public; no board needed. `GET /api/guide/{chip}` answers one card by its
+key, a lens key, or a hint word (`gated`, `large`, `quant`, `redundant`,
+`subset`, `negatives`, `closed`, `family`, `desire`, `claims`, `moe`…);
+an unknown chip answers `404` with the list.
+
+## The MCP server
+
+<Route method="POST" path="/mcp" scope="by key" />
+
+JSON-RPC 2.0 over POST, stateless: one request, one JSON answer, no
+session and no stream. Also at `/api/mcp`. The bearer names the board.
+Methods `initialize`, `ping`, `tools/list`, `tools/call`; the tools are
+described on [Agents & MCP](/docs/board/agents/#the-tools).
+
+## The page address
+
+<Route method="GET" path="/b/{id}.json" />
+
+The board document at its page address, for a program that only has the
+link. `GET /b/{id}` with `Accept: application/json` (and not `text/html`)
+answers the same way; a browser gets the page.
+
+## This document
+
+<Route method="GET" path="/openapi.json" />
+
+OpenAPI 3.1, also at `/api/openapi.json`, with `servers` set to the
+origin. The test suite holds it against the router: a route without a
+description, or a description without a route, fails the build.
+
+## Errors
+
+Every error is `{"error": "<word>"}` with, where useful, a little more.
+
+| Status | `error` | When |
+|---|---|---|
+| 400 | `invalid source`, `invalid revision`, `invalid status`, `field too long`, `desire must be an integer 1–9 or null`, `a closed work has nothing to pin or include` | A bad column. |
+| 400 | `invalid rows`, `invalid operations` | `apply` / `batch`; `failures[]` names each bad one. Nothing was written. |
+| 400 | `entry_cap`, `key_cap`, `webhook_cap` | The board holds 200 rows (dropped rows count), 20 keys, 5 webhooks. |
+| 401 | `key_required`, `bad_bearer`, `bad_key` | Under `/api/board`, or a bad `Authorization` anywhere. `WWW-Authenticate: Bearer`. |
+| 403 | `forbidden` | The key lacks the `scope` named in the body. |
+| 403 | `wrong_board`, `url_required` | The key names another board; or only the URL may do this. |
+| 404 | `not_found` | No such board, row, key, or webhook. |
+| 409 | `conflict`, `claimed`, `have`, `dropped`, `catalog_id mismatch` | An address collision; a claim blocked; a catalog for another board. |
+| 412 | `stale` | `If-Match` did not match; the body carries `revision`. |
+| 413 / 415 | `body too large`, `json required`, `invalid json`, `multipart rejected` | The body. |
+| 422 | `idempotency_mismatch` | A different request under a used `Idempotency-Key`. |
+| 429 | `lookup_cap`, `mutate_cap`, `create_cap` | A daily cap (50 000 lookups, 10 000 writes, 100 creates across the site). |
+| 503 | `quota`, `create_disabled` | The ledger could not be written; or no create password is set. |

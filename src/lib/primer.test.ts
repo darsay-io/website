@@ -6,6 +6,8 @@ import { HINT_PRIMER, PRIMER, PRIMER_BY_KEY, primerCard } from "./primer.ts";
 import { DOCS } from "./recipes.ts";
 
 const DOCS_DIR = join(process.cwd(), "src/content/docs/docs");
+/** Site-authored pages (the board, for agents): their URL comes from a `slug:` line. */
+const AUTHORED_DIR = join(process.cwd(), "src/content/docs/board");
 
 /** github-slugger, as Starlight ids its headings: lowercase, strip punctuation, spaces → dashes. */
 function slug(heading: string): string {
@@ -16,8 +18,19 @@ function slug(heading: string): string {
 		.replace(/\s/g, "-");
 }
 
+/** Page name (the part after /docs/) → the file that renders it. */
+const pageFiles = new Map<string, string>();
+for (const f of readdirSync(DOCS_DIR)) {
+	if (f.endsWith(".mdx")) pageFiles.set(f.replace(/\.mdx$/, ""), join(DOCS_DIR, f));
+}
+for (const f of readdirSync(AUTHORED_DIR)) {
+	if (!f.endsWith(".mdx")) continue;
+	const m = /^slug:\s*docs\/([a-z/-]+)\s*$/m.exec(readFileSync(join(AUTHORED_DIR, f), "utf8"));
+	if (m) pageFiles.set(m[1], join(AUTHORED_DIR, f));
+}
+
 function headingIds(page: string): Set<string> {
-	const md = readFileSync(join(DOCS_DIR, `${page}.mdx`), "utf8");
+	const md = readFileSync(pageFiles.get(page)!, "utf8");
 	const ids = new Set<string>();
 	for (const line of md.split("\n")) {
 		const m = /^#{1,6}\s+(.*)$/.exec(line);
@@ -26,13 +39,11 @@ function headingIds(page: string): Set<string> {
 	return ids;
 }
 
-const pages = new Set(readdirSync(DOCS_DIR).filter((f) => f.endsWith(".mdx")).map((f) => f.replace(/\.mdx$/, "")));
-
 function expectDocResolves(href: string) {
-	const m = /^\/docs\/([a-z-]+)\/(?:#(.+))?$/.exec(href);
+	const m = /^\/docs\/([a-z-]+(?:\/[a-z-]+)*)\/(?:#(.+))?$/.exec(href);
 	expect(m, `${href} is not a /docs/<page>/#anchor link`).not.toBeNull();
 	const [, page, anchor] = m!;
-	expect(pages.has(page), `${href}: no docs page ${page}`).toBe(true);
+	expect(pageFiles.has(page), `${href}: no docs page ${page}`).toBe(true);
 	if (anchor) expect(headingIds(page).has(anchor), `${href}: no heading #${anchor} in ${page}.mdx`).toBe(true);
 }
 

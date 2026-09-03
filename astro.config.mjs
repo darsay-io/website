@@ -52,6 +52,14 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'The board',
+					items: [
+						{ label: 'For agents', slug: 'docs/board' },
+						{ label: 'API reference', slug: 'docs/board/api' },
+						{ label: 'Agents & MCP', slug: 'docs/board/agents' },
+					],
+				},
+				{
 					label: 'Project',
 					items: [
 						{ label: 'Design', slug: 'docs/design' },

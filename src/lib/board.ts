@@ -29,6 +29,7 @@ import {
 	toast,
 } from "./dom.ts";
 import { plural, prettyDate, relativeTime } from "./format.ts";
+import { createAgents, type Agents } from "./agents.ts";
 import { createGuide, type Guide } from "./guide.ts";
 import {
 	LENSES,
@@ -45,6 +46,7 @@ import {
 	lensCountsGiven,
 	moeFromName,
 	parseView,
+	repoName,
 	tally,
 	type LensKey,
 	type SortKey,
@@ -76,6 +78,10 @@ type Entry = {
 	architecture?: string | null;
 	parents?: Array<{ source: string; relation: string | null }> | null;
 	closed?: boolean;
+	updated?: string;
+	dropped?: string | null;
+	address?: { kind: string; provider: string | null; locator: string; url: string | null };
+	lineage?: { family: string | null; generation: string | null; member: string | null; variants: string[]; formats: string[] };
 	claim?: {
 		client: string;
 		state: "archiving" | "paused" | "done";
@@ -95,6 +101,9 @@ type Board = {
 	note: string | null;
 	created: string;
 	updated: string;
+	/** Bumped by every write; what a program sends back as If-Match. */
+	revision?: number;
+	counts?: { rows: number; want: number; have: number; claimed: number; dropped: number };
 	entries: Entry[];
 };
 
@@ -341,6 +350,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	function openGuide(key: PrimerKey, from?: HTMLElement | null, row?: Entry | null) {
 		guide.open(key, from ?? null, row ?? null);
 	}
+
+	const agents: Agents = createAgents({
+		boardId: id,
+		origin: location.origin,
+		api,
+		onChange: reload,
+		humanError,
+	});
 
 	/** A chip that opens a field-guide card, applied to its row. */
 	function teachChip(text: string, key: PrimerKey, cls: string, row: Entry, title?: string): HTMLButtonElement {
@@ -944,20 +961,28 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			void patchEntry(e.id, { holders: who.value });
 		});
 
-		const rm = el("button", { type: "button", class: "btn compact secondary work-drop" }, "Drop");
+		// Dropping is undoable, so it asks nothing: the row leaves the list
+		// and the catalog, and the toast (or the Agents panel) brings it back.
+		const rm = el("button", { type: "button", class: "btn compact secondary work-drop", title: "Drop this row — undoable; the catalog stops asking for it, vaults are untouched" }, "Drop");
 		rm.addEventListener("click", async () => {
-			const ok = await confirmDialog({
-				title: "Drop this row?",
-				body: `${e.source} leaves the list. Vaults that already hold it are untouched; the catalog simply stops asking for it.`,
-				action: "Drop it",
-				danger: true,
-			});
-			if (!ok) return;
+			rm.disabled = true;
 			try {
-				await api(`/api/boards/${id}/entries/${e.id}`, { method: "DELETE" });
-				toast("Dropped");
+				await api(`/api/boards/${id}/entries/${e.id}/drop`, { method: "POST" });
+				toast(`Dropped ${repoName(e.source)}`, "ok", {
+					label: "Undo",
+					run: async () => {
+						try {
+							await api(`/api/boards/${id}/entries/${e.id}/restore`, { method: "POST" });
+							toast("Restored");
+							await reload();
+						} catch (err) {
+							toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+						}
+					},
+				});
 				await reload();
 			} catch (err) {
+				rm.disabled = false;
 				toast(humanError(err instanceof Error ? err.message : "failed"), "error");
 			}
 		});
@@ -1035,7 +1060,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				toast(humanError(err instanceof Error ? err.message : "failed"), "error");
 			}
 		});
-		const actions = el("div", { class: "board-actions" }, copy, del);
+		const forAgents = el(
+			"button",
+			{ type: "button", class: "btn compact secondary board-agents", title: "This board, for programs — JSON, keys, MCP, activity" },
+			el("span", { "aria-hidden": "true" }, "✦ "),
+			"Agents",
+		);
+		forAgents.addEventListener("click", () => agents.open(forAgents));
+		const actions = el("div", { class: "board-actions" }, copy, forAgents, del);
 
 		const curator = el("input", {
 			type: "text",
@@ -1097,6 +1129,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			if (i > 0) tallyEl.append(el("span", { class: "ledger-sep", "aria-hidden": "true" }, "·"));
 			tallyEl.append(p);
 		});
+		const droppedN = board.counts?.dropped ?? 0;
+		if (droppedN > 0) {
+			// Dropped rows are off the ledger, not off the board: one quiet word leads to them.
+			if (parts.length) tallyEl.append(el("span", { class: "ledger-sep", "aria-hidden": "true" }, "·"));
+			const back = el("button", { type: "button", class: "linkish ledger-dropped", title: "Dropped rows can be restored from the Agents panel" }, `${droppedN} dropped`);
+			back.addEventListener("click", () => agents.open(back));
+			tallyEl.append(back);
+		}
 
 		const views = el("div", { class: "view-pills", role: "group", "aria-label": "View" });
 		for (const v of ["ledger", "lineage"] as ViewMode[]) {

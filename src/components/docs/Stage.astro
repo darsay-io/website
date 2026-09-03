@@ -1,0 +1,46 @@
+---
+/**
+ * A terminal stage in the docs: three dots, a label, a copy button, the
+ * lines — the same chrome the board uses for its recipes. A trailing
+ * `# comment` dims. Lines are authored text; nothing here is user input.
+ * Each line is a block span, so the template's own whitespace never
+ * lands inside the <pre>.
+ */
+interface Props {
+	label: string;
+	lines: string[];
+}
+const { label, lines } = Astro.props;
+const text = lines.join("\n");
+type Part = { text: string; comment: boolean };
+function split(line: string): Part[] {
+	const m = /^(\s*)(#.*)$/.exec(line) ?? /^(.*?\S)(\s+#.*)$/.exec(line);
+	if (!m) return [{ text: line, comment: false }];
+	return [{ text: m[1], comment: false }, { text: m[2], comment: true }];
+}
+const rendered = lines.map(split);
+---
+<div class="cmd-stage docs-stage">
+	<div class="cmd-chrome">
+		<span class="cmd-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+		<span class="cmd-label">{label}</span>
+		<button type="button" class="btn compact cmd-copy" data-copy={text}>Copy</button>
+	</div>
+	<pre><code class="cmd-text">{rendered.map((parts) => <span class="cmd-line">{parts.map((p) => (p.comment ? <span class="cmd-comment">{p.text}</span> : p.text))}</span>)}</code></pre>
+</div>
+<script>
+	for (const b of document.querySelectorAll<HTMLButtonElement>(".docs-stage .cmd-copy")) {
+		b.addEventListener("click", async () => {
+			const text = b.dataset.copy ?? "";
+			try {
+				await navigator.clipboard.writeText(text);
+				b.textContent = "Copied ✓";
+			} catch {
+				b.textContent = "Select and copy";
+			}
+			window.setTimeout(() => {
+				b.textContent = "Copy";
+			}, 1600);
+		});
+	}
+</script>

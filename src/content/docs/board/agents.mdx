@@ -1,0 +1,201 @@
+---
+title: "Agents & MCP"
+description: "Keys and scopes, connecting Claude, ChatGPT, and Codex, the MCP tools, the loop a careful agent runs, webhooks, and the audit trail."
+slug: docs/board/agents
+tableOfContents:
+  maxHeadingLevel: 3
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+<p class="docs-lede">
+Give an agent a key, not the URL. Let it read the board, apply a list with a dry run first, and leave its name on every change it makes.
+</p>
+
+## Keys
+
+The board URL is the capability: whoever holds it holds everything. A
+**key** is that capability narrowed to one board, a label, and a few
+scopes — so an agent can maintain a board without ever holding the link
+that could destroy it.
+
+<Stage label="mint a key from the board's URL" lines={[
+	"curl -s -X POST https://darsay.io/api/boards/<id>/keys \\",
+	"  -H 'content-type: application/json' \\",
+	"  -d '{\"label\": \"chatgpt\", \"scopes\": [\"write\"]}'",
+	"# {\"id\": \"k_…\", \"label\": \"chatgpt\", \"scopes\": [\"read\", \"write\"], \"key\": \"darsay_…\", \"shown_once\": true,",
+	"#  \"api\": \"https://darsay.io/api/board\", \"mcp\": \"https://darsay.io/mcp\"}",
+]} />
+
+The secret is shown once; the board keeps a hash. Or open the board's
+✦ **Agents** panel, type a label, tick the scopes, and copy the key from
+the page — the panel also writes the `claude mcp add` line for you.
+
+<dl class="docs-scopes">
+	<dt>read</dt><dd>Always included. The board, rows, catalog, audit trail.</dd>
+	<dt>write</dt><dd>Add, update, drop, restore, apply, batch, edit the title and note. The default when you mint without naming scopes.</dd>
+	<dt>claim</dt><dd>Claim rows and report progress — what <code>darsay archive --next</code> does. Give it to an agent that actually fetches.</dd>
+	<dt>remove</dt><dd>Delete rows permanently. Leave it off: a key without <code>remove</code> cannot destroy anything, and <code>drop</code> covers every honest need.</dd>
+</dl>
+
+What no key can do: delete the board, mint or revoke keys, register
+webhooks. Those stay with the URL. Revoke a key at any time from the panel
+or with `DELETE /api/boards/{id}/keys/{kid}`; its next call answers
+`401 bad_key`.
+
+A key addresses the board at `/api/board/…` and `/mcp`. The document it
+reads carries no `id` and no page link, so a key holder cannot reconstruct
+the URL from what the API tells it.
+
+## Connect
+
+### Claude Code
+
+<Stage label="the board as an MCP server" lines={[
+	"claude mcp add --transport http darsay https://darsay.io/mcp \\",
+	"  --header 'Authorization: Bearer darsay_…'",
+	"# then, in a session:  read the darsay board and add the works in this list that are missing",
+]} />
+
+Any MCP client that can send a header works the same way: Streamable HTTP
+at `https://darsay.io/mcp`, bearer authorization, no OAuth, no session.
+
+### Codex
+
+<Stage label="codex" lines={[
+	"codex mcp add darsay --url https://darsay.io/mcp \\",
+	"  --bearer-token-env-var DARSAY_KEY",
+	"export DARSAY_KEY=darsay_…",
+]} />
+
+### ChatGPT
+
+A custom GPT's **Action** reads an OpenAPI document and sends an API key.
+Import `https://darsay.io/openapi.json`, choose *Bearer* authentication,
+paste the key, and use only the `/api/board/…` operations — the ones
+tagged *By key*. The GPT can then read the board, find rows, add, apply,
+and drop, and every change it makes is signed `key:<label>` in the audit
+trail.
+
+### Anything with `curl`
+
+<Stage label="no id in sight" lines={[
+	"export DARSAY_KEY=darsay_…",
+	"curl -s -H \"Authorization: Bearer $DARSAY_KEY\" https://darsay.io/api/board | jq '.counts'",
+	"curl -s -H \"Authorization: Bearer $DARSAY_KEY\" \\",
+	"  'https://darsay.io/api/board/entries?source=ESCAD/OpenRTLSet' | jq '.count'",
+]} />
+
+## The tools
+
+The MCP server offers twelve tools. They are the REST operations under
+other names, plus one door into the field guide.
+
+| Tool | Does | Needs |
+|---|---|---|
+| `get_board` | The whole board: title, revision, counts, every row in canonical order. Read this first. | read |
+| `find_rows` | Rows by address, status, type, lens, family, desire range, or text. `source` asks *is this already here?* | read |
+| `get_row` | One row by id, dropped or not. | read |
+| `add_row` | Ensure a work is on the board — an upsert by address. Safe to repeat. | write |
+| `update_row` | Change any columns of a row by id; a changed address is re-priced and must not collide. | write |
+| `drop_row` | Soft removal, undoable. Prefer this. | write |
+| `restore_row` | Bring a dropped row back. | write |
+| `remove_row` | Delete for good. | remove |
+| `apply` | Ensure a whole list is on the board in one transaction; `mode: sync` also drops what the list left out; `dry_run` returns the plan. | write |
+| `batch` | Explicit add / update / drop / restore / remove, all or nothing; `dry_run` too. | write (+ remove) |
+| `audit` | Who did what, newest first, with the columns before and after. | read |
+| `explain` | The field guide: what a chip, lens, or column means and what a collector should do about it. | — |
+
+Every writing tool accepts `expect_revision`: the `revision` you last read.
+If the board moved, the tool answers `stale` with the current revision
+instead of writing over someone else's change.
+
+`initialize` returns an `instructions` paragraph that teaches the model
+the board's words — rows not cards, no columns, address as identity,
+drop before remove — so a fresh session starts on the right foot.
+
+## The loop
+
+A careful agent maintaining a board runs the same four steps every time.
+
+**1. Read.** `get_board` (or `GET /api/board`). Note the `revision`.
+Rows come with their canonical `source`; match your list against that,
+not against titles.
+
+**2. Plan.** `apply` with `dry_run: true`. Read the summary — what would
+be added, updated, restored, dropped — and the per-row `changes`. If
+something in the plan surprises you, stop and ask; nothing has happened
+yet.
+
+**3. Commit.** The same `apply` without `dry_run`, with `expect_revision`
+(or `If-Match` over REST) set to the revision you read, and an
+`Idempotency-Key` over REST if your runtime retries. `stale` means a
+person or another agent moved the board: read again and re-plan.
+
+**4. Check.** `audit` with a small `limit`. Your changes are there under
+your key's label, with before and after. So are everyone else's.
+
+<Stage label="the loop, over REST" lines={[
+	"REV=$(curl -s -H \"Authorization: Bearer $DARSAY_KEY\" https://darsay.io/api/board | jq .revision)",
+	"curl -s -X POST 'https://darsay.io/api/board/apply?dry_run=true' \\",
+	"  -H \"Authorization: Bearer $DARSAY_KEY\" -H 'content-type: application/json' -d @rows.json | jq .summary",
+	"curl -s -X POST https://darsay.io/api/board/apply \\",
+	"  -H \"Authorization: Bearer $DARSAY_KEY\" -H 'content-type: application/json' \\",
+	"  -H \"If-Match: \\\"$REV\\\"\" -H \"Idempotency-Key: $(uuidgen)\" -d @rows.json | jq .summary",
+	"curl -s -H \"Authorization: Bearer $DARSAY_KEY\" 'https://darsay.io/api/board/audit?limit=5' | jq '.events[] | [.actor.label, .action, .after.source]'",
+]} />
+
+Two habits worth keeping. **Never `remove` what you could `drop`**: a
+dropped row is invisible and restorable, and a person can bring it back
+from the panel. **Never guess a chip**: if a row needs `gated` or
+`large`, the Hub and the CLI decide that, not the note. Ask `explain`
+when a chip is unfamiliar.
+
+## Webhooks
+
+A listener the board tells the moment rows move — the beginning of a
+research bot: *when a new candidate lands, look up its provenance,
+license, and lineage, and write the sentence into its note.*
+
+<Stage label="register a listener (from the URL)" lines={[
+	"curl -s -X POST https://darsay.io/api/boards/<id>/webhooks \\",
+	"  -H 'content-type: application/json' \\",
+	"  -d '{\"url\": \"https://bot.example/darsay\", \"events\": [\"row.added\", \"row.restored\"]}'",
+	"# {\"id\": \"wh_…\", \"secret\": \"whsec_…\", \"shown_once\": true, ...}",
+]} />
+
+One `POST` per commit, with the events that commit produced (filtered to
+the subscription), the actor, and the board's `catalog_id`, `title`, and
+`revision` — never its id. Verify the signature before you trust a
+delivery:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+export function verify(secret, rawBody, header) {
+	const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
+	return header.length === expected.length && timingSafeEqual(Buffer.from(header), Buffer.from(expected));
+}
+```
+
+Deliveries are best-effort: a ten-second timeout, no retries, `last_status`
+recorded on the hook (0 when unreachable). The audit trail is the durable
+record; a listener that missed one reads `audit?before=` from the last
+event it saw.
+
+## The audit trail
+
+Everything a person, the CLI, or a key decides is an event: the action,
+the actor, the row, the decided columns before and after, and the board
+revision it produced. A row's own history is one call away —
+`GET /api/board/audit?entry=12` — and a dropped row's `before` is exactly
+what `restore` brings back.
+
+Facts are not events. A progress report on a claim moves the gauge and
+the revision but is audited only at its boundaries; a Hub re-price
+updates the digest without a line in the trail. The trail is for
+decisions.
+
+<div class="docs-note">
+<strong>Everything above, in one document.</strong> <a href="/openapi.json"><code>/openapi.json</code></a> describes every call with its scope, body, and errors, and the <a href="/docs/board/api/">API reference</a> is the same in prose. The board's own ✦ Agents panel mints keys, registers webhooks, restores dropped rows, and shows the recent activity.
+</div>

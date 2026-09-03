@@ -151,16 +151,27 @@ export const reducedMotion = () =>
 let toastRoot: HTMLElement | null = null;
 let toastTimer = 0;
 
-/** One quiet line at the bottom of the viewport: saved, copied, failed. */
-export function toast(message: string, kind: "ok" | "error" = "ok") {
+/**
+ * One quiet line at the bottom of the viewport: saved, copied, failed.
+ * With an action, the line waits long enough to be clicked — an undo.
+ */
+export function toast(message: string, kind: "ok" | "error" = "ok", action?: { label: string; run: () => void }) {
 	if (!toastRoot) {
 		toastRoot = el("div", { class: "toast", role: "status", "aria-live": "polite" });
 		document.body.append(toastRoot);
 	}
-	toastRoot.textContent = message;
+	toastRoot.replaceChildren(message);
+	if (action) {
+		const b = el("button", { type: "button", class: "toast-action" }, action.label);
+		b.addEventListener("click", () => {
+			toastRoot?.classList.remove("is-shown");
+			action.run();
+		});
+		toastRoot.append(b);
+	}
 	toastRoot.className = `toast is-${kind} is-shown`;
 	window.clearTimeout(toastTimer);
-	toastTimer = window.setTimeout(() => toastRoot?.classList.remove("is-shown"), kind === "error" ? 4200 : 1800);
+	toastTimer = window.setTimeout(() => toastRoot?.classList.remove("is-shown"), action ? 6500 : kind === "error" ? 4200 : 1800);
 }
 
 /**

@@ -1,0 +1,19 @@
+---
+/**
+ * One line under an endpoint heading: the method, the path with its
+ * parameters lit, and the scope a key needs (or "URL only").
+ */
+interface Props {
+	method: "GET" | "POST" | "PATCH" | "DELETE";
+	path: string;
+	scope?: string;
+	urlOnly?: boolean;
+}
+const { method, path, scope, urlOnly = false } = Astro.props;
+const parts = path.split(/(\{[a-z]+\})/g).filter(Boolean);
+---
+<div class="api-route">
+	<span class={`api-method is-${method.toLowerCase()}`}>{method}</span>
+	<code class="api-path">{parts.map((p) => (p.startsWith("{") ? <em>{p}</em> : p))}</code>
+	{urlOnly ? <span class="api-scope is-url">URL only</span> : scope ? <span class="api-scope">scope · {scope}</span> : null}
+</div>
