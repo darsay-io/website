@@ -257,6 +257,64 @@ A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing
 
 **Already public and expected:** git author email, `NOTICE` copyright name.
 
+## Credentials and permissions
+
+Everything the site and the CLI's release pipeline need that is not in
+git: where each one lives, the exact permission, how it is made, and what
+proves it works. A rebuild from nothing creates these and nothing else.
+Names are safe to write down; values never are.
+
+| What | Lives in | Permissions | Proof it works |
+|---|---|---|---|
+| Cloudflare account login | A person, with 2FA and recovery codes | Owns the zone, the Worker, both D1 databases, the Worker secret. | Dashboard opens; `npx wrangler whoami` names the account. |
+| Registrar login | A person | Nameservers point at Cloudflare; MX/SPF for mail forwarding live in the zone. | `dig NS darsay.io` answers Cloudflare nameservers. |
+| Wrangler OAuth (`npx wrangler login`) | `~/Library/Preferences/.wrangler/` on each operator's machine | Whatever the login grants: deploy, D1 (migrations, exports), secrets. Hands-on only, never CI. | `npx wrangler d1 migrations list darsay-io --remote` answers. |
+| `CLOUDFLARE_API_TOKEN` | `darsay-io/website` → Settings → Secrets → Actions | A Cloudflare API token scoped to this account (and the `darsay.io` zone): the **Edit Cloudflare Workers** template — Workers Scripts Edit, the routes the custom domain needs, static assets — **plus Account → D1 → Edit**, because `Deploy` applies migrations before it ships the worker. | `Deploy` green end to end. Verified 2026-09-03: with Workers edit alone the migration step answered code 7403 (*not authorized to access this service*); after D1 Edit was added, `Apply D1 migrations` and `Deploy to Cloudflare` both passed. |
+| `CLOUDFLARE_ACCOUNT_ID` | Same place | An identifier, not a credential; kept as a secret only because `wrangler.jsonc` carries no `account_id`. Dashboard → Workers & Pages → Overview, or `npx wrangler whoami`. | Same run. |
+| `CREATE_PASSWORD` | The Worker (`npx wrangler secret put CREATE_PASSWORD --env=""`), and `.dev.vars` locally | The shared create phrase; see [Create password](#create-password). | `POST /api/boards` with the phrase answers 201; without the secret, 503 `create_disabled`. |
+| `DOCS_PUSH_TOKEN` | `darsay-io/website` secrets | A **fine-grained PAT** (resource owner `darsay-io`, repository `darsay-io/website` only): **Contents: Read and write** (the sync pushes the docs pin to `main`), **Actions: Read and write** (the CLI's release dispatches `Sync CLI docs` with the same token), Metadata: Read (implied). Pushes act as the token's owner, which is what makes `Deploy` fire. | The commit `docs: pin CLI docs to <tag>` on `main` shows the owner as author, and a `Deploy` run follows it. |
+| `WEBSITE_DISPATCH_TOKEN` | `darsay-io/darsay` secrets | The same PAT, or one with only **Actions: Read and write** on `darsay-io/website`. | A release's *Nudge the website docs sync* step prints no `dispatch failed`. |
+| GitHub environment `pypi` | `darsay-io/darsay` → Settings → Environments | Required reviewer(s), so a pushed tag cannot publish unattended. The `release` job runs in it with `contents: write` (the GitHub Release) and `id-token: write` (OIDC). | A `v*` tag push waits for approval, then publishes. |
+| PyPI trusted publisher | PyPI → project `darsay` → Publishing | Owner `darsay-io`, repository `darsay`, workflow `release.yml`, environment `pypi`. **No PyPI API token exists anywhere.** The PyPI account (2FA, recovery codes) is the credential to keep. | The *Publish to PyPI* step succeeds; `pip index versions darsay` shows the version. |
+| MCP registry signing key | `darsay-registry-key.pem` beside the Wrangler login, never in git; its public half in `public/.well-known/mcp-registry-auth` | Ed25519; see [Publishing to the MCP Registry](#publishing-to-the-mcp-registry). | `mcp-publisher publish` accepts the card. |
+| Homebrew tap | `darsay-io/homebrew-darsay` | No secrets. The formula is bumped by hand to the PyPI sdist URL and its sha256. | `brew install darsay-io/darsay/darsay`. |
+
+Permissions the workflows grant themselves (`permissions:` in each file,
+nothing to configure): `Deploy` and `CI` read contents; `Sync CLI docs`
+writes contents and issues; the CLI's `release` job writes contents and
+the OIDC token. The repository-level default for `GITHUB_TOKEN` can stay at
+read-only.
+
+**Branch protection:** none on `main` in either repository, and the docs
+sync depends on that — it pushes straight to `main`. If protection is ever
+added, let the PAT's owner bypass it, or the pin stops landing.
+
+**Fine-grained PATs expire.** Write the expiry date next to the secret
+name in a place you will see (a calendar, not this file). When one lapses,
+`Sync CLI docs` still lands the pin under `github.token`, but `Deploy`
+does not fire and the release's nudge fails quietly to the hourly cron —
+see [Docs lock](#docs-lock).
+
+**Rebuild from nothing, in order:** the Cloudflare account and zone
+([Cloudflare](#cloudflare-when-an-account-exists), steps 1–8), then the
+Worker secret (step 9), then the API token and account id into the website
+secrets, then the PAT into both repositories, then the `pypi` environment
+and the PyPI trusted publisher, then the registry key. Finish by running
+`Deploy` from the Actions tab and reading its `Apply D1 migrations` and
+`Deploy to Cloudflare` steps: green there means every Cloudflare
+permission is right.
+
+**Rotate a Cloudflare token** by editing it in place (the value is
+unchanged, nothing to update in GitHub) or by making a new one and running
+`gh secret set CLOUDFLARE_API_TOKEN --repo darsay-io/website`. Either way,
+check it before trusting it:
+
+```bash
+curl -s https://api.cloudflare.com/client/v4/user/tokens/verify \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq .result.status   # "active"
+gh workflow run deploy.yml --repo darsay-io/website && gh run watch --repo darsay-io/website
+```
+
 ## Docs lock
 
 Production `/docs/` tracks the latest **CLI GitHub Release**, not `main`. `docs.lock.json` holds that tag and commit.
