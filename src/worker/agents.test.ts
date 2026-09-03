@@ -639,4 +639,167 @@ describe("the MCP server", () => {
 		expect(res.result.structuredContent.id).toBe(id);
 		expect(res.result.structuredContent.access.via).toBe("url");
 	});
+
+	// Revision 2026-07-28: the version and capabilities ride in _meta and are
+	// mirrored into headers; there is no handshake.
+	const META = "io.modelcontextprotocol/";
+	const meta = (protocolVersion = "2026-07-28") => ({ [META + "protocolVersion"]: protocolVersion, [META + "clientCapabilities"]: {}, [META + "clientInfo"]: { name: "test", version: "0" } });
+	const mirrored = (method: string, name?: string, protocolVersion = "2026-07-28") => ({ "MCP-Protocol-Version": protocolVersion, "Mcp-Method": method, ...(name ? { "Mcp-Name": name } : {}) });
+	const modern = (method: string, params: Record<string, unknown> = {}, v?: string) => ({ jsonrpc: "2.0", id: 7, method, params: { ...params, _meta: meta(v) } });
+	async function post(h: Harness, key: string, body: unknown, headers: Record<string, string>) {
+		return call(h, "/api/mcp", jsonInit("POST", body, { ...bearer(key), ...headers }));
+	}
+
+	it("answers server/discover to anyone with a bearer, with or without _meta", async () => {
+		const h = env();
+		const id = await mkBoard(h);
+		const bare = await mcp(h, id, rpc("server/discover"));
+		expect(bare.status).toBe(200);
+		const d = ((await bare.json()) as { result: { resultType: string; supportedVersions: string[]; capabilities: { tools: unknown }; instructions: string; ttlMs: number; cacheScope: string; _meta: Record<string, { name: string; websiteUrl: string }> } }).result;
+		expect(d.resultType).toBe("complete");
+		expect(d.supportedVersions[0]).toBe("2026-07-28");
+		expect(d.supportedVersions).toContain("2025-06-18");
+		expect(d.capabilities.tools).toBeDefined();
+		expect(d.instructions).toContain("rows, not cards");
+		expect(d.cacheScope).toBe("public");
+		expect(d.ttlMs).toBeGreaterThan(0);
+		expect(d._meta[META + "serverInfo"]).toMatchObject({ name: "darsay.io board", websiteUrl: "http://localhost/docs/board/agents/" });
+		const withMeta = await post(h, id, modern("server/discover"), mirrored("server/discover"));
+		expect(withMeta.status).toBe(200);
+		// A version this server has never heard of still learns what it speaks.
+		const future = await post(h, id, modern("server/discover", {}, "2031-01-01"), mirrored("server/discover", undefined, "2031-01-01"));
+		expect(future.status).toBe(200);
+	});
+
+	it("serves 2026-07-28 statelessly: _meta, mirrored headers, resultType, a cacheable tool list", async () => {
+		const h = env();
+		const id = await mkBoard(h);
+		const k = await mintKey(h, id, "codex", ["write"]);
+
+		const list = await post(h, k.key, modern("tools/list"), mirrored("tools/list"));
+		expect(list.status).toBe(200);
+		const l = ((await list.json()) as { result: { resultType: string; tools: Array<{ name: string }>; ttlMs: number; cacheScope: string; _meta: Record<string, unknown> } }).result;
+		expect(l.resultType).toBe("complete");
+		expect(l.tools.map((t) => t.name)).toContain("apply");
+		expect(l).toMatchObject({ ttlMs: expect.any(Number), cacheScope: "public" });
+		expect(l._meta[META + "serverInfo"]).toBeDefined();
+
+		const added = await post(h, k.key, modern("tools/call", { name: "add_row", arguments: { source: "ESCAD/OpenRTLSet", desire: 8 } }), mirrored("tools/call", "add_row"));
+		expect(added.status).toBe(200);
+		const a = ((await added.json()) as { result: { resultType: string; isError?: boolean; structuredContent: { source: string }; _meta: Record<string, unknown> } }).result;
+		expect(a.resultType).toBe("complete");
+		expect(a.isError).toBeUndefined();
+		expect(a.structuredContent.source).toBe("huggingface:ESCAD/OpenRTLSet");
+		expect(a._meta[META + "serverInfo"]).toBeDefined();
+
+		// A name that rode as the Base64 sentinel is decoded before it is compared.
+		const sentinel = await post(h, k.key, modern("tools/call", { name: "get_board", arguments: {} }), mirrored("tools/call", "=?base64?" + btoa("get_board") + "?="));
+		expect(sentinel.status).toBe(200);
+		expect(((await sentinel.json()) as { result: { structuredContent: { revision: number } } }).result.structuredContent.revision).toBe(2);
+
+		// The audit trail still knows who acted.
+		const audit = await post(h, k.key, modern("tools/call", { name: "audit", arguments: { limit: 1 } }), mirrored("tools/call", "audit"));
+		expect(((await audit.json()) as { result: { structuredContent: { events: Array<{ actor: { label: string; client: string } }> } } }).result.structuredContent.events[0].actor).toMatchObject({ label: "key:codex", client: "mcp" });
+
+		// A tool it does not have is a JSON-RPC error, not an HTTP one.
+		const unknownTool = await post(h, k.key, modern("tools/call", { name: "create_card", arguments: {} }), mirrored("tools/call", "create_card"));
+		expect(unknownTool.status).toBe(200);
+		expect(((await unknownTool.json()) as { error: { code: number } }).error.code).toBe(-32602);
+	});
+
+	it("refuses a 2026-07-28 request whose headers are missing or disagree with the body", async () => {
+		const h = env();
+		const id = await mkBoard(h);
+		const code = async (res: Response) => ((await res.json()) as { error: { code: number; message: string } }).error;
+
+		const noVersion = await post(h, id, modern("tools/list"), { "Mcp-Method": "tools/list" });
+		expect(noVersion.status).toBe(400);
+		expect((await code(noVersion)).code).toBe(-32020);
+
+		const wrongVersion = await post(h, id, modern("tools/list"), mirrored("tools/list", undefined, "2025-06-18"));
+		expect(wrongVersion.status).toBe(400);
+		expect(await code(wrongVersion)).toMatchObject({ code: -32020, message: expect.stringContaining("MCP-Protocol-Version") });
+
+		const noMethod = await post(h, id, modern("tools/list"), { "MCP-Protocol-Version": "2026-07-28" });
+		expect(noMethod.status).toBe(400);
+		expect(await code(noMethod)).toMatchObject({ code: -32020, message: expect.stringContaining("Mcp-Method") });
+
+		const wrongMethod = await post(h, id, modern("tools/list"), mirrored("tools/call"));
+		expect(wrongMethod.status).toBe(400);
+		expect((await code(wrongMethod)).code).toBe(-32020);
+
+		const noName = await post(h, id, modern("tools/call", { name: "get_board", arguments: {} }), mirrored("tools/call"));
+		expect(noName.status).toBe(400);
+		expect(await code(noName)).toMatchObject({ code: -32020, message: expect.stringContaining("Mcp-Name") });
+
+		const wrongName = await post(h, id, modern("tools/call", { name: "get_board", arguments: {} }), mirrored("tools/call", "add_row"));
+		expect(wrongName.status).toBe(400);
+		expect((await code(wrongName)).code).toBe(-32020);
+
+		// Headers are checked before the version is: an intermediary's view and the body must agree first.
+		const unsupported = await post(h, id, modern("tools/list", {}, "2031-01-01"), mirrored("tools/list", undefined, "2031-01-01"));
+		expect(unsupported.status).toBe(400);
+		const u = (await unsupported.json()) as { error: { code: number; data: { supported: string[]; requested: string } } };
+		expect(u.error.code).toBe(-32022);
+		expect(u.error.data).toEqual({ supported: ["2026-07-28"], requested: "2031-01-01" });
+
+		// A version this server speaks only through initialize is not a per-request version.
+		const legacyAsModern = await post(h, id, modern("tools/list", {}, "2025-06-18"), mirrored("tools/list", undefined, "2025-06-18"));
+		expect(legacyAsModern.status).toBe(400);
+		expect((await code(legacyAsModern)).code).toBe(-32022);
+
+		const noCaps = await post(h, id, { jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: { [META + "protocolVersion"]: "2026-07-28" } } }, mirrored("tools/list"));
+		expect(noCaps.status).toBe(400);
+		expect(await code(noCaps)).toMatchObject({ code: -32602, message: expect.stringContaining("clientCapabilities") });
+
+		// The handshake and ping belong to the older era; under 2026-07-28 they are unknown methods, and unknown is 404.
+		for (const method of ["initialize", "ping", "resources/list"]) {
+			const res = await post(h, id, modern(method), mirrored(method));
+			expect(res.status, method).toBe(404);
+			expect((await code(res)).code).toBe(-32601);
+		}
+
+		// The older era is untouched by any of this: no _meta, no headers, initialize answers.
+		const legacy = await mcp(h, id, rpc("initialize", { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t", version: "0" } }));
+		expect(legacy.status).toBe(200);
+		expect(((await legacy.json()) as { result: { protocolVersion: string } }).result.protocolVersion).toBe("2025-11-25");
+	});
+});
+
+describe("the board page, for a program", () => {
+	const shell = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Board</title></head><body><div id="board-root"></div></body></html>';
+	function assets(): Fetcher {
+		return { fetch: async () => new Response(shell, { headers: { "Content-Type": "text/html", "X-Robots-Tag": "noindex, nofollow" } }) } as unknown as Fetcher;
+	}
+
+	it("carries a link to its own JSON in the page and in a header", async () => {
+		const h = env(new TestD1(), { ASSETS: assets() });
+		const id = "c1b3b14664504a538da32956758d7a75";
+		const res = await worker.fetch(new Request(`http://localhost/b/${id}`), h.env, h.ctx as unknown as ExecutionContext);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Type")).toBe("text/html");
+		expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+		expect(res.headers.get("Link")).toBe(`</b/${id}.json>; rel="alternate"; type="application/json"`);
+		const html = await res.text();
+		expect(html).toContain(`<head><link rel="alternate" type="application/json" href="/b/${id}.json"><meta charset="utf-8">`);
+		expect(html).toContain('<div id="board-root">');
+	});
+
+	it("leaves the bare shell alone", async () => {
+		const h = env(new TestD1(), { ASSETS: assets() });
+		const res = await worker.fetch(new Request("http://localhost/b/"), h.env, h.ctx as unknown as ExecutionContext);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Link")).toBeNull();
+		expect(await res.text()).toBe(shell);
+	});
+
+	it("still hands a JSON reader the board, and links the card from the document", async () => {
+		const h = env(new TestD1(), { ASSETS: assets() });
+		const id = await mkBoard(h);
+		const res = await worker.fetch(new Request(`http://localhost/b/${id}`, { headers: { Accept: "application/json" } }), h.env, h.ctx as unknown as ExecutionContext);
+		expect(res.status).toBe(200);
+		const doc = (await res.json()) as { id: string; links: Record<string, string> };
+		expect(doc.id).toBe(id);
+		expect(doc.links).toMatchObject({ mcp: "http://localhost/mcp", card: "http://localhost/.well-known/mcp-server-card", openapi: "http://localhost/openapi.json" });
+	});
 });

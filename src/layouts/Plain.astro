@@ -15,6 +15,7 @@ const boards = import.meta.env.PUBLIC_BOARDS_ENABLED === "true";
 		<meta name="referrer" content="no-referrer" />
 		<title>{title}</title>
 		<link rel="icon" href="/favicon.svg" />
+		<link rel="mcp" href="/.well-known/mcp-server-card" type="application/json" />
 	</head>
 	<body>
 		<header class:list={["site-header", { wide }]}>

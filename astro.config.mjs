@@ -28,6 +28,10 @@ export default defineConfig({
 				},
 			],
 			customCss: ['./src/styles/site.css'],
+			// The MCP server card, for a program that reads the page before the
+			// JSON. Not yet a registered relation; the Link header in
+			// public/_headers says the same.
+			head: [{ tag: 'link', attrs: { rel: 'mcp', href: '/.well-known/mcp-server-card', type: 'application/json' } }],
 			// Computed from the pages that exist (scripts/sidebar.mjs), so a new
 			// CLI docs page reaches the sidebar with no edit here.
 			sidebar: buildSidebar(),

@@ -16,3 +16,6 @@ coverage/
 *.dump
 darsay.io.txt
 .ci-darsay/
+# The MCP Registry signing key and the fetched server.json (RUNBOOK § MCP discovery)
+*.pem
+/server.json

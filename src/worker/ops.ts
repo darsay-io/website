@@ -159,6 +159,7 @@ export function links(ctx: OpCtx) {
 		catalog: base + "/catalog.json",
 		openapi: o + "/openapi.json",
 		mcp: o + "/mcp",
+		card: o + "/.well-known/mcp-server-card",
 		docs: o + "/docs/board/",
 	};
 }

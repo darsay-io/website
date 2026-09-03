@@ -153,6 +153,54 @@ done
 
 GitHub org `darsay-io` needs nothing extra: public repos are already public. `github.com/robots.txt` is GitHub-wide (file trees / raw are restricted for `User-agent: *`). There is no org toggle that opens that up for third-party AIs.
 
+## MCP discovery and the registry
+
+What a program that knows only darsay.io can fetch, and what each is for:
+
+| Address | Serves |
+|---|---|
+| `/.well-known/mcp-server-card`, `/mcp/server-card` | The server card (`src/worker/card.ts`): the endpoint, the protocol revisions, the `Authorization` header. The MCP Registry's `server.json` shape. Cacheable for an hour. |
+| `/mcp` | The server. `server/discover` answers any bearer, with or without `_meta`. Revision 2026-07-28 and the `initialize` era share it. |
+| `/openapi.json` | Cacheable for ten minutes. |
+| `/llms.txt` | Built from the docs page list (`scripts/llms.mjs`); a static asset, no Worker. |
+
+Every HTML page carries `<link rel="mcp" href="/.well-known/mcp-server-card">` (the Plain layout and Starlight's `head`) and `public/_headers` adds the same as a `Link` header. The board shell gets `<link rel="alternate">` to its JSON from the worker. `robots.txt` needs nothing: none of these is under `/b/`, `/api/`, or `/boards` (the `/api/mcp/server-card` spelling is, on purpose — the well-known address is the one to publish).
+
+Check after a deploy:
+
+```sh
+curl -s https://darsay.io/.well-known/mcp-server-card | jq '.remotes[0].supportedProtocolVersions'
+curl -sI https://darsay.io/docs/ | grep -i '^link:'
+curl -s -X POST https://darsay.io/mcp -H 'content-type: application/json' \
+  -H 'Authorization: Bearer <a board id>' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover"}' | jq '.result.supportedVersions'
+curl -s https://darsay.io/llms.txt | head
+```
+
+### Publishing to the MCP Registry
+
+The registry (registry.modelcontextprotocol.io, in preview) lists public servers by name; ours is `io.darsay/board`, a name the registry grants to whoever proves darsay.io. The card *is* the `server.json`. Once, on a machine that will keep the key:
+
+```sh
+brew install mcp-publisher   # or the release tarball: modelcontextprotocol.io/registry/quickstart
+openssl genpkey -algorithm Ed25519 -out darsay-registry-key.pem   # beside the Wrangler login; never in git
+PUBLIC_KEY="$(openssl pkey -in darsay-registry-key.pem -pubout -outform DER | tail -c 32 | base64)"
+printf 'v=MCPv1; k=ed25519; p=%s\n' "$PUBLIC_KEY" > public/.well-known/mcp-registry-auth
+git add public/.well-known/mcp-registry-auth   # a public key: commit it, deploy it
+```
+
+Then, once that deploy is live, for each version of the server — the card's `version` is `MCP_SERVER.version` in `src/worker/mcp.ts`, and the registry refuses a version it already has, so bump it when the tools change:
+
+```sh
+PRIVATE_KEY="$(openssl pkey -in darsay-registry-key.pem -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
+mcp-publisher login http --domain darsay.io --private-key "$PRIVATE_KEY"
+curl -s https://darsay.io/mcp/server-card -o server.json
+mcp-publisher publish
+curl -s 'https://registry.modelcontextprotocol.io/v0.1/servers?search=io.darsay/board' | jq '.servers[].name'
+```
+
+DNS is the other proof (`darsay.io. IN TXT "v=MCPv1; k=ed25519; p=…"` at the apex, then `mcp-publisher login dns`); the file is the better fit here because the site already serves `/.well-known/` and the record would sit beside the mail SPF.
+
 ## Backups
 
 ```bash
@@ -182,6 +230,7 @@ This repository is public. Treat every committed file as world-readable.
 
 - D1 `database_id` UUIDs in `wrangler.jsonc`
 - Worker names, routes, schema SQL, `PUBLIC_BOARDS_ENABLED`
+- `public/.well-known/mcp-registry-auth` — the registry signing key's *public* half
 
 A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing or querying it still requires Wrangler OAuth or a Cloudflare API token, which never go in git. Someone who already has your Cloudflare login can `wrangler d1 list` anyway.
 
@@ -189,6 +238,7 @@ A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing
 
 - Wrangler OAuth (`~/Library/Preferences/.wrangler/` on this Mac)
 - `CLOUDFLARE_API_TOKEN`
+- The registry signing key (`darsay-registry-key.pem`, any `*.pem`) and the `server.json` it publishes (a fetched copy of the card)
 - `.dev.vars`, `.env` (except `.env.example`)
 - D1 exports (`*.sql` dumps) — they contain board ids
 - Local `.wrangler/state/` SQLite

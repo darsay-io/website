@@ -1,6 +1,6 @@
 ---
 title: "Board API reference"
-description: "Every call a board answers: two address forms, scopes, revisions and If-Match, idempotency keys, rows, apply and batch, claims, the catalog round trip, the audit trail, keys, webhooks, and the MCP server."
+description: "Every call a board answers: two address forms, scopes, revisions and If-Match, idempotency keys, rows, apply and batch, claims, the catalog round trip, the audit trail, keys, webhooks, the MCP server, and its card."
 slug: docs/board/api
 tableOfContents:
   maxHeadingLevel: 3
@@ -113,8 +113,8 @@ The whole board: `title`, `curator`, `note`, `catalog_id`, `revision`,
 `access` (how you got in and with which scopes), `counts` (`rows`, `want`,
 `have`, `claimed`, `dropped`), `entries` in the canonical order — desire
 high to low, unrated last, then as added — and `links` to the page, the
-JSON address, the catalog, the OpenAPI document, the MCP server, and these
-docs. `?dropped=all` includes dropped rows; `?dropped=only` shows just
+JSON address, the catalog, the OpenAPI document, the MCP server and its
+card, and these docs. `?dropped=all` includes dropped rows; `?dropped=only` shows just
 them.
 
 ### Edit the board
@@ -432,8 +432,46 @@ an unknown chip answers `404` with the list.
 
 JSON-RPC 2.0 over POST, stateless: one request, one JSON answer, no
 session and no stream. Also at `/api/mcp`. The bearer names the board.
-Methods `initialize`, `ping`, `tools/list`, `tools/call`; the tools are
-described on [Agents & MCP](/docs/board/agents/#the-tools).
+The tools are the same for every client and are described on
+[Agents & MCP](/docs/board/agents/#the-tools); two revisions of the
+protocol share the endpoint.
+
+A client of revision **2026-07-28** sends no handshake. Every request
+carries its protocol version and capabilities in `params._meta`
+(`io.modelcontextprotocol/protocolVersion`, `…/clientCapabilities`) and
+mirrors them into the `MCP-Protocol-Version` and `Mcp-Method` headers —
+`Mcp-Name` too, on `tools/call` — so an intermediary can route without
+reading the body. The server answers `server/discover`, `tools/list`, and
+`tools/call`; marks every result `resultType: "complete"` and signs it
+with its `serverInfo` in `_meta`; and gives `tools/list` a `ttlMs`, so a
+client may keep the list. A header that is missing or disagrees with the
+body answers `400` with JSON-RPC error `-32020`; a version this server
+does not speak per request answers `400` with `-32022` and the
+`supported` list; a method it does not have answers `404` with `-32601`.
+
+A client of the **`initialize` era** (2025-11-25 and earlier) opens with
+`initialize` and is served as that revision says: `initialize`, `ping`,
+`tools/list`, `tools/call`, every answer `200`.
+
+`server/discover` is answered to anyone with a bearer, with or without
+`_meta`: the revisions the server speaks, its capabilities, and the
+instructions paragraph. It is the cheapest way to ask what is here.
+
+## The server card
+
+<Route method="GET" path="/.well-known/mcp-server-card" />
+
+Where the MCP server is, which protocol revisions it speaks, and the
+header that opens it — one JSON document in the shape of the MCP
+Registry's `server.json`, of which the
+[server card proposal](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2127)
+is a subset. Also at `/mcp/server-card`, beside the endpoint. Every HTML
+page on the site points at it with `<link rel="mcp">` and a `Link`
+header, and the board document names it in `links.card`. Public,
+cacheable for an hour, open to any origin. Its `_meta` carries the
+OpenAPI document, these docs, the field guide, and `/llms.txt`. Tools
+are not listed in it on purpose: `tools/list` is the only answer that
+cannot go stale.
 
 ## The page address
 
@@ -441,7 +479,10 @@ described on [Agents & MCP](/docs/board/agents/#the-tools).
 
 The board document at its page address, for a program that only has the
 link. `GET /b/{id}` with `Accept: application/json` (and not `text/html`)
-answers the same way; a browser gets the page.
+answers the same way; a browser gets the page. The page itself carries
+`<link rel="alternate" type="application/json">` to this address and a
+`Link` header that says the same, so a program that fetched the HTML
+finds the document without guessing.
 
 ## This document
 

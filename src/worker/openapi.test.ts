@@ -59,6 +59,8 @@ describe("the OpenAPI document", () => {
 		const paths = Object.keys(doc.paths as object);
 		expect(paths).toContain("/openapi.json");
 		expect(paths).toContain("/mcp");
+		expect(paths).toContain("/mcp/server-card");
+		expect(paths).toContain("/.well-known/mcp-server-card");
 		expect(paths).toContain("/b/{id}.json");
 	});
 

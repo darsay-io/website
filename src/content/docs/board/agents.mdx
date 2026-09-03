@@ -1,6 +1,6 @@
 ---
 title: "Agents & MCP"
-description: "Keys and scopes, connecting Claude, ChatGPT, and Codex, the MCP tools, the loop a careful agent runs, webhooks, and the audit trail."
+description: "Keys and scopes, connecting Claude, ChatGPT, and Codex, how a program finds the server from a board link, the MCP tools, the loop a careful agent runs, webhooks, and the audit trail."
 slug: docs/board/agents
 tableOfContents:
   maxHeadingLevel: 3
@@ -59,6 +59,9 @@ the URL from what the API tells it.
 
 Any MCP client that can send a header works the same way: Streamable HTTP
 at `https://darsay.io/mcp`, bearer authorization, no OAuth, no session.
+Clients of protocol revision 2026-07-28 and of the `initialize` era are
+both served; the [API reference](/docs/board/api/#the-mcp-server) has the
+envelope of each.
 
 ### Codex
 
@@ -86,6 +89,35 @@ trail.
 	"  'https://darsay.io/api/board/entries?source=ESCAD/OpenRTLSet' | jq '.count'",
 ]} />
 
+## Discovery
+
+A program handed nothing but a board's link can walk to the tools without
+being told they exist.
+
+1. **The page.** `GET /b/{id}` with `Accept: application/json` answers the
+   board document; the HTML carries `<link rel="alternate" type="application/json">`
+   to `/b/{id}.json` and a `Link` header that says the same.
+2. **The document.** Its `links` name the MCP server (`mcp`), the server
+   card (`card`), the OpenAPI document (`openapi`), and these docs.
+3. **The card.** [`/.well-known/mcp-server-card`](/.well-known/mcp-server-card)
+   — also `/mcp/server-card`, and `<link rel="mcp">` on every page of the
+   site — says where the server is, which protocol revisions it speaks, and
+   that `Authorization: Bearer` opens it. Its shape is the MCP Registry's
+   `server.json`, and the server's name there is `io.darsay/board`.
+4. **The server.** `server/discover` answers with the revisions, the
+   capabilities, and the instructions paragraph; `tools/list` with the
+   tools; `tools/call` acts. The board id itself is a bearer, so the link
+   alone is enough to act — a key is the better habit.
+
+A crawler that reads text before JSON starts at [`/llms.txt`](/llms.txt):
+the machine interfaces and every documentation page, one line each.
+
+<Stage label="the walk, by hand" lines={[
+	"curl -s https://darsay.io/.well-known/mcp-server-card | jq '.remotes[0]'",
+	"curl -s -X POST https://darsay.io/mcp -H \"Authorization: Bearer $DARSAY_KEY\" -H 'content-type: application/json' \\",
+	"  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\"}' | jq '.result.supportedVersions'",
+]} />
+
 ## The tools
 
 The MCP server offers twelve tools. They are the REST operations under
@@ -110,9 +142,10 @@ Every writing tool accepts `expect_revision`: the `revision` you last read.
 If the board moved, the tool answers `stale` with the current revision
 instead of writing over someone else's change.
 
-`initialize` returns an `instructions` paragraph that teaches the model
-the board's words — rows not cards, no columns, address as identity,
-drop before remove — so a fresh session starts on the right foot.
+`server/discover` — and `initialize`, for a client of the older revision —
+returns an `instructions` paragraph that teaches the model the board's
+words — rows not cards, no columns, address as identity, drop before
+remove — so a fresh session starts on the right foot.
 
 ## The loop
 

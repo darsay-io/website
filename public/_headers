@@ -2,6 +2,7 @@
   X-Frame-Options: DENY
   Content-Security-Policy: frame-ancestors 'none'
   Content-Security-Policy-Report-Only: default-src 'self'
+  Link: </.well-known/mcp-server-card>; rel="mcp"
 
 /b/*
   Referrer-Policy: no-referrer

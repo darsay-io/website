@@ -27,7 +27,8 @@ import type { BoardRow } from "./catalog.ts";
 import { cardToApi, guideIndex, resolveCard } from "./guide.ts";
 import { fingerprint, idempotencyKey, lookupIdempotent, storeIdempotent } from "./idempotency.ts";
 import { actorOf, capStmts, clientFrom, commit, readCap, type Actor } from "./ledger.ts";
-import { dispatch, type McpRequest } from "./mcp.ts";
+import { CARD_MAX_AGE, CARD_PATHS, serverCard } from "./card.ts";
+import { serve, type McpRequest } from "./mcp.ts";
 import { openapiDocument } from "./openapi.ts";
 import {
 	opApply,
@@ -98,18 +99,19 @@ const API_HEADERS: Record<string, string> = {
 	// nothing away — the bearer or the URL is the whole credential.
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-	"Access-Control-Allow-Headers": "Authorization, Content-Type, If-Match, If-None-Match, Idempotency-Key, Mcp-Protocol-Version, Mcp-Session-Id",
+	"Access-Control-Allow-Headers": "Authorization, Content-Type, If-Match, If-None-Match, Idempotency-Key, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id",
 	"Access-Control-Expose-Headers": "ETag, Idempotent-Replayed, Content-Disposition",
 	"Access-Control-Max-Age": "86400",
 };
 
-function applyApiHeaders(c: { header: (k: string, v: string) => void }) {
-	for (const [k, v] of Object.entries(API_HEADERS)) c.header(k, v);
+/** The API defaults, applied after the handler; a header the handler set itself (a cacheable document's Cache-Control) stands. */
+function applyApiHeaders(c: { header: (k: string, v: string) => void }, res?: Response) {
+	for (const [k, v] of Object.entries(API_HEADERS)) if (!res?.headers.has(k)) c.header(k, v);
 }
 
 app.use("*", async (c, next) => {
 	await next();
-	applyApiHeaders(c);
+	applyApiHeaders(c, c.res);
 });
 
 app.options("*", (c) => c.body(null, 204));
@@ -521,6 +523,14 @@ app.get("/openapi.json", (c) => {
 	return c.json(openapiDocument(origin(c)));
 });
 
+// The server card: where the MCP server is and what opens it. Reached at
+// /.well-known/mcp-server-card and /mcp/server-card through the fetch
+// handler below; public, cacheable, and the same for every caller.
+app.get("/mcp/server-card", (c) => {
+	c.header("Cache-Control", "public, max-age=" + CARD_MAX_AGE);
+	return c.json(serverCard(origin(c)));
+});
+
 async function mcp(c: Ctx): Promise<Response> {
 	const g = await resolveGrant(c.env.DB, { paramBoardId: null, authorization: c.req.header("authorization") ?? null });
 	if (!g.ok) {
@@ -535,7 +545,11 @@ async function mcp(c: Ctx): Promise<Response> {
 	if (!parsed.ok) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: parsed.error } }, parsed.status as 400);
 	const grant = g.grant;
 	const actor = actorOf(grant, "mcp");
-	const result = await dispatch(parsed.body as McpRequest, async () => ({
+	// No Origin check: this is a public server on the open internet with a bearer
+	// for a credential and no cookies, so the DNS-rebinding case the transport
+	// guards against (a local server reached from a page) does not arise, and
+	// the API already answers any origin for the same reason.
+	const answer = await serve(parsed.body as McpRequest, c.req.raw.headers, origin(c), async () => ({
 		db: c.env.DB,
 		board: (await loadBoard(c.env.DB, grant.boardId)) ?? row,
 		grant,
@@ -544,14 +558,14 @@ async function mcp(c: Ctx): Promise<Response> {
 		origin: origin(c),
 		waitUntil: waitUntilOf(c),
 	}));
-	if (result === null) return c.body(null, 202);
-	return c.json(result);
+	if (answer.body === null) return c.body(null, 202);
+	return c.json(answer.body, answer.status as 200);
 }
 
 app.post("/mcp", (c) => mcp(c));
 app.get("/mcp", (c) => {
 	c.header("Allow", "POST");
-	return c.json({ error: "method_not_allowed", hint: "POST JSON-RPC here; this server keeps no session and opens no stream" }, 405);
+	return c.json({ error: "method_not_allowed", hint: "POST JSON-RPC here; this server keeps no session and opens no stream. The card is at /mcp/server-card." }, 405);
 });
 app.delete("/mcp", (c) => {
 	c.header("Allow", "POST");
@@ -572,8 +586,28 @@ function wantsJson(request: Request): boolean {
 	return accept.includes("application/json") && !accept.includes("text/html");
 }
 
+/**
+ * The board shell, told which board it is. The page is one static file for
+ * every board — the id lives in the URL and the script reads it there — so
+ * a program that fetched the HTML would otherwise find nothing to follow.
+ * `rel="alternate"` is the registered word for "the same thing, as JSON";
+ * the header says it too, for a HEAD. No lookup: the id is what the
+ * requester already holds, and nothing about the board is read for this.
+ */
+async function withAlternate(shell: Response, href: string): Promise<Response> {
+	if (shell.status !== 200 || !(shell.headers.get("content-type") || "").includes("text/html")) return shell;
+	const headers = new Headers(shell.headers);
+	headers.append("Link", "<" + href + '>; rel="alternate"; type="application/json"');
+	headers.delete("Content-Length");
+	const html = await shell.text();
+	const at = html.indexOf("<head>");
+	const tag = '<link rel="alternate" type="application/json" href="' + href + '">';
+	const body = at === -1 ? html : html.slice(0, at + 6) + tag + html.slice(at + 6);
+	return new Response(body, { status: shell.status, headers });
+}
+
 export default {
-	fetch(request: Request, env: Env, ctx: ExecutionContext) {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		const url = new URL(request.url);
 		const m = BOARD_JSON.exec(url.pathname);
 		if (m && (m[2] || wantsJson(request))) {
@@ -582,8 +616,12 @@ export default {
 		if (url.pathname === "/openapi.json" || url.pathname === "/mcp") {
 			return app.fetch(new Request(new URL("/api" + url.pathname + url.search, url.origin), request), env, ctx);
 		}
+		if ((CARD_PATHS as readonly string[]).includes(url.pathname)) {
+			return app.fetch(new Request(new URL("/api/mcp/server-card" + url.search, url.origin), request), env, ctx);
+		}
 		if (isBoardPage(url.pathname) && env.ASSETS) {
-			return env.ASSETS.fetch(new Request(new URL("/b/", url.origin), request));
+			const shell = await env.ASSETS.fetch(new Request(new URL("/b/", url.origin), request));
+			return m ? withAlternate(shell, "/b/" + m[1] + ".json") : shell;
 		}
 		return app.fetch(request, env, ctx);
 	},

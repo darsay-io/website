@@ -5,6 +5,15 @@
  * session to keep. Tools are the same operations the REST API exposes,
  * plus `explain`: the field guide, so an agent can learn what a chip on
  * a row means before it acts on it.
+ *
+ * Two eras of the protocol share the endpoint. A request that carries its
+ * protocol version in `params._meta` is a client of revision 2026-07-28:
+ * no handshake, `server/discover` for what the server speaks, the version
+ * and method mirrored into headers so intermediaries can route without
+ * the body, every result marked `resultType` and signed with `serverInfo`.
+ * A request without one is a client of the `initialize` era (2025-11-25
+ * and earlier), which this server always served statelessly anyway. The
+ * tools are the same either way; only the envelope differs.
  */
 import { LENS_BY_KEY } from "../lib/lenses.ts";
 import { SCOPES } from "./access.ts";
@@ -24,8 +33,22 @@ import {
 } from "./ops.ts";
 import { cardToApi, guideIndex, resolveCard } from "./guide.ts";
 
-export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
-export const MCP_SERVER = { name: "darsay.io board", version: "1.0.0" };
+/** Revisions served from per-request metadata, no handshake. */
+export const MCP_MODERN_VERSIONS = ["2026-07-28"] as const;
+/** Revisions that open with `initialize`; answered as each of them says. */
+export const MCP_LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
+/** Everything the server speaks, newest first: what the card and `server/discover` advertise. */
+export const MCP_PROTOCOL_VERSIONS = [...MCP_MODERN_VERSIONS, ...MCP_LEGACY_VERSIONS] as const;
+export const MCP_SERVER = { name: "darsay.io board", title: "darsay.io board", version: "1.1.0" };
+export const MCP_CAPABILITIES = { tools: { listChanged: false } };
+/** How long a client may keep `tools/list` and `server/discover`: the tools are code, not data. */
+export const MCP_TTL_MS = 3_600_000;
+
+const META = "io.modelcontextprotocol/";
+/** The HTTP headers do not match the body, or a required one is missing (2026-07-28). */
+const HEADER_MISMATCH = -32020;
+/** The version the request names is not one this server speaks (2026-07-28). */
+const UNSUPPORTED_VERSION = -32022;
 
 const INSTRUCTIONS = [
 	"This server is one darsay.io board: a want-list of models and datasets a group is archiving into their own vaults.",
@@ -34,6 +57,14 @@ const INSTRUCTIONS = [
 	"Chips on a row (negatives, quant, gated, large, redundant, subset, closed, family…) are read from the work, never written by hand; call explain with a chip to learn what it means.",
 	"drop_row is undoable; remove_row is not. Pass expect_revision (from get_board) to refuse a write when someone else changed the board first. Use apply with dry_run: true to see a plan before committing it.",
 ].join("\n");
+
+export function instructions(): string {
+	return INSTRUCTIONS + "\nScopes a key may carry: " + SCOPES.join(", ") + ".";
+}
+
+export function serverInfo(origin: string) {
+	return { ...MCP_SERVER, websiteUrl: origin + "/docs/board/agents/" };
+}
 
 type JsonRpcId = string | number | null;
 
@@ -299,46 +330,143 @@ function toolResult(res: OpResult) {
 	};
 }
 
-export type McpRequest = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
+function isObject(v: unknown): v is Record<string, unknown> {
+	return v !== null && typeof v === "object" && !Array.isArray(v);
+}
 
 /**
- * Answer one JSON-RPC message. Returns null for a notification (the
- * transport answers 202 with no body). `ctxFor` builds a fresh operation
+ * A header value, with the Base64 sentinel undone: a name that cannot ride
+ * as plain ASCII arrives as `=?base64?…?=`, and the server must decode it
+ * before comparing it to the body.
+ */
+function headerValue(v: string | null): { ok: true; value: string } | { ok: false } {
+	if (v === null) return { ok: false };
+	const m = /^=\?base64\?(.*)\?=$/.exec(v);
+	if (!m) return { ok: true, value: v };
+	try {
+		const bytes = Uint8Array.from(atob(m[1]), (ch) => ch.charCodeAt(0));
+		return { ok: true, value: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
+	} catch {
+		return { ok: false };
+	}
+}
+
+/** What `server/discover` says: the versions, the capabilities, the instructions, and who is answering. */
+export function discoverResult(origin: string) {
+	return {
+		resultType: "complete",
+		supportedVersions: [...MCP_PROTOCOL_VERSIONS],
+		capabilities: MCP_CAPABILITIES,
+		instructions: instructions(),
+		_meta: { [META + "serverInfo"]: serverInfo(origin) },
+		ttlMs: MCP_TTL_MS,
+		cacheScope: "public",
+	};
+}
+
+export type McpRequest = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
+
+/** One JSON-RPC message answered: the HTTP status the transport owes, and the body (null for a notification: 202, nothing). */
+export type McpAnswer = { status: number; body: Record<string, unknown> | null };
+
+async function callTool(id: JsonRpcId, params: Record<string, unknown>, ctxFor: () => Promise<OpCtx>): Promise<Record<string, unknown>> {
+	const name = typeof params.name === "string" ? params.name : "";
+	const tool = TOOL_BY_NAME[name];
+	if (!tool) return rpcError(id, -32602, "unknown tool", { name: name.slice(0, 40), tools: TOOLS.map((t) => t.name) });
+	const args = isObject(params.arguments) ? params.arguments : {};
+	const ctx = await ctxFor();
+	return rpcResult(id, toolResult(await tool.run(ctx, args)));
+}
+
+/**
+ * Revision 2026-07-28: no handshake. The request names its version and
+ * capabilities in `_meta` and mirrors version and method into headers,
+ * which must agree with the body (400, HeaderMismatch) before anything is
+ * read from it; a version this server does not speak answers with the
+ * ones it does (400, UnsupportedProtocolVersion); a method it does not
+ * have is 404. Every result says `resultType` and who answered.
+ */
+async function modern(
+	id: JsonRpcId,
+	method: string,
+	params: Record<string, unknown>,
+	meta: Record<string, unknown>,
+	asked: string,
+	headers: Headers,
+	origin: string,
+	ctxFor: () => Promise<OpCtx>,
+): Promise<McpAnswer> {
+	const mismatch = (message: string): McpAnswer => ({ status: 400, body: rpcError(id, HEADER_MISMATCH, message) });
+	const version = headers.get("mcp-protocol-version");
+	if (version === null) return mismatch("MCP-Protocol-Version header missing");
+	if (version !== asked) return mismatch("MCP-Protocol-Version header does not match _meta io.modelcontextprotocol/protocolVersion");
+	const mirrored = headers.get("mcp-method");
+	if (mirrored === null) return mismatch("Mcp-Method header missing");
+	if (mirrored !== method) return mismatch("Mcp-Method header does not match method");
+	if (!(MCP_MODERN_VERSIONS as readonly string[]).includes(asked)) {
+		return { status: 400, body: rpcError(id, UNSUPPORTED_VERSION, "Unsupported protocol version", { supported: [...MCP_MODERN_VERSIONS], requested: asked.slice(0, 20) }) };
+	}
+	if (!isObject(meta[META + "clientCapabilities"])) {
+		return { status: 400, body: rpcError(id, -32602, "_meta io.modelcontextprotocol/clientCapabilities required") };
+	}
+	const signed = (result: Record<string, unknown>): McpAnswer => ({
+		status: 200,
+		body: rpcResult(id, { resultType: "complete", ...result, _meta: { [META + "serverInfo"]: serverInfo(origin) } }),
+	});
+	switch (method) {
+		case "tools/list":
+			return signed({ tools: TOOLS.map(toolListing), ttlMs: MCP_TTL_MS, cacheScope: "public" });
+		case "tools/call": {
+			const name = headerValue(headers.get("mcp-name"));
+			if (!name.ok) return mismatch(headers.get("mcp-name") === null ? "Mcp-Name header missing" : "Mcp-Name header malformed");
+			if (name.value !== (typeof params.name === "string" ? params.name : "")) return mismatch("Mcp-Name header does not match params.name");
+			const answer = await callTool(id, params, ctxFor);
+			if (!("result" in answer)) return { status: 200, body: answer };
+			return signed(answer.result as Record<string, unknown>);
+		}
+		default:
+			return { status: 404, body: rpcError(id, -32601, "method not found", { method: method.slice(0, 60) }) };
+	}
+}
+
+/** The `initialize` era (2025-11-25 and earlier): the handshake answered, then the same tools. */
+async function legacy(id: JsonRpcId, method: string, params: Record<string, unknown>, origin: string, ctxFor: () => Promise<OpCtx>): Promise<McpAnswer> {
+	switch (method) {
+		case "initialize": {
+			const asked = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
+			const protocolVersion = (MCP_LEGACY_VERSIONS as readonly string[]).includes(asked) ? asked : MCP_LEGACY_VERSIONS[0];
+			return { status: 200, body: rpcResult(id, { protocolVersion, capabilities: MCP_CAPABILITIES, serverInfo: serverInfo(origin), instructions: instructions() }) };
+		}
+		case "ping":
+			return { status: 200, body: rpcResult(id, {}) };
+		case "tools/list":
+			return { status: 200, body: rpcResult(id, { tools: TOOLS.map(toolListing) }) };
+		case "tools/call":
+			return { status: 200, body: await callTool(id, params, ctxFor) };
+		default:
+			return { status: 200, body: rpcError(id, -32601, "method not found", { method: method.slice(0, 60) }) };
+	}
+}
+
+/**
+ * Answer one JSON-RPC message. `server/discover` is answered to anyone
+ * with a bearer, with or without `_meta` — its whole point is to tell a
+ * client what this server speaks, so it never fails on version. A request
+ * that names its version in `_meta` is served as 2026-07-28; one that does
+ * not is served as the `initialize` era. `ctxFor` builds a fresh operation
  * context per call so the board revision a tool sees is current.
  */
-export async function dispatch(msg: McpRequest, ctxFor: () => Promise<OpCtx>): Promise<Record<string, unknown> | null> {
+export async function serve(msg: McpRequest, headers: Headers, origin: string, ctxFor: () => Promise<OpCtx>): Promise<McpAnswer> {
 	const id: JsonRpcId = typeof msg.id === "string" || typeof msg.id === "number" ? msg.id : null;
 	const isNotification = msg.id === undefined;
 	if (msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
-		return isNotification ? null : rpcError(id, -32600, "invalid request");
+		return isNotification ? { status: 202, body: null } : { status: 200, body: rpcError(id, -32600, "invalid request") };
 	}
-	const params = msg.params !== null && typeof msg.params === "object" && !Array.isArray(msg.params) ? (msg.params as Record<string, unknown>) : {};
-	if (isNotification) return null;
-	switch (msg.method) {
-		case "initialize": {
-			const asked = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
-			const protocolVersion = (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
-			return rpcResult(id, {
-				protocolVersion,
-				capabilities: { tools: { listChanged: false } },
-				serverInfo: MCP_SERVER,
-				instructions: INSTRUCTIONS + "\nScopes a key may carry: " + SCOPES.join(", ") + ".",
-			});
-		}
-		case "ping":
-			return rpcResult(id, {});
-		case "tools/list":
-			return rpcResult(id, { tools: TOOLS.map(toolListing) });
-		case "tools/call": {
-			const name = typeof params.name === "string" ? params.name : "";
-			const tool = TOOL_BY_NAME[name];
-			if (!tool) return rpcError(id, -32602, "unknown tool", { name: name.slice(0, 40), tools: TOOLS.map((t) => t.name) });
-			const args = params.arguments !== null && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? (params.arguments as Record<string, unknown>) : {};
-			const ctx = await ctxFor();
-			const res = await tool.run(ctx, args);
-			return rpcResult(id, toolResult(res));
-		}
-		default:
-			return rpcError(id, -32601, "method not found", { method: msg.method.slice(0, 60) });
-	}
+	if (isNotification) return { status: 202, body: null };
+	const params = isObject(msg.params) ? msg.params : {};
+	if (msg.method === "server/discover") return { status: 200, body: rpcResult(id, discoverResult(origin)) };
+	const meta = isObject(params._meta) ? params._meta : null;
+	const asked = meta?.[META + "protocolVersion"];
+	if (meta && typeof asked === "string") return modern(id, msg.method, params, meta, asked, headers, origin, ctxFor);
+	return legacy(id, msg.method, params, origin, ctxFor);
 }

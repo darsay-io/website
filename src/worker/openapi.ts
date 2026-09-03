@@ -443,14 +443,36 @@ export function openapiDocument(origin: string): Json {
 	paths["/api/mcp"] = {
 		post: {
 			summary: "The MCP server (Streamable HTTP, stateless)",
-			description: "JSON-RPC 2.0 over POST; one request, one JSON answer, no session and no stream. Methods: initialize, ping, tools/list, tools/call. Tools: get_board, find_rows, get_row, add_row, update_row, drop_row, restore_row, remove_row, apply, batch, audit, explain. The bearer names the board.",
+			description: [
+				"JSON-RPC 2.0 over POST; one request, one JSON answer, no session and no stream. The bearer names the board.",
+				"Revision 2026-07-28: no handshake. Each request carries io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities in params._meta and mirrors them into the MCP-Protocol-Version and Mcp-Method headers (Mcp-Name on tools/call). Methods: server/discover, tools/list, tools/call. Every result carries resultType and the server's identity in _meta; tools/list carries ttlMs and cacheScope.",
+				"The initialize era (2025-11-25 and earlier): initialize, ping, tools/list, tools/call. server/discover is answered either way, with or without _meta.",
+				"Tools: get_board, find_rows, get_row, add_row, update_row, drop_row, restore_row, remove_row, apply, batch, audit, explain.",
+			].join("\n\n"),
 			tags: ["MCP"],
 			security: [{ boardKey: [] }],
 			requestBody: { required: true, ...json(ref("JsonRpc")) },
-			responses: { "200": json({ type: "object", description: "A JSON-RPC response." }), "202": { description: "A notification, acknowledged." }, "401": err("No key, or a bad one.") },
+			responses: {
+				"200": json({ type: "object", description: "A JSON-RPC response." }),
+				"202": { description: "A notification, acknowledged." },
+				"400": json({ type: "object" }, "2026-07-28 only: a JSON-RPC error — -32020 when a mirrored header is missing or disagrees with the body, -32022 (with data.supported) for a protocol version this server does not speak, -32602 when _meta lacks clientCapabilities."),
+				"401": err("No key, or a bad one."),
+				"404": json({ type: "object" }, "2026-07-28 only: a JSON-RPC error -32601, method not found."),
+			},
 		},
 	};
 	paths["/mcp"] = paths["/api/mcp"];
+	paths["/api/mcp/server-card"] = {
+		get: {
+			summary: "The server card",
+			description: "Where the MCP server is, which protocol revisions it speaks, and the header that opens it, in the shape of the MCP Registry's server.json (the server card proposal is a subset of it). Public; cacheable for an hour; every HTML page points at it with <link rel=\"mcp\">. Also at /.well-known/mcp-server-card and /mcp/server-card.",
+			tags: ["MCP"],
+			security: [{}],
+			responses: { "200": json({ type: "object", required: ["name", "description", "version", "remotes"], properties: { name: { type: "string" }, title: { type: "string" }, description: { type: "string" }, version: { type: "string" }, websiteUrl: { type: "string" }, remotes: { type: "array", items: { type: "object", properties: { type: { type: "string", enum: ["streamable-http"] }, url: { type: "string" }, supportedProtocolVersions: { type: "array", items: { type: "string" } }, headers: { type: "array", items: { type: "object" } } } } }, _meta: { type: "object" } } }) },
+		},
+	};
+	paths["/.well-known/mcp-server-card"] = paths["/api/mcp/server-card"];
+	paths["/mcp/server-card"] = paths["/api/mcp/server-card"];
 
 	return {
 		openapi: "3.1.0",
