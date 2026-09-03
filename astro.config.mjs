@@ -33,6 +33,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Start here', slug: 'docs/getting-started' },
 						{ label: 'Concepts', slug: 'docs/concepts' },
+						{ label: 'North star', slug: 'docs/north-star' },
 						{ label: 'Examples', slug: 'docs/examples' },
 						{ label: 'Hydration', slug: 'docs/hydration' },
 						{ label: 'Incremental transfer', slug: 'docs/incremental' },

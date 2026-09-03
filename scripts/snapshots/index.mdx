@@ -7,9 +7,9 @@ description: "**You have five minutes.**"
 
 | | Current |
 |---|---|
-| Tool | **0.14.10** |
-| Manifest schema | **1.8.0** |
-| Catalog schema | **1.2.0** |
+| Tool | **0.14.11** |
+| Manifest schema | **2.0.0** |
+| Catalog schema | **2.0.0** |
 | MVB format | **1.2** |
 | License | Apache 2.0 |
 
@@ -23,8 +23,10 @@ Major schema / format bumps are breaking; additive fields are minor.
 at the bundle, run it.
 
 **You want the picture in your head.**
-[Concepts](/docs/concepts/) — vault, bundle, pin, catalog,
-payload vs metadata, why the formats outlive the tool.
+[Concepts](/docs/concepts/) — vault, bundle, pin, catalog, negatives and
+prints, precision, lineage, why the formats outlive the tool.
+[North star](/docs/north-star/) — what the whole thing is for, and the five
+words every surface shares.
 
 **You want a command that already exists.**
 [Examples](/docs/examples/) — estimate, resume, datasets, catalogs,
@@ -42,7 +44,7 @@ required to open a bundle. Everything else is how we got there.
 
 **You are changing the tool.**
 [Design](/docs/design/) for why, [Testing](/docs/testing/) and
-[Contributing](https://github.com/darsay-io/darsay/blob/c67be598fb9586ae2255153cfe3402dd86ae30b3/CONTRIBUTING.md) for how,
+[Contributing](https://github.com/darsay-io/darsay/blob/0e5ee09b2920bd5c6ebf4c4b6b38485bbaebe388/CONTRIBUTING.md) for how,
 [Distribution](/docs/distribution/) for how a release is consumed.
 
 ## Using the vault
@@ -57,8 +59,8 @@ required to open a bundle. Everything else is how we got there.
 | [**FAQ**](/docs/faq/) | Moving or copying a bundle to another disk (`mv` / `cp`, or rsync — always valid); `mv` vs `assemble --handoff`; what travels, what stays |
 | [**Datasets**](/docs/datasets/) | The source is `datasets/owner/name`; payload under `data/` |
 | [**Sources**](/docs/sources/) | Provider-qualified refs; Hugging Face is a plugin |
-| [**Quantization**](/docs/quantization/) | Masters-first archiving, `darsay classify`, satellite quants, derived precision |
-| [**Catalogs**](/docs/catalogs/) | Shareable want-lists; darsay.io boards as remote catalogs; the vault is the same list, realized |
+| [**Quantization**](/docs/quantization/) | Negatives and prints, precision and bytes per parameter, `darsay classify`, satellite prints, derived precision |
+| [**Catalogs**](/docs/catalogs/) | Shareable want-lists; closed works; the family view; darsay.io boards as remote catalogs; the vault is the same list, realized |
 | [**Doctor**](/docs/doctor/) | Offline vault diagnostics, reversible repair, JSON contract, evidence history |
 
 ## The formats
@@ -78,6 +80,7 @@ are an optional third surface: a shareable want-list. They are not inside
 
 | Document | Open it when… |
 |---|---|
+| [**North star**](/docs/north-star/) | The mission and the model of the models — work, negative and print, precision, lineage — that every surface is measured against. |
 | [**Design**](/docs/design/) | Why Python. Why transfer concurrency is threads, and where Xet fits. Why longevity is in the formats, not a frozen binary. |
 | [**Distribution**](/docs/distribution/) | PyPI, pipx / uvx / wheel, personal Homebrew tap. |
 | [**Testing**](/docs/testing/) | Unit / integration / opt-in Hub e2e. What the suite is there to keep. |
@@ -118,4 +121,4 @@ The short list that every document, and every change, is measured against:
 | A new acquisition host | `SourceProvider` in `src/darsay/providers/`, wired in `sources.py` |
 
 Field changes to `manifest.json` or `.mvb.tar` need a docs update here and
-a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/c67be598fb9586ae2255153cfe3402dd86ae30b3/CONTRIBUTING.md).
+a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/0e5ee09b2920bd5c6ebf4c4b6b38485bbaebe388/CONTRIBUTING.md).

@@ -16,6 +16,7 @@ const SNAPSHOT_DIR = path.join(ROOT, "scripts/snapshots");
 const MAP = {
 	"GETTING-STARTED.md": "getting-started.mdx",
 	"CONCEPTS.md": "concepts.mdx",
+	"NORTH-STAR.md": "north-star.mdx",
 	"CATALOGS.md": "catalogs.mdx",
 	"SOURCES.md": "sources.mdx",
 	"MANIFEST.md": "manifest.mdx",
@@ -83,6 +84,10 @@ function rewriteLinks(md, sha, repo) {
 		}
 		if (file === "../CLAUDE.md") {
 			return `](https://github.com/${repo}/blob/${sha}/CLAUDE.md${hash})`;
+		}
+		const proposal = file.match(/(?:^|\/)proposals\/([^/]+\.md)$/);
+		if (proposal) {
+			return `](https://github.com/${repo}/blob/${sha}/docs/proposals/${proposal[1]}${hash})`;
 		}
 		if (file === "../examples/README.md" || file === "examples/README.md") {
 			return `](/docs/examples/${hash})`;
