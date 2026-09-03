@@ -1,0 +1,11 @@
+---
+// darsay.io is one theme, gold on space; there is no light palette to switch
+// to, so the document is always dark and the picker is not rendered
+// (ThemeSelect.astro). `updatePickers` stays a function because Starlight's
+// own components call it.
+---
+
+<script is:inline>
+	document.documentElement.dataset.theme = 'dark';
+	window.StarlightThemeProvider = { updatePickers() {} };
+</script>
