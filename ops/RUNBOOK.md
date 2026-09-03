@@ -289,11 +289,13 @@ read-only.
 sync depends on that — it pushes straight to `main`. If protection is ever
 added, let the PAT's owner bypass it, or the pin stops landing.
 
-**Fine-grained PATs expire.** Write the expiry date next to the secret
-name in a place you will see (a calendar, not this file). When one lapses,
-`Sync CLI docs` still lands the pin under `github.token`, but `Deploy`
-does not fire and the release's nudge fails quietly to the hourly cron —
-see [Docs lock](#docs-lock).
+**PAT expiry.** The token in use is believed to have no expiry. Check at
+github.com → Settings → Developer settings → Personal access tokens: a
+token listed as *No expiration* needs nothing here. If one is ever minted
+with an expiry, note the date somewhere you will see it. When a PAT lapses
+nothing breaks loudly: `Sync CLI docs` still lands the pin under
+`github.token`, but `Deploy` does not fire and the release's nudge fails
+quietly to the hourly cron — see [Docs lock](#docs-lock).
 
 **Rebuild from nothing, in order:** the Cloudflare account and zone
 ([Cloudflare](#cloudflare-when-an-account-exists), steps 1–8), then the
