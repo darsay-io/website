@@ -35,7 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DARSAY_DOCS_ROOT: ${{ github.workspace }}/.ci-darsay
-      SYNC_LOG: ${{ runner.temp }}/sync.log
     steps:
       # With the PAT, the push to main acts as the token's owner and so
       # triggers the Deploy workflow — events from the default github.token
@@ -124,6 +123,9 @@ jobs:
         env:
           PUBLIC_BOARDS_ENABLED: "true"
           TAG: ${{ steps.cli.outputs.tag }}
+          # The runner context is a step's to use, not the job's: at job
+          # level GitHub refuses the whole file before any job starts.
+          SYNC_LOG: ${{ runner.temp }}/sync.log
         run: |
           set -euo pipefail
           {
@@ -172,6 +174,7 @@ jobs:
           NUMBER: ${{ steps.report.outputs.number }}
           WEBSITE_SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SYNC_LOG: ${{ runner.temp }}/sync.log
         run: |
           set -uo pipefail
           ERROR=$(grep -m1 -E "^(Error|AssertionError|error): " "$SYNC_LOG" 2>/dev/null || true)
