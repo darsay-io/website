@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import starlight from '@astrojs/starlight';
+import { buildSidebar } from './scripts/sidebar.mjs';
 
 export default defineConfig({
 	site: 'https://darsay.io',
@@ -27,52 +28,9 @@ export default defineConfig({
 				},
 			],
 			customCss: ['./src/styles/site.css'],
-			sidebar: [
-				{
-					label: 'Using the vault',
-					items: [
-						{ label: 'Start here', slug: 'docs/getting-started' },
-						{ label: 'Concepts', slug: 'docs/concepts' },
-						{ label: 'North star', slug: 'docs/north-star' },
-						{ label: 'Examples', slug: 'docs/examples' },
-						{ label: 'Hydration', slug: 'docs/hydration' },
-						{ label: 'Incremental transfer', slug: 'docs/incremental' },
-						{ label: 'Datasets', slug: 'docs/datasets' },
-						{ label: 'Sources', slug: 'docs/sources' },
-						{ label: 'Quantization', slug: 'docs/quantization' },
-						{ label: 'Catalogs', slug: 'docs/catalogs' },
-						{ label: 'Doctor', slug: 'docs/doctor' },
-						{ label: 'FAQ', slug: 'docs/faq' },
-					],
-				},
-				{
-					label: 'The formats',
-					items: [
-						{ label: 'manifest.json', slug: 'docs/manifest' },
-						{ label: '.mvb.tar', slug: 'docs/mvb-format' },
-					],
-				},
-				{
-					label: 'The board',
-					items: [
-						{ label: 'For agents', slug: 'docs/board' },
-						{ label: 'API reference', slug: 'docs/board/api' },
-						{ label: 'Agents & MCP', slug: 'docs/board/agents' },
-					],
-				},
-				{
-					label: 'Project',
-					items: [
-						{ label: 'Design', slug: 'docs/design' },
-						{ label: 'Distribution', slug: 'docs/distribution' },
-						{ label: 'Testing', slug: 'docs/testing' },
-						{
-							label: 'GitHub',
-							link: 'https://github.com/darsay-io/darsay',
-						},
-					],
-				},
-			],
+			// Computed from the pages that exist (scripts/sidebar.mjs), so a new
+			// CLI docs page reaches the sidebar with no edit here.
+			sidebar: buildSidebar(),
 		}),
 	],
 });

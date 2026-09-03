@@ -7,6 +7,12 @@ name: Sync CLI docs
 # the default github.token triggers no workflows, so Deploy would not fire.
 # The CLI's release workflow dispatches this on each release; the hourly
 # cron is the fallback for releases the dispatch missed.
+#
+# A failure is a signal, not a retry. The first failure for a tag opens one
+# `docs-sync` issue naming the error and the run, and while main is still at
+# the commit that failed, later runs skip that tag and say so instead of
+# re-running the identical input every hour. Push a fix to main and the next
+# run tries again; the run that succeeds closes the issue.
 on:
   schedule:
     - cron: "23 * * * *"
@@ -22,12 +28,14 @@ concurrency:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     env:
       DARSAY_DOCS_ROOT: ${{ github.workspace }}/.ci-darsay
+      SYNC_LOG: ${{ runner.temp }}/sync.log
     steps:
       # With the PAT, the push to main acts as the token's owner and so
       # triggers the Deploy workflow — events from the default github.token
@@ -70,26 +78,65 @@ jobs:
             echo "bump $LOCK_REF ($LOCK_SHA) -> $TAG ($SHA)"
           fi
 
-      - uses: actions/checkout@v5
+      # The open issue is the marker that this tag already failed and was
+      # reported. It only suppresses the run while main is unchanged: the
+      # issue records the website commit that failed, so a pushed fix makes
+      # the next run try again without anyone reopening or closing anything.
+      - name: Look for an open failure report
+        id: report
         if: steps.cli.outputs.current != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cli.outputs.tag }}
+          WEBSITE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          TITLE="Sync CLI docs failed for ${TAG}"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          NUMBER=$(gh issue list --repo "$GITHUB_REPOSITORY" --label docs-sync --state open \
+            --json number,title --jq "map(select(.title == \"${TITLE}\")) | .[0].number // empty")
+          echo "number=${NUMBER}" >> "$GITHUB_OUTPUT"
+          if [ -z "$NUMBER" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BODY=$(gh issue view "$NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          case "$BODY" in
+            *"$WEBSITE_SHA"*)
+              echo "go=false" >> "$GITHUB_OUTPUT"
+              echo "skipped: ${TAG} already reported in #${NUMBER}; main is still at ${WEBSITE_SHA}"
+              ;;
+            *)
+              echo "go=true" >> "$GITHUB_OUTPUT"
+              echo "retrying ${TAG}: main moved since #${NUMBER} was written"
+              ;;
+          esac
+
+      - uses: actions/checkout@v5
+        if: steps.report.outputs.go == 'true'
         with:
           repository: darsay-io/darsay
           ref: ${{ steps.cli.outputs.sha }}
           path: .ci-darsay
 
       - name: Bump lock and regenerate
-        if: steps.cli.outputs.current != 'true'
+        if: steps.report.outputs.go == 'true'
         env:
           PUBLIC_BOARDS_ENABLED: "true"
+          TAG: ${{ steps.cli.outputs.tag }}
         run: |
-          npm ci
-          node scripts/bump-docs-lock.mjs "${{ steps.cli.outputs.tag }}" --force
-          npm test
-          npm run check:docs
-          npm run build
+          set -euo pipefail
+          {
+            npm ci
+            node scripts/bump-docs-lock.mjs "$TAG" --force
+            npm test
+            npm run check:docs
+            npm run build
+          } 2>&1 | tee "$SYNC_LOG"
 
       - name: Commit to main and push
-        if: steps.cli.outputs.current != 'true'
+        id: push
+        if: steps.report.outputs.go == 'true'
         env:
           HAS_PUSH_TOKEN: ${{ secrets.DOCS_PUSH_TOKEN != '' }}
           TAG: ${{ steps.cli.outputs.tag }}
@@ -108,7 +155,69 @@ jobs:
           # conflicts only if another docs pin raced this one — then this run
           # fails and the next cron run starts over from fresh main.
           git push origin main || { git pull --rebase origin main && git push origin main; }
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if [ "$HAS_PUSH_TOKEN" != "true" ]; then
             echo "pushed with github.token: Deploy will not auto-trigger;" \
               "set DOCS_PUSH_TOKEN, or run the Deploy workflow by hand"
           fi
+
+      # One issue per tag, so the hourly cron stops re-running a known-bad
+      # input and a person sees the failure without watching the Actions tab.
+      - name: Report the failure
+        if: failure() && steps.report.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cli.outputs.tag }}
+          TITLE: ${{ steps.report.outputs.title }}
+          NUMBER: ${{ steps.report.outputs.number }}
+          WEBSITE_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          ERROR=$(grep -m1 -E "^(Error|AssertionError|error): " "$SYNC_LOG" 2>/dev/null || true)
+          [ -n "$ERROR" ] || ERROR=$(tail -n 5 "$SYNC_LOG" 2>/dev/null || true)
+          # The push step can fail with no log of its own; say so rather than
+          # opening an issue whose one useful field is an empty code block.
+          [ -n "$ERROR" ] || ERROR="no transform output; see the run log"
+          BODY=$(printf '%s\n' \
+            "\`Sync CLI docs\` could not publish the CLI docs at \`${TAG}\`." \
+            "" \
+            '```' \
+            "${ERROR}" \
+            '```' \
+            "" \
+            "Run: ${RUN_URL}" \
+            "Website: ${WEBSITE_SHA}" \
+            "" \
+            "The hourly cron skips \`${TAG}\` while this issue is open and \`main\` is still at that commit. Push the fix to \`main\` and the next run tries again; the run that succeeds closes this issue." \
+            "" \
+            "A transform that fails here should have failed in the CLI's \`Docs site transform\` job before the tag existed — worth asking why it did not.")
+          gh label create docs-sync --repo "$GITHUB_REPOSITORY" --color d4c5f9 \
+            --description "The CLI docs sync could not publish a release" 2>/dev/null || true
+          if [ -n "$NUMBER" ]; then
+            gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+            gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --body "Still failing with \`main\` at ${WEBSITE_SHA} — ${RUN_URL}"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY" --label docs-sync
+          fi
+
+      # Every open report, not only this tag's: a sync that succeeds says the
+      # pipeline is healthy, and a report for a tag production has moved past
+      # would otherwise stay open forever with nothing left to fix. The
+      # docs-sync label belongs to this workflow; nothing else wears it.
+      - name: Close the failure reports
+        if: steps.report.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.cli.outputs.tag }}
+          COMMIT: ${{ steps.push.outputs.commit }}
+        run: |
+          set -euo pipefail
+          OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --label docs-sync --state open \
+            --json number --jq '.[].number')
+          for NUMBER in $OPEN; do
+            gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --body "Published \`${TAG}\` in ${COMMIT:-no new commit}; closing."
+            gh issue close "$NUMBER" --repo "$GITHUB_REPOSITORY"
+          done

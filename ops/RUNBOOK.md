@@ -201,8 +201,20 @@ A D1 id names a database on *your* account. The D1 HTTP API is not open. Listing
 
 Production `/docs/` tracks the latest **CLI GitHub Release**, not `main`. `docs.lock.json` holds that tag and commit.
 
-A CLI release flows to production with no hands, in three workflows:
+The transform derives its page list from the pinned source — every
+`docs/*.md` becomes `/docs/<stem>/`, plus `examples/README.md` — so a new CLI
+docs page publishes itself. What it will not do is guess: a relative link
+that names nothing in the source checkout fails the sync rather than shipping
+a dead link.
 
+A CLI release flows to production with no hands, in three workflows, with a
+fourth check upstream of all of them:
+
+0. The CLI repo's `Docs site transform` job checks out this repo, runs
+   `scripts/sync-docs.mjs` against the CLI commit under test, then `npm test`
+   and the build. It runs on every CLI pull request and as a prerequisite of
+   the `Release` job, so a new docs page or a renamed heading fails there —
+   before the tag exists — instead of here, after it.
 1. The CLI repo's `Release` workflow dispatches `Sync CLI docs` here after
    publishing (secret `WEBSITE_DISPATCH_TOKEN` in `darsay-io/darsay`; the
    hourly cron is the fallback for missed dispatches).
@@ -217,6 +229,21 @@ A CLI release flows to production with no hands, in three workflows:
    or the logo (and on `workflow_dispatch` for anything else): test,
    `check:docs`, build, `wrangler deploy` (secrets `CLOUDFLARE_API_TOKEN`,
    `CLOUDFLARE_ACCOUNT_ID`).
+
+### When a sync fails
+
+A failure is a signal, not something to retry hourly. The first failing run
+for a tag opens one issue labelled `docs-sync`, titled
+`Sync CLI docs failed for <tag>`, carrying the error line, a link to the run,
+and the `main` commit that failed. While that issue is open **and** `main` is
+still at that commit, later runs print `skipped: <tag> already reported` and
+exit 0 — the identical input is not re-run. Push the fix to `main` and the
+next run tries again on its own; the run that succeeds comments the commit it
+published and closes every open `docs-sync` report — including one for a tag
+production has since moved past, which nothing would otherwise ever close.
+
+So: to retry, fix `main` (or close the issue). Nothing else needs touching.
+`Sync CLI docs` needs `issues: write` for this, which it has.
 
 Any missing secret degrades a step, never the pipeline's safety: without
 `DOCS_PUSH_TOKEN` the pin still lands on `main` but Deploy must be run by
