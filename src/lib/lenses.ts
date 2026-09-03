@@ -200,7 +200,7 @@ export const LENSES: Lens[] = [
 		noun: "quant",
 		group: "policy",
 		primer: "quant",
-		blurb: "A published quantized artifact: mostly GGUF, or a dominant dtype below full fidelity. Some are prints; a native FP8 or INT4 release is the master.",
+		blurb: "A published quantized artifact: mostly GGUF, or a dominant dtype below full fidelity. Some are prints; a native FP8 or INT4 release is the negative.",
 		test: (e) => effectiveHints(e).includes("quant"),
 	},
 	{
