@@ -1,347 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { app, type Env } from "./index.ts";
+import { TestD1 } from "./testdb.ts";
 import { CREATE_CAP, LOOKUP_CAP, MAX_ENTRIES, utcDay } from "./validate.ts";
-
-type Board = {
-	id: string;
-	catalog_id: string;
-	title: string;
-	curator: string | null;
-	note: string | null;
-	created: string;
-	updated: string;
-};
-
-type Entry = {
-	id: number;
-	board_id: string;
-	source: string;
-	revision: string;
-	include_json: string | null;
-	include_key: string;
-	desire: number | null;
-	note: string | null;
-	status: string;
-	holders: string;
-	added: string;
-	payload_bytes: number | null;
-	estimate_json: string | null;
-	claim_json: string | null;
-};
-
-class FakeD1 {
-	boards = new Map<string, Board>();
-	entries: Entry[] = [];
-	nextId = 1;
-	meta: Record<string, string> = {
-		schema: "1",
-		creates_utc: "1970-01-01",
-		creates_n: "0",
-		mutates_utc: "1970-01-01",
-		mutates_n: "0",
-		lookups_utc: "1970-01-01",
-		lookups_n: "0",
-	};
-
-	prepare(sql: string) {
-		const db = this;
-		const stmt = {
-			_binds: [] as unknown[],
-			bind(...args: unknown[]) {
-				stmt._binds = args;
-				return stmt;
-			},
-			first: async () => db.exec(sql, stmt._binds, "first"),
-			all: async () => ({ results: db.exec(sql, stmt._binds, "all") }),
-			run: async () => db.exec(sql, stmt._binds, "run"),
-		};
-		return stmt;
-	}
-
-	async batch(stmts: ReturnType<FakeD1["prepare"]>[]) {
-		const out = [];
-		for (const s of stmts) out.push(await s.run());
-		return out;
-	}
-
-	exec(sql: string, binds: unknown[], mode: "first" | "all" | "run") {
-		const s = sql.replace(/\s+/g, " ").trim();
-		if (s.startsWith("SELECT value FROM meta")) {
-			const key = String(binds[0]);
-			const value = this.meta[key];
-			const row = value === undefined ? null : { value };
-			return mode === "all" ? (row ? [row] : []) : row;
-		}
-		if (s.startsWith("UPDATE meta SET value")) {
-			this.meta[String(binds[1])] = String(binds[0]);
-			return { success: true, meta: { changes: 1 } };
-		}
-		if (s.startsWith("INSERT INTO boards")) {
-			const [id, catalog_id, title, curator, note, created, updated] = binds as [
-				string,
-				string,
-				string,
-				string | null,
-				string | null,
-				string,
-				string,
-			];
-			this.boards.set(id, { id, catalog_id, title, curator, note, created, updated });
-			return { success: true, meta: { changes: 1 } };
-		}
-		if (s.startsWith("SELECT * FROM boards WHERE id")) {
-			const row = this.boards.get(String(binds[0])) ?? null;
-			return mode === "all" ? (row ? [row] : []) : row;
-		}
-		if (s.startsWith("UPDATE boards SET title")) {
-			const [title, curator, note, catalog_id, updated, id] = binds as [
-				string,
-				string | null,
-				string | null,
-				string,
-				string,
-				string,
-			];
-			const b = this.boards.get(id);
-			if (b) Object.assign(b, { title, curator, note, catalog_id, updated });
-			return { success: true, meta: { changes: b ? 1 : 0 } };
-		}
-		if (s.startsWith("UPDATE boards SET updated")) {
-			const b = this.boards.get(String(binds[1]));
-			if (b) b.updated = String(binds[0]);
-			return { success: true, meta: { changes: b ? 1 : 0 } };
-		}
-		if (s.startsWith("DELETE FROM boards")) {
-			const id = String(binds[0]);
-			this.boards.delete(id);
-			this.entries = this.entries.filter((e) => e.board_id !== id);
-			return { success: true, meta: { changes: 1 } };
-		}
-		if (s.startsWith("SELECT * FROM entries WHERE board_id = ? AND source")) {
-			const [boardId, source, revision, includeKey] = binds as [string, string, string, string];
-			const row =
-				this.entries.find(
-					(e) =>
-						e.board_id === boardId &&
-						e.source === source &&
-						e.revision === revision &&
-						e.include_key === includeKey,
-				) ?? null;
-			return mode === "all" ? (row ? [row] : []) : row;
-		}
-		if (s.startsWith("SELECT id FROM entries WHERE board_id = ? AND source")) {
-			const [boardId, source, revision, includeKey, eid] = binds as [string, string, string, string, number];
-			const row =
-				this.entries.find(
-					(e) =>
-						e.board_id === boardId &&
-						e.source === source &&
-						e.revision === revision &&
-						e.include_key === includeKey &&
-						e.id !== eid,
-				) ?? null;
-			return mode === "all" ? (row ? [{ id: row.id }] : []) : row ? { id: row.id } : null;
-		}
-		if (s.startsWith("SELECT * FROM entries WHERE id = ? AND board_id")) {
-			const [eid, boardId] = binds as [number, string];
-			const row = this.entries.find((e) => e.id === eid && e.board_id === boardId) ?? null;
-			return mode === "all" ? (row ? [row] : []) : row;
-		}
-		if (s.startsWith("SELECT id FROM entries WHERE id = ? AND board_id")) {
-			const [eid, boardId] = binds as [number, string];
-			const row = this.entries.find((e) => e.id === eid && e.board_id === boardId);
-			return row ? { id: row.id } : null;
-		}
-		if (s.startsWith("SELECT * FROM entries WHERE id = ?")) {
-			const row = this.entries.find((e) => e.id === Number(binds[0])) ?? null;
-			return mode === "all" ? (row ? [row] : []) : row;
-		}
-		if (s.startsWith("SELECT * FROM entries WHERE board_id")) {
-			const boardId = String(binds[0]);
-			const results = this.entries
-				.filter((e) => e.board_id === boardId)
-				.sort((a, b) => {
-					if (a.desire === null && b.desire === null) return a.id - b.id;
-					if (a.desire === null) return 1;
-					if (b.desire === null) return -1;
-					if (b.desire !== a.desire) return b.desire - a.desire;
-					return a.id - b.id;
-				});
-			return mode === "first" ? (results[0] ?? null) : results;
-		}
-		if (s.includes("INSERT INTO entries") && s.includes("WHERE (SELECT COUNT(*)")) {
-			const boardId = String(binds[0]);
-			const cap = Number(binds[13]);
-			const n = this.entries.filter((e) => e.board_id === boardId).length;
-			if (n >= cap) return { success: true, meta: { changes: 0 } };
-			return this.insertEntry(binds);
-		}
-		if (s.startsWith("INSERT INTO entries")) {
-			return this.insertEntry(binds);
-		}
-		if (s.startsWith("UPDATE entries SET source")) {
-			const [
-				source,
-				revision,
-				include_json,
-				include_key,
-				desire,
-				note,
-				status,
-				holders,
-				payload_bytes,
-				estimate_json,
-				eid,
-			] = binds as [
-				string,
-				string,
-				string | null,
-				string,
-				number | null,
-				string | null,
-				string,
-				string,
-				number | null,
-				string | null,
-				number,
-			];
-			const e = this.entries.find((row) => row.id === eid);
-			if (e) {
-				const collision = this.entries.some(
-					(o) =>
-						o.id !== eid &&
-						o.board_id === e.board_id &&
-						o.source === source &&
-						o.revision === revision &&
-						o.include_key === include_key,
-				);
-				if (collision) throw new Error("UNIQUE constraint failed");
-				Object.assign(e, {
-					source,
-					revision,
-					include_json,
-					include_key,
-					desire,
-					note,
-					status,
-					holders,
-					payload_bytes,
-					estimate_json,
-				});
-			}
-			return { success: true, meta: { changes: e ? 1 : 0 } };
-		}
-		if (s.startsWith("UPDATE entries SET desire")) {
-			const [desire, note, status, holders, payload_bytes, estimate_json, source, eid] = binds as [
-				number | null,
-				string | null,
-				string,
-				string,
-				number | null,
-				string | null,
-				string,
-				number,
-			];
-			const e = this.entries.find((row) => row.id === eid);
-			if (e) {
-				Object.assign(e, { desire, note, status, holders, payload_bytes, estimate_json, source });
-			}
-			return { success: true, meta: { changes: e ? 1 : 0 } };
-		}
-		if (s.startsWith("UPDATE entries SET note")) {
-			const [note, desire, payload_bytes, estimate_json, eid] = binds as [
-				string | null,
-				number | null,
-				number | null,
-				string | null,
-				number,
-			];
-			const e = this.entries.find((row) => row.id === eid);
-			if (e) Object.assign(e, { note, desire, payload_bytes, estimate_json });
-			return { success: true, meta: { changes: e ? 1 : 0 } };
-		}
-		if (s.startsWith("UPDATE entries SET claim_json")) {
-			const [claim_json, status, holders, eid] = binds as [
-				string | null,
-				string,
-				string,
-				number,
-			];
-			const e = this.entries.find((row) => row.id === eid);
-			if (e) Object.assign(e, { claim_json, status, holders });
-			return { success: true, meta: { changes: e ? 1 : 0 } };
-		}
-		if (s.startsWith("DELETE FROM entries")) {
-			const before = this.entries.length;
-			this.entries = this.entries.filter((e) => e.id !== Number(binds[0]));
-			return { success: true, meta: { changes: before - this.entries.length } };
-		}
-		throw new Error(`unhandled sql: ${s}`);
-	}
-
-	insertEntry(binds: unknown[]) {
-		const [
-			board_id,
-			source,
-			revision,
-			include_json,
-			include_key,
-			desire,
-			note,
-			status,
-			holders,
-			added,
-			payload_bytes,
-			estimate_json,
-		] = binds as [
-			string,
-			string,
-			string,
-			string | null,
-			string,
-			number | null,
-			string | null,
-			string,
-			string,
-			string,
-			number | null,
-			string | null,
-		];
-		if (
-			this.entries.some(
-				(e) =>
-					e.board_id === board_id &&
-					e.source === source &&
-					e.revision === revision &&
-					e.include_key === include_key,
-			)
-		) {
-			throw new Error("UNIQUE constraint failed");
-		}
-		const row: Entry = {
-			id: this.nextId++,
-			board_id,
-			source,
-			revision,
-			include_json,
-			include_key,
-			desire,
-			note,
-			status,
-			holders,
-			added,
-			payload_bytes,
-			estimate_json,
-			claim_json: null,
-		};
-		this.entries.push(row);
-		return { success: true, meta: { changes: 1, last_row_id: row.id } };
-	}
-}
 
 const CREATE_SECRET = "test-create";
 
-function env(db = new FakeD1(), extra: Partial<Env> = {}): { db: FakeD1; env: Env } {
+function env(db = new TestD1(), extra: Partial<Env> = {}): { db: TestD1; env: Env } {
 	return { db, env: { DB: db as unknown as D1Database, CREATE_PASSWORD: CREATE_SECRET, ...extra } };
 }
 
@@ -409,11 +73,11 @@ describe("boards API", () => {
 		expect(await missing.json()).toEqual({ error: "unauthorized" });
 		const wrong = await req(e, "/api/boards", postBoard({ password: "nope" }));
 		expect(wrong.status).toBe(401);
-		expect(Number(db.meta.creates_n)).toBe(0);
+		expect(Number(db.meta("creates_n"))).toBe(0);
 	});
 
 	it("disables create when CREATE_PASSWORD is not configured", async () => {
-		const { env: e } = env(new FakeD1(), { CREATE_PASSWORD: "" });
+		const { env: e } = env(new TestD1(), { CREATE_PASSWORD: "" });
 		const res = await req(e, "/api/boards", postBoard());
 		expect(res.status).toBe(503);
 		expect(await res.json()).toEqual({ error: "create_disabled" });
@@ -454,8 +118,8 @@ describe("boards API", () => {
 
 	it("returns create_cap at the daily limit", async () => {
 		const { db, env: e } = env();
-		db.meta.creates_utc = utcDay();
-		db.meta.creates_n = String(CREATE_CAP);
+		db.setMeta("creates_utc", utcDay());
+		db.setMeta("creates_n", String(CREATE_CAP));
 		const res = await req(e, "/api/boards", postBoard());
 		expect(res.status).toBe(429);
 		expect(await res.json()).toEqual({ error: "create_cap" });
@@ -652,7 +316,7 @@ describe("boards API", () => {
 			body: JSON.stringify({ source: "hf:Qwen/Qwen3-0.6B" }),
 		});
 		expect(clash.status).toBe(409);
-		expect(await clash.json()).toEqual({ error: "conflict" });
+		expect(await clash.json()).toMatchObject({ error: "conflict" });
 	});
 
 	it("refuses a 201st row", async () => {
@@ -660,21 +324,12 @@ describe("boards API", () => {
 		const created = await req(e, "/api/boards", postBoard());
 		const { id } = (await created.json()) as { id: string };
 		for (let i = 0; i < MAX_ENTRIES; i++) {
-			db.entries.push({
-				id: db.nextId++,
-				board_id: id,
-				source: `opaque:n${i}`,
-				revision: "",
-				include_json: null,
-				include_key: "[]",
-				desire: null,
-				note: null,
-				status: "want",
-				holders: "",
-				added: "2026-08-26T18:00:00+00:00",
-				payload_bytes: null,
-				estimate_json: null,
-			});
+			db.exec(
+				`INSERT INTO entries (board_id, source, revision, include_json, include_key, desire, note, status, holders, added)
+				 VALUES (?, ?, '', NULL, '[]', NULL, NULL, 'want', '', '2026-08-26T18:00:00+00:00')`,
+				id,
+				`opaque:n${i}`,
+			);
 		}
 		const res = await req(e, `/api/boards/${id}/entries`, {
 			method: "POST",
@@ -722,8 +377,8 @@ describe("boards API", () => {
 			body: JSON.stringify({ confirm: "delete" }),
 		});
 		expect(ok.status).toBe(200);
-		expect(Number(db.meta.lookups_n)).toBeGreaterThan(0);
-		expect(Number(db.meta.lookups_n)).toBeLessThan(LOOKUP_CAP);
+		expect(Number(db.meta("lookups_n"))).toBeGreaterThan(0);
+		expect(Number(db.meta("lookups_n"))).toBeLessThan(LOOKUP_CAP);
 	});
 });
 

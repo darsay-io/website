@@ -1,3 +1,4 @@
+import { lineageOf, READ_FROM } from "../lib/lineage.ts";
 import { entryHints } from "./hints.ts";
 import { artifactTypeFromSource, canonicalizeSource } from "./sources.ts";
 import { CLAIM_TTL_MS } from "./validate.ts";
@@ -79,22 +80,78 @@ export type BoardRow = {
 	note: string | null;
 	created: string;
 	updated: string;
+	/** Bumped by every write; the ETag agents send back as If-Match. */
+	revision: number;
 };
 
 export type EntryRow = {
 	id: number;
+	board_id?: string;
 	source: string;
 	revision: string;
 	include_json: string | null;
+	include_key?: string;
 	desire: number | null;
 	note: string | null;
 	status: string;
 	holders: string;
 	added: string;
+	/** When a field last changed; null on rows written before the column existed. */
+	updated: string | null;
+	/** A soft removal, undoable; a dropped row leaves every list and the export. */
+	dropped: string | null;
 	payload_bytes: number | null;
 	estimate_json: string | null;
 	claim_json: string | null;
 };
+
+/** A row's address, structured: where the work lives and how it is named there. */
+export type Address =
+	| { kind: "model" | "dataset"; provider: "huggingface"; locator: string; url: string }
+	| { kind: "closed"; provider: null; locator: string; url: string }
+	| { kind: "opaque"; provider: string; locator: string; url: null };
+
+export function addressOf(source: string): Address {
+	const p = canonicalizeSource(source);
+	if (p.kind === "hf") return { kind: p.artifactType, provider: "huggingface", locator: p.locator, url: p.url };
+	if (p.kind === "home") return { kind: "closed", provider: null, locator: p.canonical, url: p.canonical };
+	const i = source.indexOf(":");
+	return {
+		kind: "opaque",
+		provider: i > 0 ? source.slice(0, i).toLowerCase() : "opaque",
+		locator: i > 0 ? source.slice(i + 1) : source,
+		url: null,
+	};
+}
+
+export function parseIncludeJson(raw: string | null): string[] | null {
+	if (!raw) return null;
+	try {
+		return JSON.parse(raw) as string[];
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The fields a person or a program decides on a row — what the audit trail
+ * keeps as before and after. Digests and claims are facts, not decisions,
+ * so they are left out.
+ */
+export function rowSnapshot(e: EntryRow) {
+	return {
+		source: e.source,
+		revision: e.revision === "" ? null : e.revision,
+		include: parseIncludeJson(e.include_json),
+		desire: e.desire,
+		note: e.note || null,
+		status: e.status,
+		holders: e.holders || "",
+		dropped: e.dropped ?? null,
+	};
+}
+
+export type RowSnapshot = ReturnType<typeof rowSnapshot>;
 
 const MAX_DIGEST_STRING = 200;
 const MAX_HINTS = 16;
@@ -187,15 +244,8 @@ export function exportCatalog(board: BoardRow, entries: EntryRow[]): Record<stri
 		note: board.note || null,
 		created: board.created,
 		updated: board.updated,
-		entries: entries.map((e) => {
-			let include: string[] | null = null;
-			if (e.include_json) {
-				try {
-					include = JSON.parse(e.include_json) as string[];
-				} catch {
-					include = null;
-				}
-			}
+		entries: entries.filter((e) => !e.dropped).map((e) => {
+			const include = parseIncludeJson(e.include_json);
 			return {
 				source: e.source,
 				revision: e.revision === "" ? null : e.revision,
@@ -210,15 +260,9 @@ export function exportCatalog(board: BoardRow, entries: EntryRow[]): Record<stri
 }
 
 export function entryToApi(e: EntryRow) {
-	let include: string[] | null = null;
-	if (e.include_json) {
-		try {
-			include = JSON.parse(e.include_json) as string[];
-		} catch {
-			include = null;
-		}
-	}
+	const include = parseIncludeJson(e.include_json);
 	const est = parseEstimate(e.estimate_json);
+	const lin = lineageOf(e.source);
 	return {
 		id: e.id,
 		source: e.source,
@@ -229,6 +273,10 @@ export function entryToApi(e: EntryRow) {
 		status: e.status,
 		holders: e.holders || "",
 		added: e.added,
+		updated: e.updated ?? e.added,
+		dropped: e.dropped ?? null,
+		// The same address, structured: the provider, the name there, the page.
+		address: addressOf(e.source),
 		payload_bytes: e.payload_bytes,
 		artifact_type: est?.artifact_type ?? artifactTypeFromSource(e.source),
 		// Digest facts the board reads to pick recipes for a row. Same fetch as
@@ -248,9 +296,20 @@ export function entryToApi(e: EntryRow) {
 		parents: cleanParents(est?.parents),
 		// A closed work: a home page, not a source. Nothing to fetch, no price.
 		closed: canonicalizeSource(e.source).kind === "home",
+		// Family, generation, member — read from the name, and labeled so.
+		lineage: {
+			family: lin.family,
+			generation: lin.generation,
+			member: lin.member,
+			variants: lin.variants,
+			formats: lin.formats,
+			read_from: READ_FROM,
+		},
 		claim: liveClaim(parseClaim(e.claim_json)),
 	};
 }
+
+export type ApiRow = ReturnType<typeof entryToApi>;
 
 /** A claim past the TTL is over: it stops rendering as in flight, the same
  * moment it stops blocking new claims. Undated claims count as expired. */

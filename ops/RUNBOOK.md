@@ -68,6 +68,43 @@ live 2026-08-31. Keep it that way:
 - The board URL is the capability and the worker enforces its own body
   caps and daily mutate caps; the API needs no browser challenge.
 
+## Migrations before the worker
+
+A worker that queries a table its database lacks answers 500 on every
+board. When a change adds a migration, apply it to **both** databases
+before the deploy — the `Deploy` workflow auto-runs on docs pushes and
+would ship the worker first otherwise:
+
+```bash
+npx wrangler d1 migrations apply darsay-io --remote
+npx wrangler d1 migrations apply darsay-io-preview --env preview --remote
+npx wrangler d1 migrations list darsay-io --remote     # nothing pending
+PUBLIC_BOARDS_ENABLED=true npm run build && npx wrangler deploy --env=""
+```
+
+`0003_agents.sql` (revision, `updated`/`dropped` on rows, `keys`, `audit`,
+`idempotency`, `webhooks`) is additive; old rows read back with
+`updated = null` (the API falls back to `added`) and `dropped = null`.
+
+## Keys, webhooks, and the audit trail
+
+- Keys (`darsay_` + 48 hex) are stored as SHA-256 hashes. A leaked key is
+  revoked from the board's ✦ Agents panel or `DELETE /api/boards/<id>/keys/<kid>`;
+  there is no way to read a secret back. A leaked board URL is still the
+  whole board — rotate by creating a new board and applying the catalog.
+- Webhook secrets are stored in the clear (the worker must sign with
+  them). Deliveries go out through `waitUntil` with a 10 s timeout and no
+  retries; `last_status` on the hook is the only delivery record.
+  Webhook URLs must be public https — the worker refuses loopback,
+  private ranges, and IP literals — and a delivery never carries the
+  board id.
+- The audit trail keeps the last 1000 events per board; idempotency
+  records age out after a day. Both live in D1 and count toward the row
+  quota, roughly one audit row per write.
+- A board delete cascades to entries, keys, audit, idempotency, and
+  webhooks (`ON DELETE CASCADE`; the test database runs with
+  `PRAGMA foreign_keys = ON`, as D1 does).
+
 ## Create password
 
 `CREATE_PASSWORD` is a Wrangler **secret**, not `wrangler.jsonc` `vars` (those are visible in the dashboard and would land in git). The Worker compares the JSON body field `password` on create and discards it. It never writes the phrase to D1. To rotate: `secret put` again and tell friends. To remove the gate: delete the secret and the check in `src/worker/index.ts`.
@@ -132,8 +169,10 @@ Time Travel: 7 days on D1 Free. Practice a restore on the preview database once.
 Dashboard: D1 rows written / read, Worker requests. Alert at 50% and 80% of Free daily caps.
 
 - 100 board creates / UTC day
-- 10 000 entry mutations / UTC day
-- 50 000 board-id lookups / UTC day
+- 10 000 entry mutations / UTC day (one per commit: an `apply` of 100 rows is one)
+- 50 000 board-id lookups / UTC day (every board call, MCP included; the guide and the OpenAPI document are free)
+- Per request: `apply`/`batch` price at most 12 new Hub rows (up to three
+  subrequests each) to stay under the free plan's 50-subrequest limit.
 
 ## Public repo
 
