@@ -78,6 +78,10 @@ describe("sync-docs", () => {
 		const page = written["new-page.mdx"];
 		expect(page).toContain("title: \"A new page\"");
 		expect(page).toContain("description: \"Something the CLI shipped today.\"");
+		expect(page).toContain(`editUrl: "https://github.com/${LOCK.repo}/edit/main/docs/NEW-PAGE.md"`);
+		// Starlight prints the title; the body must not print it again.
+		expect(page).not.toMatch(/^# A new page/m);
+		expect(page.replace(/^---[\s\S]*?---\n+/, "")).toMatch(/^> \*\*In one sentence\.\*\*/);
 		expect(page).toContain("](/docs/examples/#first-bundle)");
 		expect(page).toContain(`](https://github.com/${LOCK.repo}/blob/${LOCK.sha}/docs/proposals/classify.md)`);
 		expect(page).toContain("](/docs/concepts/)");
@@ -85,6 +89,41 @@ describe("sync-docs", () => {
 		for (const body of Object.values(written)) {
 			expect(body.replace(/\]\(https?:\/\/[^)]+\)/g, "]()")).not.toMatch(/\]\([^)]+\.md(?:#[^)]*)?\)/);
 		}
+	});
+
+	it("describes a page by its whole opening, not its first line", () => {
+		const src = pinnedSourceCopy();
+		// The sentence on the same line as its label, the way the CLI writes it.
+		fs.writeFileSync(
+			path.join(src, "docs/SAME-LINE.md"),
+			"# Same line\n\n> **In one sentence.** `verb` does *one* thing.\n> Then [stops](CONCEPTS.md).\n\nBody.\n",
+		);
+		// No blockquote: the first prose paragraph, whole sentences, a title-less rule gone.
+		fs.writeFileSync(
+			path.join(src, "docs/PROSE.md"),
+			[
+				"# Prose",
+				"",
+				"---",
+				"",
+				"| Skip | this |",
+				"|---|---|",
+				"",
+				"The first sentence runs onto a",
+				"second line. A second sentence follows it. And a third one is long enough that",
+				"the description ends before it, because a description is whole sentences and",
+				"the line was never the sentence.",
+				"",
+			].join("\n"),
+		);
+		const { written } = syncInto(src);
+		expect(written["same-line.mdx"]).toContain("description: \"verb does one thing. Then stops.\"");
+		expect(written["prose.mdx"]).toContain(
+			"description: \"The first sentence runs onto a second line. A second sentence follows it.\"",
+		);
+		expect(written["prose.mdx"].replace(/^---[\s\S]*?---\n+/, "")).toMatch(/^\| Skip/);
+		// The README's own tagline describes the docs home.
+		expect(written["index.mdx"]).toMatch(/description: "Keep a model forever\. Run it tomorrow\./);
 	});
 
 	it("refuses a link to a file the CLI source does not have", () => {

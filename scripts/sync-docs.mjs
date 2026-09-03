@@ -46,18 +46,25 @@ const ASSETS = { "docs/darsay-logo.png": "/darsay-logo.png" };
 function gitSource(cwd, sha) {
 	const show = (rel, encoding) =>
 		execFileSync("git", ["show", `${sha}:${rel}`], { cwd, encoding, maxBuffer: 64 * 1024 * 1024 });
+	// Every path the commit has — files and the directories above them — read
+	// once, so a link check is a lookup and not a process.
+	let paths = null;
+	const listed = () => {
+		if (paths) return paths;
+		paths = new Set();
+		const out = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+		for (const file of out.split("\n")) {
+			if (!file) continue;
+			paths.add(file);
+			for (let i = file.indexOf("/"); i >= 0; i = file.indexOf("/", i + 1)) paths.add(file.slice(0, i));
+		}
+		return paths;
+	};
 	return {
 		describe: `${cwd} at ${sha.slice(0, 12)}`,
 		read: (rel) => show(rel, "utf8"),
 		readBinary: (rel) => show(rel, null),
-		has: (rel) => {
-			try {
-				execFileSync("git", ["cat-file", "-e", `${sha}:${rel}`], { cwd, stdio: "ignore" });
-				return true;
-			} catch {
-				return false;
-			}
-		},
+		has: (rel) => listed().has(rel),
 		entries: (dir) => {
 			let out;
 			try {
@@ -194,19 +201,80 @@ function firstHeading(md) {
 	return m ? m[1].trim() : null;
 }
 
-function firstDescription(md) {
-	const bq = md.match(/^>\s+\*\*In one sentence\.\*\*\s*\n(?:>.*\n)*/m);
+/**
+ * Starlight prints the frontmatter title as the page's H1, so the body's
+ * own copy of it would print twice. Take it off the top, along with the
+ * lone rule the nav block used to sit above.
+ */
+function stripTitle(md) {
+	return md.replace(/^#\s+.+\n+/, "").replace(/^(?:-{3,}|\*{3,})[ \t]*\n+/, "");
+}
+
+/** The README's own tagline — `<p align="center"><strong>…</strong>…</p>` — with its tags taken off. */
+function tagline(md) {
+	const m = md.match(/<p align="center">\s*<strong>([\s\S]*?)<\/p>/);
+	if (!m) return "";
+	return m[1]
+		.replace(/<[^>]+>/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/** Markdown taken off a line meant for a `<meta>` tag: emphasis, code marks, and link syntax. */
+function plainText(s) {
+	return s
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+		.replace(/\*\*|`|(?<!\w)\*|\*(?!\w)/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/** A description no longer than `max`: whole sentences where they fit, else the first words. */
+function clip(text, max = 200) {
+	if (text.length <= max) return text;
+	let end = -1;
+	for (const m of text.matchAll(/[.!?](?=\s|$)/g)) {
+		if (m.index + 1 > max) break;
+		end = m.index;
+	}
+	if (end >= 0) return text.slice(0, end + 1);
+	return `${text.slice(0, max).replace(/\s+\S*$/, "")}…`;
+}
+
+/**
+ * What the page is, for its `<meta name="description">` and llms.txt: the
+ * `**In one sentence.**` blockquote when the page opens with one, else the
+ * README's tagline, else the first prose paragraph — the whole paragraph,
+ * cut at a sentence. The first *line* of it was never a sentence.
+ */
+function firstDescription(md, raw = md) {
+	const bq = md.match(/^>\s+\*\*In one sentence\.\*\*[ \t]*(.*)\n((?:>.*\n)*)/m);
 	if (bq) {
-		return bq[0]
+		const rest = bq[2]
 			.split("\n")
 			.map((l) => l.replace(/^>\s?/, ""))
-			.join(" ")
-			.replace(/\*\*In one sentence\.\*\*\s*/, "")
-			.replace(/\s+/g, " ")
-			.trim();
+			.join(" ");
+		return clip(plainText(`${bq[1]} ${rest}`));
 	}
-	const para = md.match(/^#.*\n+(?!#|>)(.+)/m);
-	return para ? para[1].trim().slice(0, 180) : "";
+	const tag = tagline(raw);
+	if (tag) return clip(tag);
+	const body = md.replace(/^#\s+.+\n/m, "");
+	let inFence = false;
+	for (const block of body.split(/\n[ \t]*\n/)) {
+		const para = block.trim();
+		if (!para) continue;
+		if (/^(```|~~~)/.test(para)) {
+			// A fence that opens and closes in one block is skipped whole;
+			// one that opens here closes in a later block.
+			if ((para.match(/^(```|~~~)/gm) || []).length % 2 === 1) inFence = !inFence;
+			continue;
+		}
+		if (inFence) continue;
+		// A heading, a quote, a table, HTML, an image, a list item, or a rule.
+		if (/^([#>|<!]|[-*+] |\d+\. |(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(para)) continue;
+		return clip(plainText(para));
+	}
+	return "";
 }
 
 function yamlEscape(s) {
@@ -317,9 +385,20 @@ function transform(md, page, ctx) {
 	const stripped = fenceIndentedCode(stripHtmlNav(md));
 	const title =
 		page.out === "index.mdx" ? firstHeading(stripped) || "Documentation" : firstHeading(stripped) || page.out;
-	const description = firstDescription(stripped);
-	const rewritten = rewriteLinks(stripped, page, ctx);
-	const fm = `---\ntitle: ${yamlEscape(title)}\n${description ? `description: ${yamlEscape(description)}\n` : ""}---\n\n`;
+	const description = firstDescription(stripped, md);
+	const rewritten = rewriteLinks(stripTitle(stripped), page, ctx);
+	// "Edit page" opens the file this page is made from, on the branch a
+	// change would land on — the docs are the CLI's, not the site's.
+	const editUrl = `https://github.com/${ctx.repo}/edit/main/${page.rel}`;
+	const fm = [
+		"---",
+		`title: ${yamlEscape(title)}`,
+		...(description ? [`description: ${yamlEscape(description)}`] : []),
+		`editUrl: ${yamlEscape(editUrl)}`,
+		"---",
+		"",
+		"",
+	].join("\n");
 	return fm + rewritten;
 }
 
