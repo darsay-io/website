@@ -70,10 +70,15 @@ live 2026-08-31. Keep it that way:
 
 ## Migrations before the worker
 
-A worker that queries a table its database lacks answers 500 on every
-board. When a change adds a migration, apply it to **both** databases
-before the deploy — the `Deploy` workflow auto-runs on docs pushes and
-would ship the worker first otherwise:
+A worker that writes a column its database lacks answers 503 (`quota`,
+"The ledger could not be written") on every board write while reads keep
+working, so the page looks fine and every Add fails. The `Deploy` workflow
+applies pending migrations to **production** before `wrangler deploy`, so
+a docs pin landing on `main` can no longer ship a worker ahead of its
+schema; the `CLOUDFLARE_API_TOKEN` secret therefore needs D1 edit as well
+as Workers edit. Preview is not deployed by that workflow, so when a change
+adds a migration, bring preview up by hand, and do the same for production
+whenever you deploy it by hand:
 
 ```bash
 npx wrangler d1 migrations apply darsay-io --remote
@@ -277,8 +282,9 @@ fourth check upstream of all of them:
    default `github.token` triggers no workflows, so Deploy would not fire.
 3. `Deploy` runs on `main` pushes touching the lock, `src/content/docs/**`,
    or the logo (and on `workflow_dispatch` for anything else): test,
-   `check:docs`, build, `wrangler deploy` (secrets `CLOUDFLARE_API_TOKEN`,
-   `CLOUDFLARE_ACCOUNT_ID`).
+   `check:docs`, build, `d1 migrations apply darsay-io --remote`, then
+   `wrangler deploy` (secrets `CLOUDFLARE_API_TOKEN` with Workers edit and
+   D1 edit, `CLOUDFLARE_ACCOUNT_ID`).
 
 ### When a sync fails
 
