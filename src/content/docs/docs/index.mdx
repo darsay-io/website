@@ -7,8 +7,8 @@ description: "**You have five minutes.**"
 
 | | Current |
 |---|---|
-| Tool | **0.14.11** |
-| Manifest schema | **2.0.0** |
+| Tool | **0.14.12** |
+| Manifest schema | **2.1.0** |
 | Catalog schema | **2.0.0** |
 | MVB format | **1.2** |
 | License | Apache 2.0 |
@@ -34,7 +34,8 @@ export, shards, verify. Then the spec for the command you are about to run.
 
 **A bundle is on the wrong disk, or you are not sure which verb.**
 [FAQ](/docs/faq/) — moving and copying bundles between vaults, rsync's standing (first-class,
-always), `darsay mv` versus `assemble --handoff`, what travels and what stays.
+always), `darsay mv` versus `assemble --handoff`, what travels and what stays,
+and a record written by an older darsay (`darsay migrate`).
 
 **You are reading this in 2040 and the CLI is gone.**
 [Manifest](/docs/manifest/) and [MVB format](/docs/mvb-format/) are the two
@@ -44,7 +45,7 @@ required to open a bundle. Everything else is how we got there.
 
 **You are changing the tool.**
 [Design](/docs/design/) for why, [Testing](/docs/testing/) and
-[Contributing](https://github.com/darsay-io/darsay/blob/0e5ee09b2920bd5c6ebf4c4b6b38485bbaebe388/CONTRIBUTING.md) for how,
+[Contributing](https://github.com/darsay-io/darsay/blob/ab7f03b584320bb81b4524b28eea51ebd58e9397/CONTRIBUTING.md) for how,
 [Distribution](/docs/distribution/) for how a release is consumed.
 
 ## Using the vault
@@ -121,4 +122,4 @@ The short list that every document, and every change, is measured against:
 | A new acquisition host | `SourceProvider` in `src/darsay/providers/`, wired in `sources.py` |
 
 Field changes to `manifest.json` or `.mvb.tar` need a docs update here and
-a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/0e5ee09b2920bd5c6ebf4c4b6b38485bbaebe388/CONTRIBUTING.md).
+a schema / format version bump. See [Contributing](https://github.com/darsay-io/darsay/blob/ab7f03b584320bb81b4524b28eea51ebd58e9397/CONTRIBUTING.md).

@@ -22,9 +22,9 @@ Conventions match the [manifest](/docs/manifest/):
   stripped).
 - Major schema version is breaking. Additive minor/patch: readers ignore
   unknown fields; this tool preserves unknown *top-level* keys on
-  round-trip. A file of another major is a hard error — darsay fixes
-  forward and does not migrate a 1.x catalog; re-add its entries. The
-  tool writes the version it conforms to.
+  round-trip. A file of another major is a hard error — a catalog is not
+  migrated (a bundle's *record* is: `darsay migrate`); re-add its
+  entries to a new one. The tool writes the version it conforms to.
 
 The catalog schema is independent of bundle `schema_version`. Catalogs
 are not inside `.mvb.tar`.
@@ -198,7 +198,9 @@ CLI classifies (negatives-first prices, `hints`, the `policy` marker,
 precision and bytes per parameter) and pushes the refreshed catalog
 back. Closed rows are left as they are — there is nothing to price. Mutating verbs push after saving;
 `--dry-run` never pushes. The board URL is the capability — treat it
-like a secret.
+like a secret. The page address with `.json` (`/b/<board-id>.json`, the
+board as a document for programs) names the same board and is accepted
+wherever a board URL is.
 
 `archive SOURCE --board <board-url>` claims the row for a source *you*
 chose — the board's desire ordering decides nothing, but the claim and
