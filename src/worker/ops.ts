@@ -39,6 +39,7 @@ import {
 	type EntryRow,
 } from "./catalog.ts";
 import { fetchEstimate } from "./estimate.ts";
+import { ggufVariants, isProjector } from "./gguf.ts";
 import { announce, auditToApi, commit, type Actor, type AuditEvent, type AuditRow } from "./ledger.ts";
 import { canonicalizeSource, type HfCanonical } from "./sources.ts";
 import {
@@ -456,6 +457,25 @@ export async function opRowAdd(ctx: OpCtx, body: Record<string, unknown>): Promi
 	await reloadBoard(ctx);
 	await announce(ctx.db, ctx.board, ctx.actor, events, res.revision, res.now, ctx.waitUntil);
 	return { status: existing ? 200 : 201, headers: { ETag: etag(res.revision) }, body: entryToApi(row) };
+}
+
+/** Read a pinned publication inventory. No row, audit event, or mutation is created. */
+export async function opPreview(ctx: OpCtx, query: Record<string, string>): Promise<OpResult> {
+	const denied = need(ctx, "read");
+	if (denied) return denied;
+	if (!query.source || query.source.length > MAX_SOURCE) return fail(400, "invalid source");
+	if ((query.revision?.length ?? 0) > MAX_REVISION) return fail(400, "invalid revision");
+	const parsed = canonicalizeSource(query.source);
+	if (parsed.kind !== "hf") return fail(400, "preview requires a Hugging Face source");
+	const hit = await fetchEstimate(parsed, query.revision || null);
+	if (!hit) return fail(502, "publication unavailable; check the source, access, and revision, then retry");
+	if (!hit.digest.revision || !/^[a-f0-9]{40}$/.test(hit.digest.revision)) return fail(502, "publication did not provide an immutable revision");
+	if (!hit.files.length || hit.files.length > 10000) return fail(422, "inventory cannot be displayed safely; use explicit includes or add the source uninspected");
+	return { status: 200, body: {
+		source: hit.parsed.canonical, revision: hit.digest.revision, digest: hit.digest,
+		files: hit.files, variants: hit.digest.gguf_variants ?? [],
+		companions: ggufVariants(hit.files, true).filter((v) => isProjector(v.name)),
+	} };
 }
 
 /** Change any subset of a row's columns; a changed address is re-priced and must not collide. */

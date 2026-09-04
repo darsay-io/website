@@ -114,6 +114,19 @@ const schemas: Record<string, Json> = {
 			include: { type: "array", items: { type: "string" }, description: "Verified anchored selectors for precisely these variant files. Sidecars accompany an include selection." },
 		},
 	},
+	PublicationPreview: {
+		type: "object",
+		required: ["source", "revision", "files", "variants", "companions", "digest"],
+		description: "Read-only inventory at an immutable Hub commit. Variant and companion selectors describe files, not preservation or runtime compatibility. Save the chosen source, revision, and include union as one row to retain this scope.",
+		properties: {
+			source: { type: "string" },
+			revision: { type: "string", pattern: "^[a-f0-9]{40}$" },
+			files: { type: "array", maxItems: 10000, items: { type: "object", required: ["path", "size"], properties: { path: { type: "string" }, size: { type: ["integer", "null"], minimum: 0 } } } },
+			variants: { type: "array", items: ref("GgufVariant") },
+			companions: { type: "array", items: ref("GgufVariant") },
+			digest: { type: "object", description: "Whole-publication estimate; not the size of a yet-to-be-chosen selection.", additionalProperties: true },
+		},
+	},
 	ClassificationSummary: {
 		type: ["object", "null"],
 		properties: {
@@ -343,6 +356,19 @@ const BOARD_ROUTES: Route[] = [
 			get: { summary: "Export the catalog", description: "A darsay.catalog document (schema 3.x): the rows without holders, status, claims, or the board id. Dropped rows are left out.", scope: "read", responses: { "200": json(ref("Catalog")) } },
 			post: { summary: "Import a catalog (the CLI round trip)", description: "Authoritative for entries, desire, note, and digests; matched by address. Rows the document left out are removed by the URL and dropped by a key without remove. Board-side status, holders, and claims survive on kept rows.", scope: "write", parameters: [IF_MATCH, IDEMPOTENCY], requestBody: json(ref("Catalog")), responses: { "200": json(ref("ImportResult")), "400": err("Not a catalog, wrong major, or a bad entry."), "409": err("catalog_id mismatch.") } },
 		},
+	},
+	{
+		path: "/preview",
+		ops: { get: {
+			summary: "Inspect a publication before choosing collection scope",
+			description: "Fetch metadata only. Creates no row, audit event, claim, or board revision. Uses the board's read capability and lookup budget. Pin the returned revision when adding a selection. Unavailable or unpinnable inventory is an error, never a guessed size.",
+			scope: "read",
+			parameters: [
+				{ name: "source", in: "query", required: true, schema: { type: "string", maxLength: MAX_SOURCE }, description: "A Hugging Face model or dataset address." },
+				{ name: "revision", in: "query", schema: { type: "string", maxLength: MAX_REVISION }, description: "Branch, tag, or commit to inspect; defaults to main." },
+			],
+			responses: { "200": json(ref("PublicationPreview")), "400": err("Invalid source or revision."), "422": err("Empty or oversized inventory."), "502": err("Publication unavailable or no immutable revision provided.") },
+		} },
 	},
 	{
 		path: "/entries",

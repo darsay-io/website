@@ -73,13 +73,19 @@ export function parentsFrom(info: HubInfo): ParentEdge[] | null {
 export type EstimateHit = {
 	parsed: HfCanonical;
 	digest: EstimateDigest;
+	files: SizedFile[];
 };
 
-function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string, config: unknown, include: string[] | null): EstimateDigest | null {
+function inventoryFrom(info: HubInfo): SizedFile[] {
 	const siblings = Array.isArray(info.siblings) ? info.siblings : [];
 	const validSize = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-	const files: SizedFile[] = siblings.filter((s) => typeof s.rfilename === "string")
+	return siblings.filter((s) => typeof s.rfilename === "string")
 		.map((s) => ({ path: s.rfilename!, size: validSize(s.size) ? s.size : null }));
+}
+
+function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string, config: unknown, include: string[] | null): EstimateDigest | null {
+	const validSize = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+	const files = inventoryFrom(info);
 	const selected = include?.length ? selectSubset(files, include) : files;
 	if (!selected) return null;
 	let payload = 0;
@@ -203,18 +209,18 @@ export async function fetchEstimate(
 		const hit = await hubInfo("datasets", parsed.locator, rev, fetchImpl);
 		if (!hit.ok) return null;
 		const digest = digestFrom(parsed, hit.info, rev, null, include);
-		return digest ? { parsed, digest } : null;
+		return digest ? { parsed, digest, files: inventoryFrom(hit.info) } : null;
 	}
 	const model = await hubInfo("models", parsed.locator, rev, fetchImpl);
 	if (model.ok) {
 		const config = await hubConfig(parsed.locator, model.info.sha ?? rev, model.info.siblings, fetchImpl);
 		const digest = digestFrom(parsed, model.info, rev, config, include);
-		return digest ? { parsed, digest } : null;
+		return digest ? { parsed, digest, files: inventoryFrom(model.info) } : null;
 	}
 	if (!NOT_FOUND.has(model.status)) return null;
 	const dataset = await hubInfo("datasets", parsed.locator, rev, fetchImpl);
 	if (!dataset.ok) return null;
 	const retargeted = asDatasetCanonical(parsed);
 	const digest = digestFrom(retargeted, dataset.info, rev, null, include);
-	return digest ? { parsed: retargeted, digest } : null;
+	return digest ? { parsed: retargeted, digest, files: inventoryFrom(dataset.info) } : null;
 }

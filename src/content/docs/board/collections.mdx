@@ -1,0 +1,136 @@
+---
+title: "Choosing a collection"
+description: "Inspect a publication, learn what its variants mean, choose companions deliberately, and review a pinned collection before adding it to a board or archiving it in the terminal."
+slug: docs/board/collections
+---
+
+<p class="docs-lede">
+One model can have many published encodings. The collection room helps you
+choose what to keep—and understand what that choice means—before any model
+bytes move.
+</p>
+
+## From a source to a collection
+
+Enter `unsloth/GLM-5.3-Flash-GGUF` in the board's add form, then choose
+**Explore collection**. An optional revision can name a branch, tag, or
+commit. The dialog inspects file sizes, groups every shard, and separates
+language-model variants from companion projectors. It creates no board row.
+
+Nothing is selected until you choose a starting point or a variant.
+
+| Starting point | Selection | How to read it |
+| --- | --- | --- |
+| One considered copy | Smallest complete, known-size 4-bit variant | A storage-oriented place to start, not “the best quant” |
+| A comparison pair | Smallest complete, known-size 4-bit and 8-bit variants | Two published encodings to compare on your own tasks |
+| The whole publication | Every file at the inspected commit | A record of the publication as found, including companions and other layouts |
+
+The rule is visible beneath the starting points. If a family is missing,
+darsay does not guess a substitute. You can choose another complete group
+manually. A variant with unknown sizes remains selectable, but the total
+is marked as a lower bound. An incomplete group is explained, not offered
+as a complete model; the whole-publication choice can retain it as found.
+
+## Learn as you choose
+
+On a wide screen, the field guide sits beside the variants and follows
+keyboard focus or selection. On a phone, **Field notes** opens directly
+beneath each variant. It explains the encoding family, reasons someone
+might collect it, and the standard of evidence for exact recovery.
+
+A bit width describes a numerical representation. It is not a benchmark,
+a guarantee of runtime support, or a RAM/VRAM requirement. Actual storage
+includes scales, metadata, and sometimes wider tensors in a mixed-precision
+recipe. A BF16 conversion is not automatically an original checkpoint.
+
+The bars compare disk storage—not model quality. The live collection total
+includes every selected shard and counts shared support files once.
+At revision `2975ab414d30340466d8c51533c6e91f0cca64c1`, the entire Unsloth
+publication is **2.315 TiB**. Its `UD-Q4_K_XL` group plus README is
+**186.0 GiB**, with no projector. Both sizes are correct for their scopes.
+
+## Companions are a separate decision
+
+Projectors are components used by some multimodal workflows, not miniature
+language-model variants. Precision alone cannot establish compatibility.
+Consult the publisher and your intended runtime, then select the companion
+you mean to preserve. The picker never silently chooses one. Review warns
+when this publication has projectors but the selection contains none.
+
+Recognized support files—cards, licenses, tokenizers, configuration, indexes,
+and code—accompany a selected group. Other files remain outside the collection
+unless its selectors include them. Selecting the whole publication retains
+every path with `/*`. Toggling a group after that switches to selected-group
+scope, so review the new file count and total.
+
+## Review before adding
+
+**Review collection** shows the model groups, companions, total files,
+known disk bytes, exact include selectors, and immutable revision. Several
+variants become **one row**, using their combined selectors. The pinned
+commit prevents a moving branch from changing what you reviewed.
+
+**Refine selection** returns to the draft. **Add this collection** saves
+the row. The board stores no model payload; the CLI archives it later.
+Closing or pressing Escape before saving leaves the add form intact.
+An inspection or save error keeps the draft and offers retry rather than
+guessing a size or silently widening the selection.
+
+If the publication cannot be inspected, **Keep an uninspected publication**
+opens a separate confirmation. It says **Size unknown**, requests every path
+with `/*`, and names the requested but unresolved revision. This preserves
+a want-list intention, not a verified variant choice or storage budget.
+The fallback is never automatic.
+
+An exact existing collection says **Already on this board**. Before saving,
+the page rechecks the board and uses its revision to protect concurrent
+curation. Adding a collection must not erase another person's decisions.
+An existing row's **Add variant** remains a separate action: it creates
+another selection row without modifying the original publication row.
+
+The dialog uses native keyboard focus containment. Tab moves through
+controls; Space toggles a focused choice; Escape closes. Controls remain
+available without hovering, and reduced-motion preferences are respected.
+
+## The same choices in the terminal
+
+For a fresh multi-variant GGUF model, interactive `darsay archive SOURCE`
+opens the terminal collection room after inspection and before archive
+creation. `1`, `2`, and `3` apply the same starting points. Arrow keys move,
+Space selects, `?` opens field notes, and Enter reviews before a second
+Enter confirms. Escape returns to selection; `q` or Ctrl-C cancels.
+The terminal is restored on exit. Small terminals request a resize rather
+than starting an unseen archive.
+
+Explicit `--include`, `--full`, board/catalog jobs, shards, and existing
+resumed pins bypass the picker. Non-interactive runs never open it. `--yes` skips
+it and uses the default archive policy—not a recommended quant. That policy
+can retain an entire GGUF pack. A plain direct-source rerun resumes its
+pinned collection; a board job remains bound to the row's exact identity.
+
+One source/revision occupies one collection per vault. Combine alternatives
+you want to keep together, or use separate vaults for independent collections.
+An explicit scope that differs from a pin is refused, not silently replaced
+with the pinned files. `--force` deliberately re-pins rather than resuming.
+
+An archive collection with several alternatives is not one runnable model.
+Preparing a runtime still requires a supported encoding and any compatible
+companions. Preservation hashes and a successful offline run prove different
+things.
+
+## Why recreation difficulty says “unverified”
+
+An inventory cannot reveal how expensive or difficult it would be to
+recreate these exact bytes. That requires pinned source weights, tools,
+settings, calibration inputs where used, and output hashes that actually
+match. A related parent or a working conversion is not that evidence.
+The field guide therefore says **Exact recovery unverified**, without
+inventing “easy,” “hard,” or monetary estimates.
+
+The collector chooses scope. Evidence establishes identity and lineage,
+recovery, and any safe omission separately. Files outside a collection are
+unselected—not proven disposable. This is the board's expression of the
+[north star](/docs/north-star/): collecting should also teach.
+
+For programs, [Inspect a publication](/docs/board/api/#inspect-a-publication)
+exposes the same read-only, pinned inventory.

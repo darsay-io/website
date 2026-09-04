@@ -22,7 +22,7 @@ function literalGlob(path: string): string {
 
 type Group = { name: string; items: SizedFile[]; shards: number[]; match: RegExpExecArray | null };
 
-export function ggufVariants(files: SizedFile[]): GgufVariant[] {
+export function ggufVariants(files: SizedFile[], includeProjectors = false): GgufVariant[] {
 	const groups = new Map<string, Group>();
 	for (const item of files) {
 		if (!item.path.toLowerCase().endsWith(".gguf")) continue;
@@ -40,7 +40,7 @@ export function ggufVariants(files: SizedFile[]): GgufVariant[] {
 	const out: GgufVariant[] = [];
 	for (const [key, group] of [...groups.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
 		const items = group.items.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-		if (isProjector(items[0].path)) continue;
+		if (!includeProjectors && isProjector(items[0].path)) continue;
 		const paths = new Set(items.map((f) => f.path));
 		const match = group.match;
 		const count = match ? Number(match[3]) : 1;

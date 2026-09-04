@@ -207,6 +207,30 @@ text over source, note, holders, family, and member, `?dropped=`,
 	"curl -s 'https://darsay.io/api/boards/<id>/entries?lens=gated,large&status=want' | jq '.entries[].source'",
 ]} />
 
+### Inspect a publication
+
+<Route method="GET" path="/api/boards/{id}/preview" scope="read" />
+
+Also available at `/api/board/preview` with a bearer key. `source` is a
+required Hub address; `revision` optionally names a branch, tag, or commit.
+The response contains canonical `source`, immutable `revision`, the whole
+repository `digest`, `files` as path/size pairs, model `variants`, and
+separate projector `companions`. Each group has precision, completeness,
+file count, summed size, and exact include selectors. Unknown sizes are null.
+
+Inspection creates no row, claim, audit event, or board revision. It uses
+the read capability and lookup budget. No model payload is downloaded.
+`400` means an invalid source or revision; `422` an empty inventory or
+more than 10,000 files; `502` an unavailable or unpinnable publication.
+No failed inspection is replaced by a guessed collection size.
+
+Union the chosen groups' selectors, retain recognized support files once,
+and POST that union with the returned source and exact revision to `/entries`
+to save **one** collection row. `/*` selects every published path. The digest
+in this preview describes the whole publication, not your draft selection.
+Group completeness and encoding labels do not establish runtime compatibility
+or exact recoverability. See [Choosing a collection](/docs/board/collections/).
+
 ### Add a row
 
 <Route method="POST" path="/api/boards/{id}/entries" scope="write" />

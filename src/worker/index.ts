@@ -42,6 +42,7 @@ import {
 	opRelease,
 	opRow,
 	opRowAdd,
+	opPreview,
 	opRowDrop,
 	opRowPatch,
 	opRowRemove,
@@ -331,6 +332,7 @@ board.post("/catalog.json", async (c) => {
 });
 
 board.get("/entries", (c) => opRows(opCtx(c), c.req.query()).then((r) => send(c, r)));
+board.get("/preview", (c) => opPreview(opCtx(c), c.req.query()).then((r) => send(c, r)));
 
 board.post("/entries", async (c) => {
 	const parsed = await readJson(c);

@@ -27,6 +27,7 @@ export const SIDEBAR = [
 		items: [
 			{ label: "Start here", slug: "docs/getting-started" },
 			{ label: "Concepts", slug: "docs/concepts" },
+			{ label: "Choosing a collection", slug: "docs/collections" },
 			{ label: "North star", slug: "docs/north-star" },
 			{ label: "Examples", slug: "docs/examples" },
 			{ label: "Hydration", slug: "docs/hydration" },
@@ -50,6 +51,7 @@ export const SIDEBAR = [
 		label: "The board",
 		items: [
 			{ label: "For agents", slug: "docs/board" },
+			{ label: "Choosing a collection", slug: "docs/board/collections" },
 			{ label: "API reference", slug: "docs/board/api" },
 			{ label: "Agents & MCP", slug: "docs/board/agents" },
 		],
