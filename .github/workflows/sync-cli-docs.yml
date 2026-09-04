@@ -1,6 +1,7 @@
 name: Sync CLI docs
 
-# Production /docs/ tracks the latest CLI GitHub Release, not main.
+# Release pins track the latest CLI GitHub Release, not main. Exact commit
+# pins stay fixed unless an explicit release tag is supplied.
 # When the lock is behind, this regenerates the docs, verifies (test,
 # check:docs, build), and commits straight to main — no PR — which triggers
 # the Deploy workflow. The push needs the DOCS_PUSH_TOKEN secret: a push by
@@ -33,6 +34,7 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       DARSAY_DOCS_ROOT: ${{ github.workspace }}/.ci-darsay
     steps:
@@ -55,6 +57,13 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          LOCK_REF=$(jq -r .ref docs.lock.json)
+          LOCK_SHA=$(jq -r .sha docs.lock.json)
+          if [[ "$LOCK_REF" =~ ^[0-9a-f]{40}$ ]] && [ -z "${INPUT_TAG}" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+            echo "docs fixed at $LOCK_SHA; supply a release tag to resume release tracking"
+            exit 0
+          fi
           if [ -n "${INPUT_TAG}" ]; then
             TAG="${INPUT_TAG}"
           else
@@ -65,8 +74,6 @@ jobs:
             *) echo "ref $TAG is not a vX.Y.Z tag" >&2; exit 1 ;;
           esac
           SHA=$(gh api "repos/darsay-io/darsay/commits/${TAG}" --jq .sha)
-          LOCK_REF=$(jq -r .ref docs.lock.json)
-          LOCK_SHA=$(jq -r .sha docs.lock.json)
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           if [ "$LOCK_REF" = "$TAG" ] && [ "$LOCK_SHA" = "$SHA" ]; then

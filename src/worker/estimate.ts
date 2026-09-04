@@ -1,6 +1,8 @@
 import type { EstimateDigest, ParentEdge } from "./catalog.ts";
 import { dominantFormat, hintsFrom, isWeightFile, type SizedFile } from "./hints.ts";
 import { bytesPerParam, precisionFacts } from "./precision.ts";
+import { ggufVariants, isProjector, modelWeightBytes } from "./gguf.ts";
+import { selectSubset } from "./subset.ts";
 import type { HfCanonical } from "./sources.ts";
 import { asDatasetCanonical } from "./sources.ts";
 import { utcNow } from "./validate.ts";
@@ -17,6 +19,7 @@ type HubInfo = {
 	gated?: boolean | string;
 	siblings?: { rfilename?: string; size?: number | null }[];
 	safetensors?: { total?: number; parameters?: Record<string, number> };
+	gguf?: { total?: number; architecture?: string };
 	cardData?: { license?: string; base_model?: string | string[]; base_model_relation?: string; datasets?: string | string[] };
 	license?: string;
 	tags?: string[];
@@ -72,12 +75,17 @@ export type EstimateHit = {
 	digest: EstimateDigest;
 };
 
-function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string, config: unknown): EstimateDigest {
+function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string, config: unknown, include: string[] | null): EstimateDigest | null {
 	const siblings = Array.isArray(info.siblings) ? info.siblings : [];
+	const validSize = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+	const files: SizedFile[] = siblings.filter((s) => typeof s.rfilename === "string")
+		.map((s) => ({ path: s.rfilename!, size: validSize(s.size) ? s.size : null }));
+	const selected = include?.length ? selectSubset(files, include) : files;
+	if (!selected) return null;
 	let payload = 0;
 	let unknown = 0;
-	for (const s of siblings) {
-		if (typeof s.size === "number") payload += s.size;
+	for (const s of selected) {
+		if (s.size !== null) payload += s.size;
 		else unknown += 1;
 	}
 	const byDtype = info.safetensors?.parameters ?? {};
@@ -89,29 +97,30 @@ function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string, con
 	const gated = info.gated === true || info.gated === "auto" || info.gated === "manual";
 	// The CLI's closed hint vocabulary, on the CLI's rules (hints.ts). A
 	// `darsay estimate <board-url>` refresh rewrites this digest, hints included.
-	const payloadBytes = siblings.length ? payload : null;
+	const payloadBytes = selected.length ? payload : null;
 	const weights: SizedFile[] =
 		parsed.artifactType === "model"
-			? siblings
-					.filter((s): s is { rfilename: string; size?: number | null } => typeof s.rfilename === "string")
-					.filter((s) => isWeightFile(s.rfilename))
-					.map((s) => ({ path: s.rfilename, size: typeof s.size === "number" ? s.size : null }))
+			? selected.filter((s) => isWeightFile(s.path))
 			: [];
 	const weightsBytes = weights.reduce((n, f) => n + (f.size ?? 0), 0);
 	const fmt = dominantFormat(weights);
 	const hints = hintsFrom({
 		payloadBytes,
 		gated,
-		subset: false,
+		subset: !!include?.length,
 		dominantDtype: dominant,
 		dominantFormat: fmt,
 		weightsBytes: weights.length ? weightsBytes : null,
 		paramsByDtype: keys.length ? byDtype : null,
 	});
-	const total = typeof info.safetensors?.total === "number" ? info.safetensors.total : null;
+	const stTotal = info.safetensors?.total;
+	const ggufTotal = info.gguf?.total;
+	const total = validSize(stTotal) && stTotal > 0 ? stTotal : validSize(ggufTotal) && ggufTotal > 0 ? ggufTotal : null;
+	const parametersSource = total === null ? null : total === stTotal ? "safetensors" : "gguf";
 	const model = parsed.artifactType === "model";
-	const precision = model
-		? precisionFacts({ config, dominantDtype: dominant, dominantFormat: fmt, weightPaths: weights.map((w) => w.path) })
+	const modelWeights = weights.filter((w) => !isProjector(w.path));
+	const precision = model && (modelWeights.length > 0 || !include?.length)
+		? precisionFacts({ config, dominantDtype: dominant, dominantFormat: fmt, weightPaths: modelWeights.map((w) => w.path) })
 		: null;
 	const cfg = config !== null && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : null;
 	return {
@@ -120,16 +129,21 @@ function digestFrom(parsed: HfCanonical, info: HubInfo, revisionRef: string, con
 		revision: info.sha ?? null,
 		revision_ref: revisionRef,
 		payload_bytes: payloadBytes,
-		file_count: siblings.length || null,
+		size_basis: include?.length ? "selection" : "repository",
+		repository_bytes: files.length && files.every((f) => f.size !== null) ? files.reduce((n, f) => n + f.size!, 0) : null,
+		file_count: selected.length || null,
 		license: info.cardData?.license ?? info.license ?? null,
 		gated,
 		parameters: total,
+		parameters_source: parametersSource,
 		dominant_dtype: dominant,
 		unknown_size_count: unknown,
 		hints,
+		classification: null,
+		gguf_variants: model ? ggufVariants(files) : [],
 		precision: precision?.label ?? null,
-		bytes_per_param: model ? bytesPerParam(weights.length ? weightsBytes : null, total) : null,
-		architecture: cfg && typeof cfg.model_type === "string" ? cfg.model_type : null,
+		bytes_per_param: model ? bytesPerParam(modelWeightBytes(weights), total) : null,
+		architecture: cfg && typeof cfg.model_type === "string" ? cfg.model_type : typeof info.gguf?.architecture === "string" ? info.gguf.architecture : null,
 		parents: model ? parentsFrom(info) : null,
 	};
 }
@@ -181,22 +195,26 @@ async function hubInfo(
 export async function fetchEstimate(
 	parsed: HfCanonical,
 	revision: string | null,
+	include: string[] | null = null,
 	fetchImpl: typeof fetch = fetch,
 ): Promise<EstimateHit | null> {
 	const rev = revision && revision.length > 0 ? revision : "main";
 	if (parsed.artifactType === "dataset") {
 		const hit = await hubInfo("datasets", parsed.locator, rev, fetchImpl);
 		if (!hit.ok) return null;
-		return { parsed, digest: digestFrom(parsed, hit.info, rev, null) };
+		const digest = digestFrom(parsed, hit.info, rev, null, include);
+		return digest ? { parsed, digest } : null;
 	}
 	const model = await hubInfo("models", parsed.locator, rev, fetchImpl);
 	if (model.ok) {
-		const config = await hubConfig(parsed.locator, rev, model.info.siblings, fetchImpl);
-		return { parsed, digest: digestFrom(parsed, model.info, rev, config) };
+		const config = await hubConfig(parsed.locator, model.info.sha ?? rev, model.info.siblings, fetchImpl);
+		const digest = digestFrom(parsed, model.info, rev, config, include);
+		return digest ? { parsed, digest } : null;
 	}
 	if (!NOT_FOUND.has(model.status)) return null;
 	const dataset = await hubInfo("datasets", parsed.locator, rev, fetchImpl);
 	if (!dataset.ok) return null;
 	const retargeted = asDatasetCanonical(parsed);
-	return { parsed: retargeted, digest: digestFrom(retargeted, dataset.info, rev, null) };
+	const digest = digestFrom(retargeted, dataset.info, rev, null, include);
+	return digest ? { parsed: retargeted, digest } : null;
 }

@@ -951,13 +951,14 @@ button.btn.bring-download {
 
 .work-top {
 	display: flex;
-	justify-content: space-between;
-	gap: 1rem;
+	flex-direction: column;
+	gap: 0.55rem;
 	align-items: flex-start;
 }
 
 .work-id {
 	min-width: 0;
+	width: 100%;
 }
 
 .work-id a,
@@ -981,6 +982,59 @@ button.btn.bring-download {
 	color: var(--d-muted);
 	white-space: nowrap;
 	font-size: 0.92rem;
+}
+
+.work-size-help {
+	border: 0;
+	background: transparent;
+	padding: 0;
+	cursor: help;
+	text-align: left;
+	white-space: normal;
+}
+
+.variant-inventory {
+	margin: 1.5rem 0 2rem;
+}
+
+.variant-inventory > p {
+	color: var(--d-muted);
+	font-size: 0.85rem;
+	max-width: 76ch;
+}
+
+.variant-table-wrap {
+	overflow-x: auto;
+	max-width: 100%;
+}
+
+.variant-table {
+	border-collapse: collapse;
+	width: 100%;
+	font-size: 0.85rem;
+	text-align: left;
+}
+
+.variant-table th,
+.variant-table td {
+	padding: 0.7rem 0.8rem;
+	border-bottom: 1px solid var(--d-border);
+	vertical-align: top;
+}
+
+.variant-table td small {
+	display: block;
+	color: var(--d-muted);
+}
+
+.variant-command {
+	margin-top: 0.5rem;
+}
+
+.variant-command pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-width: 48rem;
 }
 
 .work-bar {
@@ -1677,6 +1731,7 @@ button.btn.bring-download {
 
 .ledger-tally {
 	display: inline-flex;
+	flex-wrap: wrap;
 	align-items: baseline;
 	gap: 0.45rem;
 	flex: 1 1 auto;
@@ -2024,7 +2079,7 @@ a.src-link:hover .src-name {
 
 .work-facts {
 	flex-wrap: wrap;
-	justify-content: flex-end;
+	justify-content: flex-start;
 	gap: 0.4rem;
 	row-gap: 0.4rem;
 	max-width: 100%;

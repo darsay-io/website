@@ -2,6 +2,7 @@ import { lineageOf, READ_FROM } from "../lib/lineage.ts";
 import { entryHints } from "./hints.ts";
 import { artifactTypeFromSource, canonicalizeSource } from "./sources.ts";
 import { CLAIM_TTL_MS } from "./validate.ts";
+import type { GgufVariant } from "./gguf.ts";
 
 export const CATALOG_TOP_KEYS = [
 	"catalog_schema_version",
@@ -27,20 +28,29 @@ export const DIGEST_KEYS = [
 	"parameters",
 	"dominant_dtype",
 	"unknown_size_count",
-	// The closed hint vocabulary and the negatives-policy marker.
+	"size_basis",
+	"repository_bytes",
+	"parameters_source",
+	"classification",
+	"gguf_variants",
+	// The closed hint vocabulary.
 	"hints",
-	"policy",
-	// Catalog schema 2.0.0: the release precision and what it spends per
-	// weight, the architecture, and parent edges as upstream declares them.
+	// Release precision, bytes per weight, architecture, and declared parents.
 	"precision",
 	"bytes_per_param",
 	"architecture",
 	"parents",
 ] as const;
 
-export const CATALOG_SCHEMA_VERSION = "2.0.0";
+export const CATALOG_SCHEMA_VERSION = "3.0.0";
 
 export type ParentEdge = { source: string; relation: string | null };
+export type SizeBasis = "repository" | "selection" | "archive";
+export type ClassificationSummary = {
+	verdicts: Record<string, { sets: number; files: number; bytes: number }>;
+	skipped_bytes: number;
+	unclassified_count: number;
+};
 
 export type EstimateDigest = {
 	as_of: string;
@@ -54,8 +64,12 @@ export type EstimateDigest = {
 	parameters: number | null;
 	dominant_dtype: string | null;
 	unknown_size_count: number | null;
+	size_basis: SizeBasis;
+	repository_bytes: number | null;
+	parameters_source: "safetensors" | "gguf" | null;
+	classification: ClassificationSummary | null;
+	gguf_variants: GgufVariant[];
 	hints?: string[];
-	policy?: string | null;
 	precision?: string | null;
 	bytes_per_param?: number | null;
 	architecture?: string | null;
@@ -157,6 +171,45 @@ const MAX_DIGEST_STRING = 200;
 const MAX_HINTS = 16;
 const MAX_HINT = 40;
 const MAX_PARENTS = 16;
+const MAX_VARIANT_FILES = 256;
+const MAX_FILE_PATH = 1024;
+
+function nonnegativeInteger(v: unknown): v is number {
+	return typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+}
+
+export function cleanClassification(raw: unknown): ClassificationSummary | null {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const obj = raw as Record<string, unknown>;
+	if (!nonnegativeInteger(obj.skipped_bytes) || !nonnegativeInteger(obj.unclassified_count)) return null;
+	if (!obj.verdicts || typeof obj.verdicts !== "object" || Array.isArray(obj.verdicts)) return null;
+	const verdicts: ClassificationSummary["verdicts"] = {};
+	for (const [key, value] of Object.entries(obj.verdicts)) {
+		if (!["negative", "print", "unknown"].includes(key)) continue;
+		if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+		const v = value as Record<string, unknown>;
+		if (!nonnegativeInteger(v.sets) || !nonnegativeInteger(v.files) || !nonnegativeInteger(v.bytes)) return null;
+		verdicts[key] = { sets: v.sets, files: v.files, bytes: v.bytes };
+	}
+	return { verdicts, skipped_bytes: obj.skipped_bytes, unclassified_count: obj.unclassified_count };
+}
+
+export function cleanGgufVariants(raw: unknown): GgufVariant[] {
+	if (!Array.isArray(raw)) return [];
+	const out: GgufVariant[] = [];
+	for (const value of raw) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+		const v = value as Record<string, unknown>;
+		if (typeof v.name !== "string" || !v.name || v.name.length > MAX_FILE_PATH) continue;
+		if (!(v.precision === null || (typeof v.precision === "string" && v.precision.length <= MAX_HINT))) continue;
+		if (!nonnegativeInteger(v.file_count) || v.file_count === 0 || typeof v.complete !== "boolean") continue;
+		if (!(v.size_bytes === null || nonnegativeInteger(v.size_bytes))) continue;
+		if (!Array.isArray(v.include) || !v.include.length || v.include.length > MAX_VARIANT_FILES) continue;
+		if (!v.include.every((g) => typeof g === "string" && g.startsWith("/") && g.length <= MAX_FILE_PATH)) continue;
+		out.push({ name: v.name, precision: v.precision, file_count: v.file_count, size_bytes: v.size_bytes, complete: v.complete, include: v.include as string[] });
+	}
+	return out;
+}
 
 /** Parent edges from an untrusted digest: `{source, relation}` only. */
 export function cleanParents(raw: unknown): ParentEdge[] | null {
@@ -176,6 +229,7 @@ export function cleanParents(raw: unknown): ParentEdge[] | null {
 export function sanitizeDigest(raw: unknown): EstimateDigest | null {
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
 	const obj = raw as Record<string, unknown>;
+	if (obj.size_basis !== "repository" && obj.size_basis !== "selection" && obj.size_basis !== "archive") return null;
 	const out: Record<string, unknown> = {};
 	for (const k of DIGEST_KEYS) {
 		if (!(k in obj)) continue;
@@ -190,8 +244,20 @@ export function sanitizeDigest(raw: unknown): EstimateDigest | null {
 			}
 		} else if (k === "parents") {
 			out[k] = cleanParents(v);
-		} else if (typeof v === "boolean" || typeof v === "number") {
-			out[k] = v;
+		} else if (k === "classification") {
+			out[k] = cleanClassification(v);
+		} else if (k === "gguf_variants") {
+			out[k] = cleanGgufVariants(v);
+		} else if (k === "size_basis") {
+			if (v === "repository" || v === "selection" || v === "archive") out[k] = v;
+		} else if (k === "parameters_source") {
+			if (v === "safetensors" || v === "gguf") out[k] = v;
+		} else if (["payload_bytes", "repository_bytes", "file_count", "parameters", "unknown_size_count"].includes(k)) {
+			if (nonnegativeInteger(v)) out[k] = v;
+		} else if (k === "bytes_per_param") {
+			if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
+		} else if (k === "gated") {
+			if (typeof v === "boolean") out[k] = v;
 		} else if (typeof v === "string" && v.length <= MAX_DIGEST_STRING) {
 			out[k] = v;
 		}
@@ -223,12 +289,7 @@ export function parseClaim(raw: string | null): Claim | null {
 function parseEstimate(raw: string | null): EstimateDigest | null {
 	if (!raw) return null;
 	try {
-		const obj = JSON.parse(raw) as Record<string, unknown>;
-		const out: Record<string, unknown> = {};
-		for (const k of DIGEST_KEYS) {
-			if (k in obj) out[k] = k === "parents" ? cleanParents(obj[k]) : obj[k];
-		}
-		return out as EstimateDigest;
+		return sanitizeDigest(JSON.parse(raw));
 	} catch {
 		return null;
 	}
@@ -283,11 +344,15 @@ export function entryToApi(e: EntryRow) {
 		// the board itself; the catalog.json export is unchanged.
 		gated: typeof est?.gated === "boolean" ? est.gated : null,
 		parameters: typeof est?.parameters === "number" ? est.parameters : null,
+		parameters_source: est?.parameters_source ?? null,
+		size_basis: est?.size_basis ?? null,
+		repository_bytes: typeof est?.repository_bytes === "number" ? est.repository_bytes : null,
+		unknown_size_count: typeof est?.unknown_size_count === "number" ? est.unknown_size_count : null,
+		classification: est?.classification ?? null,
+		gguf_variants: est?.gguf_variants ?? [],
 		dominant_dtype: typeof est?.dominant_dtype === "string" ? est.dominant_dtype : null,
-		// Stored hints win (the CLI wrote them); a digest without any is read
-		// the way the CLI's derive_hints reads a 1.0.0 file.
+		// Hints are measured facts; the selection comes from the row address.
 		hints: entryHints(est, include),
-		policy: typeof est?.policy === "string" ? est.policy : null,
 		// The precision facts and lineage edges the CLI (or the worker's
 		// add-time estimate) established; the board reads them on the row.
 		precision: typeof est?.precision === "string" ? est.precision : null,

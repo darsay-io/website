@@ -4,6 +4,8 @@ Product site and anonymous want-list leaderboards for [darsay](https://github.co
 
 This is documentation plus a coordination ledger. **It does not host model files.** Collectors run `darsay archive` from upstream, or sneakernet a vault.
 
+Every board size names its scope: repository inventory, selected files, or the classified archive. GGUF repositories list their variants and exact selection commands; **Add variant** creates a separately priced row without changing the original. Unknown file sizes appear as lower bounds. **Refresh size** updates Hub inventory, while `darsay estimate <board-url>` classifies archive contents. Catalogs use schema 3.0.0.
+
 ```bash
 npm install
 npm test
@@ -25,6 +27,6 @@ darsay archive --next summer
 
 The GET `…/catalog.json` URL is the same write capability as the board. Do not paste it into chat; use the download button.
 
-See `ops/RUNBOOK.md` for Cloudflare, including the dashboard AI-crawler policy (product docs should stay fetchable; boards stay unlisted). Wrangler is the provisioning tool; there is no Terraform or Ansible. Docs Markdown is pinned in `docs.lock.json` to the latest CLI GitHub Release; do not edit `src/content/docs/docs/**` by hand. A workflow opens a PR when the CLI tags a new release.
+See `ops/RUNBOOK.md` for Cloudflare, including the dashboard AI-crawler policy (product docs should stay fetchable; boards stay unlisted). Wrangler is the provisioning tool; there is no Terraform or Ansible. Docs Markdown is pinned in `docs.lock.json` to a CLI release or exact commit; do not edit `src/content/docs/docs/**` by hand. Use `npm run bump-docs-lock -- <vX.Y.Z-or-full-commit-sha>` to update the pin, generated pages, and snapshots together. Release pins follow new CLI releases automatically; exact commit pins stay fixed until an explicit release tag is supplied. Publish the pinned CLI commit before pushing a website commit that references it.
 
 `wrangler.jsonc` D1 `database_id` values are not secrets; they identify the prod and preview databases. There are no API tokens in this repo. Keep `.dev.vars` and D1 exports out of git.

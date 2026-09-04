@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Point docs.lock.json at a CLI release tag, regenerate Starlight Markdown,
+ * Point docs.lock.json at a CLI release tag or full commit SHA, regenerate Starlight Markdown,
  * and refresh transform snapshots.
  *
  *     node scripts/bump-docs-lock.mjs           # latest GitHub Release
  *     node scripts/bump-docs-lock.mjs v0.10.0
+ *     node scripts/bump-docs-lock.mjs <40-character-commit-sha>
  *
  * Prefers a sibling ../darsay git checkout for the commit SHA. Falls back
  * to the GitHub API. Does not deploy the site.
@@ -38,6 +39,7 @@ export function shaFromSibling(tag, cwd = siblingRepo()) {
 		return execFileSync("git", ["rev-parse", `${tag}^{commit}`], {
 			cwd,
 			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
 		}).trim();
 	} catch {
 		return null;
@@ -72,10 +74,14 @@ export async function shaFromGitHub(repo, ref, fetchImpl = fetch) {
 
 export async function resolveTarget(tag, { repo = DEFAULT_REPO, fetchImpl = fetch } = {}) {
 	const ref = tag || (await latestReleaseTag(repo, fetchImpl));
-	if (!/^v\d+\.\d+\.\d+$/.test(ref)) {
-		throw new Error(`ref ${JSON.stringify(ref)} is not a vX.Y.Z tag`);
+	const commit = /^[0-9a-f]{40}$/.test(ref);
+	if (!/^v\d+\.\d+\.\d+$/.test(ref) && !commit) {
+		throw new Error(`ref ${JSON.stringify(ref)} is not a vX.Y.Z tag or full lowercase commit SHA`);
 	}
 	const sha = shaFromSibling(ref) || (await shaFromGitHub(repo, ref, fetchImpl));
+	if (!/^[0-9a-f]{40}$/.test(sha) || (commit && sha !== ref)) {
+		throw new Error(`ref ${JSON.stringify(ref)} did not resolve to the expected commit SHA`);
+	}
 	return { repo, ref, sha };
 }
 

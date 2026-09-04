@@ -9,12 +9,13 @@ import { FULL_FIDELITY_DTYPES, LARGE_PAYLOAD_BYTES, type Hint } from "../worker/
 import { artifactTypeFromSource, canonicalizeSource } from "../worker/sources.ts";
 import { familyKey, lineageOf } from "./lineage.ts";
 import type { PrimerKey } from "./primer.ts";
+import { humanSize, SIZE_LABELS, type SizeFacts, type SizeBasis } from "./size.ts";
 
 export type LensKey =
 	| "want"
 	| "have"
 	| "claimed"
-	| "negatives"
+	| "archive"
 	| "large"
 	| "quant"
 	| "redundant"
@@ -28,7 +29,7 @@ export type LensKey =
 	| "closed"
 	| "unpriced";
 
-export type LensEntry = {
+export type LensEntry = SizeFacts & {
 	source: string;
 	status: "want" | "have";
 	payload_bytes: number | null;
@@ -37,7 +38,6 @@ export type LensEntry = {
 	gated?: boolean | null;
 	dominant_dtype?: string | null;
 	hints?: string[] | null;
-	policy?: string | null;
 	precision?: string | null;
 	bytes_per_param?: number | null;
 	closed?: boolean | null;
@@ -177,13 +177,13 @@ export const LENSES: Lens[] = [
 		test: inFlight,
 	},
 	{
-		key: "negatives",
-		label: "Negatives",
-		noun: "negatives-priced",
+		key: "archive",
+		label: "Archive sized",
+		noun: "archive sized",
 		group: "policy",
-		primer: "negatives",
-		blurb: "Priced as the negative set: the CLI classified the repo and the size shown is what `archive` will actually fetch — negatives, not prints.",
-		test: (e) => e.policy === "negatives",
+		primer: "archive",
+		blurb: "The CLI classified these rows. Archive estimates include retained prints and unresolved weights; automatic omission requires verified byte duplication within the bundle.",
+		test: (e) => e.size_basis === "archive",
 	},
 	{
 		key: "large",
@@ -200,7 +200,7 @@ export const LENSES: Lens[] = [
 		noun: "quant",
 		group: "policy",
 		primer: "quant",
-		blurb: "A published quantized artifact: mostly GGUF, or a dominant dtype below full fidelity. Some are prints; a native FP8 or INT4 release is the negative.",
+		blurb: "The inventory contains GGUF weights or a dominant dtype below the usual 16-bit formats. Inspect encoding, lineage, and recovery evidence separately; this chip does not decide what to omit.",
 		test: (e) => effectiveHints(e).includes("quant"),
 	},
 	{
@@ -237,7 +237,7 @@ export const LENSES: Lens[] = [
 		group: "name",
 		primer: "abliterated",
 		fromName: true,
-		blurb: "The refusal direction was ablated out of the weights — a one-way edit nothing can regenerate from the base. Read from the repo name.",
+		blurb: "The repo name claims a behavioral weight edit. Check the actual method, source revision, and recovery evidence; the name does not establish irreversibility.",
 		test: (e) => isAbliterated(e.source),
 	},
 	{
@@ -346,20 +346,34 @@ export function lensCountsGiven(rows: LensEntry[], active: LensKey[]): Map<LensK
 	return m;
 }
 
-export type Tally = { n: number; bytes: number; wantBytes: number; haveBytes: number; unsized: number };
+export type Tally = { n: number; unsized: number; groups: Array<{ basis: SizeBasis; status: "want" | "have"; bytes: number; partial: boolean }> };
 
 export function tally(rows: LensEntry[]): Tally {
-	const t: Tally = { n: rows.length, bytes: 0, wantBytes: 0, haveBytes: 0, unsized: 0 };
+	const t: Tally = { n: rows.length, groups: [], unsized: 0 };
 	for (const r of rows) {
-		if (typeof r.payload_bytes !== "number") {
+		if (isClosed(r)) continue;
+		if (typeof r.payload_bytes !== "number" || !r.size_basis) {
 			if (!isClosed(r)) t.unsized += 1;
 			continue;
 		}
-		t.bytes += r.payload_bytes;
-		if (r.status === "have") t.haveBytes += r.payload_bytes;
-		else t.wantBytes += r.payload_bytes;
+		let group = t.groups.find((g) => g.basis === r.size_basis && g.status === r.status);
+		if (!group) {
+			group = { basis: r.size_basis, status: r.status, bytes: 0, partial: false };
+			t.groups.push(group);
+		}
+		group.bytes += r.payload_bytes;
+		group.partial ||= (r.unknown_size_count ?? 0) > 0;
 	}
 	return t;
+}
+
+export function tallyLabels(t: Tally): string[] {
+	const labels = t.groups.map((group) => {
+		const scope = group.basis === "repository" ? "repository totals" : `${SIZE_LABELS[group.basis]} total`;
+		return `${group.partial ? "≥ " : ""}${humanSize(group.bytes)} ${scope} · ${group.status === "have" ? "have" : "wanted"}`;
+	});
+	if (t.unsized > 0) labels.push(`${t.unsized} unpriced`);
+	return labels;
 }
 
 /* ── View state in the URL fragment: shareable, never sent to the server ── */

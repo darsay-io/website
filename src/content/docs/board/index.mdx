@@ -42,7 +42,7 @@ a catalog use. What a program expects, and what it gets:
 	<dt>column</dt><dd class="docs-arrow">→</dd><dd class="docs-word">status</dd><dd class="docs-why">There are no columns. A row is <code>want</code> until somebody holds a copy, then <code>have</code>. That is the whole journey.</dd>
 	<dt>position</dt><dd class="docs-arrow">→</dd><dd class="docs-word">desire</dd><dd class="docs-why">1–9. Orders the ledger and is what <code>darsay archive --next</code> reads. The order is deterministic: desire high to low, unrated last, then as added.</dd>
 	<dt>external id</dt><dd class="docs-arrow">→</dd><dd class="docs-word">source</dd><dd class="docs-why">The canonical address is the identity — <code>huggingface:ESCAD/OpenRTLSet</code>, <code>huggingface:datasets/…</code>, or an https home page for a closed work — together with <code>revision</code> and <code>include</code>. Adding is an upsert on it.</dd>
-	<dt>tags</dt><dd class="docs-arrow">→</dd><dd class="docs-word">chips</dd><dd class="docs-why">Read from the work, never written on the card: <code>hints</code> (gated, large, quant, redundant, subset), <code>policy</code>, <code>precision</code>, <code>address.kind</code>, and <code>lineage</code> — family, generation, member, read from the name and labeled so.</dd>
+	<dt>tags</dt><dd class="docs-arrow">→</dd><dd class="docs-word">chips</dd><dd class="docs-why">Read from the work, never written on the card: <code>hints</code> (gated, large, quant, redundant, subset), <code>size_basis</code>, <code>precision</code>, <code>address.kind</code>, and <code>lineage</code> — family, generation, member, read from the name and labeled so. Every size names its scope; GGUF repositories list their actual variants and the size of each.</dd>
 	<dt>description</dt><dd class="docs-arrow">→</dd><dd class="docs-word">note</dd><dd class="docs-why">One plain sentence for why this one. The facts live in the digest.</dd>
 	<dt>archive</dt><dd class="docs-arrow">→</dd><dd class="docs-word">drop</dd><dd class="docs-why">A soft removal: the row leaves the ledger and the catalog, and comes back exactly as it was. <em>Archive</em> means something else here — it is what the CLI does to a work.</dd>
 	<dt>delete</dt><dd class="docs-arrow">→</dd><dd class="docs-word">remove</dd><dd class="docs-why">Gone for good. Needs the <code>remove</code> scope; the audit trail keeps what the row was.</dd>
@@ -53,6 +53,49 @@ or from the payload, or it is null — and every label is a doorway to the
 card that explains it. A free-text tag would be neither. If a chip you
 need is missing, it is missing from the model of the models, and that is
 where it gets added.
+
+## Choosing a GGUF variant
+
+Expand a row's **GGUF variants** button to compare complete weight sets.
+Each size includes every shard of that variant; projectors are separate
+companions. **Add variant** creates a new selection row, priced with its
+support files, without changing the original row's desire, note, or status.
+An existing selection shows **On board**. **Copy commands** provides the
+exact estimate and archive commands for that selection.
+
+**Refresh size** updates the row's Hub inventory. It does not classify
+negatives and prints; use `darsay estimate <board-url>` for that. A
+repository total is not one model's size or a classified archive size.
+
+Choose the scope, inspect the artifact's lineage, and then examine recovery
+evidence before making a retain/omit decision. A declared parent identifies
+another publication to compare; it does not replace this row's source.
+`BF16` describes stored precision, not proof of an original checkpoint.
+An imatrix marker says an importance matrix was used, not whether its inputs
+are private or whether exact recovery is possible. Derived artifacts can
+still be worth collecting.
+
+### One model, three collection choices
+
+GLM-5.3-Flash illustrates why scope matters. These measurements refer to
+the linked pinned revisions, not a moving branch:
+
+| Collection | Files and payload |
+| --- | --- |
+| [Unsloth's complete GGUF publication](https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/tree/2975ab414d30340466d8c51533c6e91f0cca64c1) | 87 files; 2,545,636,747,545 bytes (2.315 TiB). Twelve main variants and two projectors, with no automatic skips. |
+| [The publisher's FP8 release](https://huggingface.co/zai-org/GLM-5.3-Flash/tree/690b705278a3a58e538fcb37c2ca8b5f9511213c) | 72 files; 328,366,172,624 bytes (305.8 GiB). A separate publication with its own identity. |
+| Unsloth's `UD-Q4_K_XL` selection at the same pinned revision | 199,707,329,724 bytes (186.0 GiB), including its README. Optional projectors are outside this selection. |
+
+The 2.315 TiB figure describes the complete Unsloth publication, not one
+model copy. Choosing the publisher release or one GGUF variant is a new
+collection decision. The board preserves the original row until you
+explicitly change it, and **Add variant** creates a separate row.
+
+Negative/print terminology alone does not authorize deleting or skipping
+an artifact. The automatic skip rule is R15, a verified byte duplicate
+with its retained recovery source inside the same bundle. R2 upstream
+duplicates remain retained; R9 colocated GGUF weights remain unknown and
+retained. Even a classified archive can therefore include many variants.
 
 ## Five minutes
 

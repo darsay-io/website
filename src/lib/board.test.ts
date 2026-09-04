@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareEntries, compareFamily, entryArtifactType, factPrimer, resolveRowLink, rowLinkTarget } from "./board.ts";
+import { compareEntries, compareFamily, entryArtifactType, factPrimer, resolveRowLink, rowLinkTarget, sameRowIdentity } from "./board.ts";
 
 const row = (
 	id: number,
@@ -72,6 +72,9 @@ describe("factPrimer", () => {
 		expect(factPrimer("closed")).toBe("closed");
 		expect(factPrimer("gated")).toBe("gated");
 		expect(factPrimer("4.4 TiB")).toBe("large");
+		expect(factPrimer("2.3 TiB repository total")).toBe("archive");
+		expect(factPrimer("≥ 120 GiB selection · partial")).toBe("archive");
+		expect(factPrimer("12 GGUF variants in repository")).toBe("subset");
 		expect(factPrimer("pin abc123")).toBe("pin");
 		expect(factPrimer("whatever")).toBeNull();
 	});
@@ -115,5 +118,23 @@ describe("row links", () => {
 		expect(ids("nobody/nothing")).toEqual([]);
 		expect(ids("")).toEqual([]);
 		expect(ids("not a source at all")).toEqual([]);
+	});
+});
+
+describe("row identity", () => {
+	const selected = { source: "huggingface:unsloth/GLM-5.3-Flash-GGUF", revision: "v1", include: ["/part1.gguf", "/part2.gguf"] };
+
+	it("finds an existing variant across source spellings and include-set order", () => {
+		expect(sameRowIdentity(selected, { ...selected, source: "https://huggingface.co/UNSLOTH/glm-5.3-flash-gguf", include: ["/part2.gguf", "/part1.gguf", "/part1.gguf"] })).toBe(true);
+		expect(sameRowIdentity({ ...selected, include: null }, { ...selected, include: [] })).toBe(true);
+	});
+
+	it("distinguishes a variant from the whole repository, another pin, or another include set", () => {
+		expect(sameRowIdentity(selected, { ...selected, include: null })).toBe(false);
+		expect(sameRowIdentity(selected, { ...selected, revision: null })).toBe(false);
+		expect(sameRowIdentity(selected, { ...selected, revision: "V1" })).toBe(false);
+		expect(sameRowIdentity(selected, { ...selected, include: ["/part1.gguf"] })).toBe(false);
+		expect(sameRowIdentity(selected, { ...selected, source: "huggingface:datasets/unsloth/GLM-5.3-Flash-GGUF" })).toBe(false);
+		expect(sameRowIdentity({ ...selected, source: "bad source" }, { ...selected, source: "another bad source" })).toBe(false);
 	});
 });

@@ -9,6 +9,7 @@ import {
 	includeArgs,
 	revision12,
 	shellQuote,
+	variantCommands,
 	type Recipe,
 	type RecipeInput,
 } from "./recipes.ts";
@@ -22,6 +23,7 @@ function entry(over: Partial<RecipeInput> = {}): RecipeInput {
 		revision: null,
 		include: null,
 		payload_bytes: 1_519_209_243,
+		size_basis: "repository",
 		artifact_type: "model",
 		gated: false,
 		parameters: 751_632_384,
@@ -132,12 +134,24 @@ describe("numbers", () => {
 });
 
 describe("deriveRecipes", () => {
+	it("keeps even a large selected variant explicitly separate from the whole publication", () => {
+		const selected = entry({ source: "huggingface:unsloth/GLM-5.3-Flash-GGUF", revision: "2975ab414d30340466d8c51533c6e91f0cca64c1", size_basis: "selection", payload_bytes: 199_707_329_724, include: ["/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-*-of-00006.gguf"] });
+		const before = structuredClone(selected);
+		const set = deriveRecipes(selected, "summer");
+		expect(set.facts).toContain("186 GiB selection");
+		expect(set.verdict).toContain("selected scope only");
+		expect(set.verdict).toContain("Other variants and optional projectors are unselected");
+		expect(set.verdict).toContain("does not make them proven recoverable");
+		expect(selected).toEqual(before);
+		expect(all(set).find((recipe) => recipe.key === "archive")?.lines.join("\n")).toContain("--include '/UD-Q4_K_XL/");
+	});
+
 	it("small model: estimate, archive, after, adopt up front; shards behind more", () => {
 		const set = deriveRecipes(entry(), "summer-2026");
 		expect(keys(set.hero)).toEqual(["estimate", "archive", "after", "adopt"]);
 		expect(keys(set.more)).toEqual(["shards"]);
 		expect(set.headline).toBe("Small enough for tonight");
-		expect(set.facts).toEqual(["1.4 GiB", "751.6M BF16", "model"]);
+		expect(set.facts).toEqual(["1.4 GiB repository total", "751.6M · BF16", "model"]);
 		expect(set.hero[0].lines).toEqual(["darsay estimate huggingface:Qwen/Qwen3-0.6B"]);
 		expect(set.hero[1].lines).toEqual(["darsay archive huggingface:Qwen/Qwen3-0.6B"]);
 		expect(text([set.hero[2]])).toContain('darsay run qwen--qwen3-0.6b "Say hello"');
@@ -209,30 +223,50 @@ describe("deriveRecipes", () => {
 		);
 	});
 
-	it("include globs ride on estimate and archive, and the pack size does not mean 'large'", () => {
+	it("include globs ride on estimate and archive, with the selection's own price", () => {
 		const set = deriveRecipes(
-			entry({ source: "huggingface:unsloth/Qwen3-30B-A3B-GGUF", include: ["*Q4_K_M*"], payload_bytes: 464 * GiB }),
+			entry({ source: "huggingface:unsloth/Qwen3-30B-A3B-GGUF", include: ["*Q4_K_M*"], payload_bytes: 15 * GiB, repository_bytes: 464 * GiB, size_basis: "selection" }),
 			"summer",
 		);
 		expect(set.traits).toEqual(["subset"]);
 		expect(keys(set.hero)).toEqual(["estimate", "archive", "adopt"]);
-		expect(keys(set.more)).toEqual(["budget", "shards", "after"]);
+		expect(keys(set.more)).toEqual(["shards", "after"]);
 		expect(set.hero[0].lines).toEqual(["darsay estimate huggingface:unsloth/Qwen3-30B-A3B-GGUF --include '*Q4_K_M*'"]);
 		expect(set.hero[1].lines).toEqual(["darsay archive huggingface:unsloth/Qwen3-30B-A3B-GGUF --include '*Q4_K_M*'"]);
 		expect(set.hero[1].title).toBe("Grab just the subset");
-		expect(set.facts[0]).toBe("464 GiB before --include");
+		expect(set.facts[0]).toBe("15 GiB selection");
 		expect(set.verdict).toContain("*Q4_K_M*");
+		expect(set.verdict).not.toContain("whole pack");
 	});
 
-	it("a GGUF pack without globs suggests one quant first", () => {
-		const set = deriveRecipes(entry({ source: "huggingface:unsloth/Qwen3-30B-A3B-GGUF", payload_bytes: 464 * GiB }), "summer");
+	it("uses the inventory to identify a GGUF pack without choosing a quant", () => {
+		const gguf_variants = ["Q2_K", "Q8_0"].map((precision) => ({ name: `model-${precision}`, precision, file_count: 1, size_bytes: 15 * GiB, complete: true, include: [`/model-${precision}.gguf`] }));
+		const set = deriveRecipes(entry({ source: "huggingface:unsloth/Model", payload_bytes: 464 * GiB, gguf_variants }), "summer");
 		expect(set.traits).toEqual(["pack"]);
-		expect(keys(set.hero)).toEqual(["subset", "estimate", "adopt"]);
-		expect(set.hero[0].lines).toEqual([
-			"darsay estimate huggingface:unsloth/Qwen3-30B-A3B-GGUF --include '*Q4_K_M*'",
-			"darsay archive  huggingface:unsloth/Qwen3-30B-A3B-GGUF --include '*Q4_K_M*'",
-		]);
+		expect(keys(set.hero)).toEqual(["estimate", "adopt"]);
+		expect(set.verdict).toContain("2 GGUF variants");
+		expect(text(all(set))).not.toContain("Q4_K_M");
 		expect(keys(set.more)).toContain("budget");
+		expect(deriveRecipes(entry({ source: "huggingface:unsloth/Model-GGUF" }), "summer").traits).not.toContain("pack");
+	});
+
+	it("copies each complete variant's exact files with the original source and revision", () => {
+		const e = entry({ source: "huggingface:unsloth/Model", revision: "release $(id)", include: ["*old*"] });
+		const variant = { name: "Q8_0", precision: "Q8_0", file_count: 2, size_bytes: 30 * GiB, complete: true, include: ["/Q8_0/model-00001-of-00002.gguf", "/Q8_0/model'$(id)-00002-of-00002.gguf"] };
+		const commands = variantCommands(e, variant);
+		expect(commands).toHaveLength(2);
+		expect(commands[0]).toBe("darsay estimate huggingface:unsloth/Model --revision 'release $(id)' --include '/Q8_0/model-00001-of-00002.gguf' --include '/Q8_0/model'\\''$(id)-00002-of-00002.gguf'");
+		expect(commands[1]).toBe(commands[0].replace("darsay estimate", "darsay archive"));
+		expect(commands.join("\n")).not.toContain("--board");
+		expect(commands.join("\n")).not.toContain("old");
+		expect(variantCommands(e, { ...variant, complete: false })).toEqual([]);
+	});
+
+	it("budgets a large selected variant according to its selected size", () => {
+		const set = deriveRecipes(entry({ include: ["/model.gguf"], size_basis: "selection", payload_bytes: 100 * GiB, repository_bytes: 1024 * GiB }), "summer");
+		expect(set.traits).toEqual(["large", "subset"]);
+		expect(set.facts[0]).toBe("100 GiB selection");
+		expect(set.hero.find((r) => r.key === "halves")!.lines).toContain("darsay archive huggingface:Qwen/Qwen3-0.6B --include '/model.gguf' --max-gb 50");
 	});
 
 	it("gated rows put authentication before the archive verb", () => {
@@ -261,7 +295,7 @@ describe("deriveRecipes", () => {
 		const after = all(set).find((r) => r.key === "after")!;
 		expect(text([after])).toContain("darsay info datasets--cornell-movie-review-data--rotten_tomatoes");
 		expect(text([after])).not.toContain("darsay run");
-		expect(set.facts).toEqual(["869 KiB", "dataset"]);
+		expect(set.facts).toEqual(["869 KiB repository total", "dataset"]);
 	});
 
 	it("a pinned revision is threaded through every fetch and into bundle paths", () => {

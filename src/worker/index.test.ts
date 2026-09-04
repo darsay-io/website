@@ -45,6 +45,35 @@ afterEach(() => {
 });
 
 describe("boards API", () => {
+	it("prices includes on add and edit, and refreshes metadata without changing the row's decisions", async () => {
+		let q4Bytes = 10;
+		const upstream = vi.fn(async () => new Response(JSON.stringify({
+			sha: "abc", gguf: { total: 100, architecture: "glm5next" },
+			siblings: [{ rfilename: "model-Q4.gguf", size: q4Bytes }, { rfilename: "model-Q8.gguf", size: 20 }, { rfilename: "README.md", size: 2 }],
+		})));
+		vi.stubGlobal("fetch", upstream);
+		const { env: e } = env();
+		const { id } = await (await req(e, "/api/boards", postBoard())).json() as { id: string };
+		const post = (body: object) => req(e, `/api/boards/${id}/entries`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+		const address = { source: "acme/pack", include: ["*Q4*"] };
+		const added = await (await post({ ...address, desire: 7, status: "have", holders: "SSD", note: "keep" })).json() as Record<string, unknown>;
+		expect(added).toMatchObject({ payload_bytes: 12, repository_bytes: 32, size_basis: "selection", parameters_source: "gguf", precision: "Q4" });
+		q4Bytes = 15;
+		expect((await (await post(address)).json() as Record<string, unknown>).payload_bytes).toBe(12);
+		expect(upstream).toHaveBeenCalledTimes(1);
+		const refreshed = await (await post({ ...address, refresh: true })).json();
+		expect(refreshed).toMatchObject({ id: added.id, payload_bytes: 17, desire: 7, status: "have", holders: "SSD", note: "keep" });
+		expect(upstream).toHaveBeenCalledTimes(2);
+		const edited = await req(e, `/api/boards/${id}/entries/${added.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ include: ["*Q8*"] }) });
+		expect(await edited.json()).toMatchObject({ payload_bytes: 22, size_basis: "selection", precision: "Q8" });
+		vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+		const failed = await post({ source: address.source, include: ["*Q8*"], refresh: true });
+		expect(failed.status).toBe(502);
+		expect(await failed.json()).toMatchObject({ error: "estimate_unavailable" });
+		const kept = await req(e, `/api/boards/${id}/entries/${added.id}`);
+		expect(await kept.json()).toMatchObject({ payload_bytes: 22, status: "have", holders: "SSD" });
+	});
+
 	it("creates a board and slugs catalog_id from the title", async () => {
 		const { env: e } = env();
 		const res = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
@@ -125,7 +154,7 @@ describe("boards API", () => {
 		expect(await res.json()).toEqual({ error: "create_cap" });
 	});
 
-	it("canonicalizes HF sources, upserts identity, and exports catalog 2.0.0 without holders", async () => {
+	it("canonicalizes HF sources, upserts identity, and exports catalog 3.0.0 without holders", async () => {
 		const { env: e } = env();
 		const created = await req(e, "/api/boards", postBoard({ title: "Summer 2026" }));
 		const { id } = (await created.json()) as { id: string };
@@ -159,7 +188,7 @@ describe("boards API", () => {
 		expect(catRes.status).toBe(200);
 		expect(catRes.headers.get("Content-Disposition")).toBe('attachment; filename="summer-2026.json"');
 		const cat = (await catRes.json()) as Record<string, unknown>;
-		expect(cat.catalog_schema_version).toBe("2.0.0");
+		expect(cat.catalog_schema_version).toBe("3.0.0");
 		expect(JSON.stringify(cat)).not.toContain("holders");
 		expect(JSON.stringify(cat)).not.toContain(id);
 		expect(JSON.stringify(cat)).not.toMatch(/"status"/);
@@ -289,7 +318,7 @@ describe("boards API", () => {
 			catalog_schema_version: string;
 			entries: Array<{ source: string; estimate: unknown }>;
 		};
-		expect(cat.catalog_schema_version).toBe("2.0.0");
+		expect(cat.catalog_schema_version).toBe("3.0.0");
 		const exported = cat.entries.find((x) => x.source.startsWith("https://"))!;
 		expect(exported.estimate).toBeNull();
 	});
@@ -429,7 +458,7 @@ describe("catalog import (the CLI round trip)", () => {
 			method: "POST" as const,
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
-				catalog_schema_version: "2.0.0",
+				catalog_schema_version: "3.0.0",
 				kind: "darsay.catalog",
 				id: "summer-2026",
 				title: "Summer 2026",
@@ -448,7 +477,7 @@ describe("catalog import (the CLI round trip)", () => {
 							parameters: 27_781_427_952,
 							dominant_dtype: "BF16",
 							hints: ["large", "redundant"],
-							policy: "negatives",
+							size_basis: "archive",
 							precision: "BF16",
 							bytes_per_param: 4.0,
 							architecture: "qwen3_5",
@@ -487,7 +516,7 @@ describe("catalog import (the CLI round trip)", () => {
 		expect(one.note).toBe("reclassified");
 		expect(one.payload_bytes).toBe(111_140_000_000);
 		expect(one.hints).toEqual(["large", "redundant"]);
-		expect(one.policy).toBe("negatives");
+		expect(one.size_basis).toBe("archive");
 		expect(one.precision).toBe("BF16");
 		expect(one.bytes_per_param).toBe(4.0);
 		expect(one.architecture).toBe("qwen3_5");
@@ -506,6 +535,22 @@ describe("catalog import (the CLI round trip)", () => {
 		const id = await boardWithRows(e);
 		const old = await req(e, `/api/boards/${id}/catalog.json`, importDoc({ catalog_schema_version: "1.2.0" }));
 		expect(old.status).toBe(400);
+	});
+
+	it("clears a null imported digest consistently in both API and catalog export", async () => {
+		const { env: e } = env();
+		const id = await boardWithRows(e);
+		await req(e, `/api/boards/${id}/catalog.json`, importDoc());
+		const exported = await (await req(e, `/api/boards/${id}/catalog.json`)).json() as { entries: Array<{ source: string; estimate: unknown }> };
+		const row = exported.entries.find((r) => r.source === "huggingface:acme/one")!;
+		expect(row.estimate).not.toBeNull();
+		row.estimate = null;
+		const imported = await req(e, `/api/boards/${id}/catalog.json`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(exported) });
+		expect(imported.status).toBe(200);
+		const board = await (await req(e, `/api/boards/${id}`)).json() as { entries: Array<Record<string, unknown>> };
+		expect(board.entries.find((r) => r.source === row.source)).toMatchObject({ payload_bytes: null, size_basis: null, precision: null, status: "have", holders: "external SSD (2TB)" });
+		const after = await (await req(e, `/api/boards/${id}/catalog.json`)).json() as typeof exported;
+		expect(after.entries.find((r) => r.source === row.source)?.estimate).toBeNull();
 	});
 
 	it("rejects a catalog_id mismatch and non-catalog bodies", async () => {

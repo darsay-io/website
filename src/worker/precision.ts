@@ -225,8 +225,8 @@ export function bytesPerParam(weightBytes: number | null | undefined, parameters
 /** The sentence a collector needs beside the number. */
 export function describeBytesPerParam(bpp: number | null | undefined): string | null {
 	if (bpp === null || bpp === undefined) return null;
-	if (bpp >= 3.5) return "well over one full-fidelity copy — the repo likely ships several weight sets";
-	if (bpp >= 1.75) return "about one full-fidelity copy (16-bit)";
+	if (bpp >= 3.5) return "more than two bytes per weight — wider encodings or additional stored data";
+	if (bpp >= 1.75) return "about one 16-bit weight copy";
 	if (bpp >= 0.85) return "about one byte per weight — an 8-bit release";
 	if (bpp >= 0.4) return "about half a byte per weight — a 4-bit release";
 	return "under half a byte per weight — 2- or 3-bit, or a subset of the weights";

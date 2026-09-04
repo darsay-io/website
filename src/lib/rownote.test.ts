@@ -17,7 +17,7 @@ function row(over: Partial<RowFacts> = {}): RowFacts {
 		parameters: 27_781_427_952,
 		dominant_dtype: "BF16",
 		hints: ["large", "quant", "redundant"],
-		policy: null,
+		size_basis: "repository",
 		holders: "darsay 2",
 		claim: null,
 		...over,
@@ -29,22 +29,22 @@ describe("rowNote", () => {
 		expect(oneCopyBytes(row())).toBe(27_781_427_952 * 2);
 		const note = rowNote("dtype", row())!;
 		expect(note).toContain("`27.78B` × 2 bytes (`BF16`) ≈ **52 GiB** for one copy");
-		expect(note).toContain("priced at **223 GiB** — 4.3×, well over one copy");
+		expect(note).toContain("shows **223 GiB repository total** — 4.3×, well over one copy");
 		expect(rowNote("redundant", row({ payload_bytes: 55_586_114_863 }))).toContain("1.0×, about one copy");
 		expect(rowNote("dtype", row({ dominant_dtype: "FP4" }))).toBeNull();
 		expect(rowNote("dtype", row({ parameters: null }))).toBeNull();
 		expect(rowNote("dtype", row({ payload_bytes: null }))).toContain("no size yet");
-		expect(rowNote("dtype", row({ policy: "negatives" }))).toContain("priced as the negative set at");
+		expect(rowNote("dtype", row({ size_basis: "archive" }))).toContain("223 GiB archive");
 		// The CLI's measured figure wins over the dtype arithmetic.
 		expect(rowNote("dtype", row({ precision: "MXFP4", bytes_per_param: 0.562, parameters: 2_779_931_837_184 }))).toBe(
-			"`2.78T` at `MXFP4`, **0.56 B/param** measured: about half a byte per weight — a 4-bit release — **223 GiB** on the row.",
+			"`2.78T` at `MXFP4`, **0.56 B/param** measured: about half a byte per weight — a 4-bit release — **223 GiB repository total** on the row.",
 		);
 		expect(rowNote("dtype", row({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902", closed: true }))).toContain("closed work");
 	});
 
 	it("plans a large download in evenings and link hours, in GiB", () => {
 		const note = rowNote("large", row({ payload_bytes: 704 * GiB }))!;
-		expect(note).toContain("**704 GiB**: 71 evenings at `--max-gb 10`");
+		expect(note).toContain("**704 GiB repository total**: 71 evenings at `--max-gb 10`");
 		expect(note).toContain("about 8 hours of link time at 25 MiB/s");
 		expect(note).toContain("In halves, 355 GiB to each disk");
 		expect(rowNote("large", row({ payload_bytes: 15 * GiB }))).toContain("under the 20 GiB line");
@@ -54,7 +54,7 @@ describe("rowNote", () => {
 
 	it("reads MoE numbers, names, and the pin", () => {
 		expect(rowNote("moe", row({ source: "huggingface:Qwen/Qwen3-Coder-480B-A35B-Instruct", payload_bytes: 895 * GiB }))).toBe(
-			"480B total — all **895 GiB** come home. 35B active — once loaded it runs like a 35B dense model.",
+			"480B total parameters, 35B active per token. The row shows **895 GiB repository total**; disk usage depends on the selected weight sets and their precision.",
 		);
 		expect(rowNote("moe", row())).toBeNull();
 		expect(rowNote("abliterated", row())).toContain("Read from the name.");
@@ -66,7 +66,7 @@ describe("rowNote", () => {
 		);
 		expect(rowNote("family", row({ source: "test:acme/toy" }))).toContain("**toy**");
 		expect(rowNote("closed", row({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902" }))).toContain("**qwen 3.8**");
-		expect(rowNote("negatives", row({ policy: "negatives" }))).toContain("Priced as the negative set");
+		expect(rowNote("archive", row({ size_basis: "archive" }))).toContain("prints without proven recovery");
 		expect(rowNote("pin", row())).toContain("Unpinned");
 		expect(rowNote("pin", row({ revision: "c1899de289a0f1e2d3c4b5a6" }))).toContain("Pinned to `c1899de289a0`");
 		expect(rowNote("pin", row({ revision: "v1.2" }))).toContain("Pinned to `v1.2`");
@@ -76,8 +76,8 @@ describe("rowNote", () => {
 	});
 
 	it("tells a quant row what it might be, and a gated row where to go", () => {
-		expect(rowNote("quant", row({ dominant_dtype: "F8_E4M3", hints: ["quant"] }))).toContain("if one does, this is a satellite");
-		expect(rowNote("quant", row({ hints: [] }))).toContain("full fidelity");
+		expect(rowNote("quant", row({ dominant_dtype: "F8_E4M3", hints: ["quant"] }))).toContain("recovery evidence");
+		expect(rowNote("quant", row({ hints: [] }))).toContain("not original training provenance");
 		expect(rowNote("gated", row({ gated: true }))).toContain("the row's link");
 	});
 
@@ -88,6 +88,27 @@ describe("rowNote", () => {
 		expect(rowNote("claims", row({ claim: { client: "darsay1", state: "archiving", percent: 1 } }))).toBe(
 			"Claimed by `darsay1`, fetching at 1%. Other collectors' `--next` skips it while the claim is live.",
 		);
+	});
+
+	it("distinguishes unresolved weight sets from files and keeps selection separate from recovery", () => {
+		const selected = row({ include: ["/weights.gguf"], size_basis: "selection", payload_bytes: 8 * GiB });
+		expect(rowNote("subset", selected)).toContain("**8.0 GiB selection** measures those selected files");
+		expect(rowNote("subset", selected)).not.toContain("before");
+		expect(rowNote("subset", selected)).toContain("not a recovery verdict");
+		const archive = row({ size_basis: "archive", classification: { verdicts: { unknown: { sets: 3, files: 14, bytes: GiB } }, unclassified_count: 3, skipped_bytes: GiB }, unknown_size_count: 2 });
+		const note = rowNote("archive", archive)!;
+		expect(note).toContain("≥ 223 GiB archive · partial");
+		expect(note).toContain("3 unresolved weight sets (14 files) retained");
+		expect(note).toContain("lower bound");
+		expect(note).toContain("prints without proven recovery");
+		const one = row({ size_basis: "archive", classification: { verdicts: { unknown: { sets: 1, files: 5, bytes: GiB } }, unclassified_count: 1, skipped_bytes: 0 } });
+		expect(rowNote("archive", one)).toContain("1 unresolved weight set (5 files) retained");
+	});
+
+	it("does not infer recoverability from a precision, a parent, or an edited-model name", () => {
+		expect(rowNote("quant", row({ hints: ["quant"], dominant_dtype: null }))).toContain("does not prove recovery");
+		expect(rowNote("abliterated", row())).toContain("does not prove the edit is irreversible");
+		expect(rowNote("family", row({ parents: [{ source: "huggingface:zai-org/GLM-5.3-Flash", relation: "quantized" }] }))).toContain("does not establish how to recover");
 	});
 
 	it("never leaves a backtick open, for any card and a bare row", () => {

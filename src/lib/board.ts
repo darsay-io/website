@@ -1,4 +1,3 @@
-import { humanBytesPerParam } from "../worker/precision.ts";
 import { artifactTypeFromSource, canonicalizeSource, hfUrlFromCanonical } from "../worker/sources.ts";
 import {
 	DEFAULT_DIAL_INDICES,
@@ -49,15 +48,17 @@ import {
 	parseView,
 	repoName,
 	tally,
+	tallyLabels,
 	type LensKey,
 	type SortKey,
 	type ViewMode,
 } from "./lenses.ts";
 import { compareGenerations, displayGeneration, familiesOf, familyKey, groupByFamily, lineageOf, publisherOf } from "./lineage.ts";
 import { HINT_PRIMER, type PrimerKey } from "./primer.ts";
-import { deriveRecipes, humanParams, humanSize, type Recipe } from "./recipes.ts";
+import { deriveRecipes, humanSize, variantCommands, type Recipe } from "./recipes.ts";
+import { modelFacts, scopedSize, sizeExplanation, variantSize, type SizeFacts } from "./size.ts";
 
-type Entry = {
+type Entry = SizeFacts & {
 	id: number;
 	source: string;
 	revision: string | null;
@@ -73,7 +74,6 @@ type Entry = {
 	parameters?: number | null;
 	dominant_dtype?: string | null;
 	hints?: string[];
-	policy?: string | null;
 	precision?: string | null;
 	bytes_per_param?: number | null;
 	architecture?: string | null;
@@ -149,6 +149,7 @@ function humanError(msg: string): string {
 		mutate_cap: "The board is resting — too many edits today. Try again tomorrow.",
 		lookup_cap: "Too many lookups today. Try again tomorrow.",
 		quota: "The ledger could not be written. Try again in a moment.",
+		estimate_unavailable: "The Hub could not provide a matching file inventory. The previous size is unchanged; try again later or check the revision and include patterns.",
 		"invalid source": "That does not look like a source. Try owner/name or a Hugging Face URL.",
 		"field too long": "That is too long for the field.",
 	};
@@ -275,7 +276,8 @@ export function factPrimer(fact: string): PrimerKey | null {
 	if (fact === "dataset") return "dataset";
 	if (fact === "model") return "bundle";
 	if (/^\d[\d.]*[BMT]\b/.test(fact) || /B\/param$/.test(fact)) return "dtype";
-	if (/before --include$/.test(fact)) return "subset";
+	if (/\b(repository total|selection|archive)\b/.test(fact)) return "archive";
+	if (/GGUF variants/.test(fact)) return "subset";
 	if (/\b(GiB|TiB)$/.test(fact)) return "large";
 	return null;
 }
@@ -288,6 +290,17 @@ function sourceKey(source: string): string | null {
 	if (c.kind === "error") return null;
 	// Hub ids are case-insensitive; a home URL is whatever it is.
 	return c.kind === "hf" ? c.canonical.toLowerCase() : c.canonical;
+}
+
+type RowIdentity = Pick<Entry, "source" | "revision" | "include">;
+
+/** Address equality: source spelling is canonicalized; revision and include set define the selection. */
+export function sameRowIdentity(a: RowIdentity, b: RowIdentity): boolean {
+	const source = sourceKey(a.source);
+	if (source === null || source !== sourceKey(b.source) || a.revision !== b.revision) return false;
+	const includeA = new Set(a.include ?? []);
+	const includeB = new Set(b.include ?? []);
+	return includeA.size === includeB.size && [...includeA].every((pattern) => includeB.has(pattern));
 }
 
 /**
@@ -438,7 +451,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 		if (document.querySelector("dialog[open]")) return;
 		ev.preventDefault();
-		openGuide("negatives");
+		openGuide("archive");
 	});
 
 	function hintSeen(): boolean {
@@ -519,6 +532,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 	async function reload() {
 		await writes;
+		await loadBoard();
+	}
+
+	/** Read after a queued mutation without waiting on the mutation itself. */
+	async function loadBoard() {
 		board = (await api(`/api/boards/${id}`)) as Board;
 		render();
 	}
@@ -719,7 +737,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		more.append(el("a", { href: "/docs/getting-started/" }, "Full walkthrough"), " · ");
 		more.append(el("a", { href: "/docs/examples/#keep-a-darsayio-board-honest" }, "Keep a board honest"), " · ");
 		const fg = el("button", { type: "button", class: "linkish" }, "✦ Field guide");
-		fg.addEventListener("click", () => openGuide("negatives", fg));
+		fg.addEventListener("click", () => openGuide("archive", fg));
 		more.append(fg);
 
 		details.append(summary, steps, more);
@@ -791,7 +809,75 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			facts,
 			el("p", { class: "grim-verdict" }, set.verdict),
 		);
-		const out: Node[] = [head, spellList(set.hero, 0)];
+		const out: Node[] = [head];
+		const modelParents = (e.parents ?? []).filter((parent) => {
+			const parsed = canonicalizeSource(parent.source);
+			return parsed.kind === "hf" && parsed.artifactType === "model";
+		});
+		if (modelParents.length) {
+			const lineage = el("p", { class: "grim-verdict" }, "Declared model lineage: ");
+			for (const [i, parent] of modelParents.entries()) {
+				if (i) lineage.append("; ");
+				lineage.append(el("a", { href: hfUrlFromCanonical(parent.source)!, target: "_blank", rel: "noreferrer" }, repoName(parent.source)));
+				if (parent.relation) lineage.append(` (${parent.relation})`);
+			}
+			lineage.append(". Inspect these as separate publications. A declared parent does not prove exact recovery; this row keeps its own source and selection.");
+			out.push(lineage);
+		}
+		if (e.gguf_variants?.length) {
+			const table = el("table", { class: "variant-table" });
+			const thead = el("thead", {}, el("tr", {}, ...["Variant", "Precision", "Weight files", "Selection"].map((label) => el("th", { scope: "col" }, label))));
+			const tbody = el("tbody", {});
+			for (const variant of e.gguf_variants) {
+				const commands = variantCommands(e, variant);
+				const selection = el("td", {});
+				if (commands.length) {
+					const identity: RowIdentity = { source: e.source, revision: e.revision, include: [...variant.include] };
+					const isOnBoard = () => board.entries.some((row) => !row.dropped && sameRowIdentity(row, identity));
+					const add = el("button", { type: "button", class: "btn compact", "aria-label": `Add ${variant.name} as its own board row` }, isOnBoard() ? "On board" : "Add variant");
+					add.disabled = isOnBoard();
+					add.addEventListener("click", () => {
+						add.disabled = true;
+						add.textContent = "Adding…";
+						const run = async () => {
+							try {
+								if (!isOnBoard()) {
+									await api(`/api/boards/${id}/entries`, { method: "POST", body: JSON.stringify(identity) });
+								}
+								await loadBoard();
+								toast(`${variant.precision ?? variant.name} is on the board as a separate selection.`);
+							} catch (err) {
+								add.disabled = false;
+								add.textContent = "Add variant";
+								toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+							}
+						};
+						writes = writes.then(run, run);
+					});
+					const details = el("details", { class: "variant-command" });
+					const code = codeLines(commands);
+					const copy = el("button", { type: "button", class: "btn compact", "aria-label": `Copy estimate and archive commands for ${variant.name}` }, "Copy commands");
+					copy.addEventListener("click", () => void copyOrSelect(copy, commands.join("\n"), code));
+					details.append(el("summary", {}, "Exact files"), el("pre", {}, code));
+					selection.append(add, " ", copy, details);
+				} else {
+					selection.append("Incomplete inventory — refresh before selecting");
+				}
+				tbody.append(el("tr", {},
+					el("th", { scope: "row" }, variant.name),
+					el("td", {}, variant.precision ?? "unknown"),
+					el("td", {}, variantSize(variant), el("small", {}, `${variant.file_count} file${variant.file_count === 1 ? "" : "s"}`)),
+					selection,
+				));
+			}
+			table.append(thead, tbody);
+			out.push(el("section", { class: "variant-inventory", "aria-label": "Published GGUF variants" },
+				el("h4", {}, "Published GGUF variants"),
+				el("p", {}, "Each size includes every shard of that variant. Estimates add recognized support files; optional projectors need an explicit selection. Add variant creates a separate collection scope and leaves this row unchanged. Unselected variants are not being judged recoverable or disposable."),
+				el("div", { class: "variant-table-wrap", tabindex: "0", role: "region", "aria-label": "GGUF variants and commands" }, table),
+			));
+		}
+		out.push(spellList(set.hero, 0));
 		if (set.more.length) {
 			const more = el("details", { class: "grim-more" });
 			more.append(
@@ -827,7 +913,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const verb = claim.state === "paused" ? "paused at" : "fetching";
 		const bytes =
 			claim.banked_bytes !== null && claim.total_bytes
-				? ` · ${humanSize(claim.banked_bytes)} of ${humanSize(claim.total_bytes)}`
+				? ` · ${humanSize(claim.banked_bytes)} of ${humanSize(claim.total_bytes)} claimed archive`
 				: "";
 		const since = claim.updated ? ` · reported ${relativeTime(claim.updated)}` : "";
 		const why = el("button", { type: "button", class: "claim-why", "aria-label": "What is a claim?" }, "✦");
@@ -889,19 +975,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		else facts.append(el("span", { class: "muted" }, "—"));
 
 		if (!closed) {
-			const size = el("span", { class: "work-size" }, humanSize(e.payload_bytes));
-			if (typeof e.payload_bytes === "number") size.title = `${e.payload_bytes.toLocaleString()} bytes`;
+			const size = el("button", { type: "button", class: "work-size work-size-help", title: sizeExplanation(e) }, scopedSize(e));
+			size.addEventListener("click", () => openGuide("archive", size, e));
 			facts.append(size);
 		}
-		if (e.parameters) {
-			// Parameters · precision · bytes per parameter: the three numbers
-			// that explain the size (the precision card).
-			const label = e.precision ?? e.dominant_dtype;
-			const parts = [humanParams(e.parameters), ...(label ? [label] : []), ...(typeof e.bytes_per_param === "number" ? [humanBytesPerParam(e.bytes_per_param)] : [])];
-			facts.append(teachChip(parts.join(" · "), "dtype", "chip-stat", e, "Parameters, release precision, bytes per parameter — why it weighs what it weighs"));
-		}
-		if (e.policy === "negatives") {
-			facts.append(teachChip("negatives", "negatives", "chip-policy", e, "Priced as the negative set: negatives, not prints"));
+		const parts = modelFacts(e);
+		if (parts.length) {
+			const origin = e.parameters_source === "gguf" ? "Parameter count from Hub GGUF metadata. " : e.parameters_source === "safetensors" ? "Parameter count from safetensors metadata. " : "";
+			facts.append(teachChip(parts.join(" · "), "dtype", "chip-stat", e, `${origin}Release precision and measured bytes per parameter when available.`));
 		}
 		const lin = lineageOf(e.source);
 		if (lin.family) {
@@ -944,7 +1025,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				"aria-controls": region.id,
 			},
 			el("span", { class: "grim-glyph", "aria-hidden": "true" }, "▸"),
-			el("span", {}, "Recipes"),
+			el("span", {}, e.gguf_variants?.length ? `${e.gguf_variants.length} GGUF variant${e.gguf_variants.length === 1 ? "" : "s"} · Recipes` : "Recipes"),
 		);
 		toggle.addEventListener("click", () => {
 			const now = !openRecipes.has(e.id);
@@ -1069,6 +1150,28 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			if (await copyText(href)) flashCopied(link, "Link copied ✓");
 			else toast("Select the address bar and copy it — it is the link.", "error");
 		});
+		if (!closed && canonicalizeSource(e.source).kind === "hf") {
+			const refresh = el("button", { type: "button", class: "btn compact secondary", title: "Refresh repository or selection sizes and GGUF variants from the Hub. Use darsay estimate to classify the archive." }, "Refresh size");
+			refresh.addEventListener("click", () => {
+				refresh.disabled = true;
+				refresh.textContent = "Refreshing…";
+				writes = writes.then(async () => {
+					try {
+						await api(`/api/boards/${id}/entries`, {
+							method: "POST",
+							body: JSON.stringify({ source: e.source, revision: e.revision, include: e.include, refresh: true }),
+						});
+						await loadBoard();
+						toast("Hub inventory refreshed; archive classification uses darsay estimate.");
+					} catch (err) {
+						refresh.disabled = false;
+						refresh.textContent = "Refresh size";
+						toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+					}
+				});
+			});
+			bar.append(refresh);
+		}
 		bar.append(link, rm);
 
 		const claimRow = renderClaim(e);
@@ -1190,11 +1293,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		} else {
 			head.append(el("strong", {}, String(total)), ` ${total === 1 ? "source" : "sources"}`);
 		}
-		const parts: string[] = [];
-		if (t.wantBytes > 0) parts.push(`${humanSize(t.wantBytes)} wanted`);
-		if (t.haveBytes > 0) parts.push(`${humanSize(t.haveBytes)} in vaults`);
-		if (t.unsized > 0) parts.push(`${t.unsized} unpriced`);
-		const tallyEl = el("span", { class: "ledger-tally", title: "Sizes as priced by the Hub; the negative set where the CLI classified" });
+		const parts = tallyLabels(t);
+		const tallyEl = el("span", { class: "ledger-tally", title: "Row estimates grouped by scope and status. Overlapping rows can count the same files more than once; these are not unique bytes in vaults." });
 		parts.forEach((p, i) => {
 			if (i > 0) tallyEl.append(el("span", { class: "ledger-sep", "aria-hidden": "true" }, "·"));
 			tallyEl.append(p);
@@ -1335,7 +1435,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			el("span", { class: "guide-open-long" }, "Field "),
 			"guide",
 		);
-		guideBtn.addEventListener("click", () => openGuide(lenses.length ? LENS_BY_KEY[lenses[lenses.length - 1]].primer : family ? "family" : "negatives", guideBtn));
+		guideBtn.addEventListener("click", () => openGuide(lenses.length ? LENS_BY_KEY[lenses[lenses.length - 1]].primer : family ? "family" : "archive", guideBtn));
 
 		shells.toolbar.replaceChildren(
 			el("div", { class: "ledger-row ledger-row-top" }, head, tallyEl, views, sorts, guideBtn),
@@ -1494,7 +1594,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			: el("span", { class: "member-name" }, nameText);
 		const tags = el("span", { class: "member-tags" });
 		for (const v of lin.variants) tags.append(el("span", { class: "member-tag" }, v));
-		for (const f of lin.formats) tags.append(el("span", { class: "member-tag member-tag-format" }, `${f} print`));
+		for (const f of lin.formats) tags.append(el("span", { class: "member-tag member-tag-format", title: "Format read from the name; not a preservation verdict" }, f));
 		if (closed) tags.append(el("span", { class: "member-tag member-tag-closed" }, "closed"));
 		const head = el("div", { class: "member-head" }, name, tags);
 		const publisher = publisherOf(e.source);
@@ -1502,11 +1602,9 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const edgeEl = edge ? el("div", { class: "member-edge" }, edge) : null;
 
 		const facts: string[] = [];
-		if (!closed && typeof e.payload_bytes === "number") facts.push(humanSize(e.payload_bytes));
-		if (e.parameters) facts.push(humanParams(e.parameters));
-		const label = e.precision ?? e.dominant_dtype;
-		if (label) facts.push(label);
-		if (typeof e.bytes_per_param === "number") facts.push(humanBytesPerParam(e.bytes_per_param));
+		if (!closed) facts.push(scopedSize(e));
+		facts.push(...modelFacts(e));
+		if (e.gguf_variants?.length) facts.push(`${e.gguf_variants.length} GGUF variant${e.gguf_variants.length === 1 ? "" : "s"}`);
 		const factsEl = el("div", { class: "member-facts" }, facts.join(" · ") || (closed ? "no bytes to fetch" : "unpriced"));
 
 		const status = e.status === "have" ? (e.holders ? `have · ${e.holders}` : "have") : claimed ? `in flight · ${e.claim?.client ?? ""}` : closed ? "closed" : "want";
@@ -1572,8 +1670,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			const meta: string[] = [plural(fam.count, "work")];
 			if (fam.homePublisher) meta.push(`published by ${fam.homePublisher}`);
 			if (fam.generations.length > 1) meta.push(plural(fam.generations.length, "generation"));
-			if (wanted.wantBytes > 0) meta.push(`${humanSize(wanted.wantBytes)} wanted`);
-			if (wanted.haveBytes > 0) meta.push(`${humanSize(wanted.haveBytes)} in vaults`);
+			meta.push(...tallyLabels(wanted));
 			const title = el("h2", { class: "family-name" }, fam.family ?? "No family in the name");
 			const famBtn = el("button", { type: "button", class: "family-why", "aria-label": "What a family is" }, "✦");
 			famBtn.addEventListener("click", () => openGuide("family", famBtn));

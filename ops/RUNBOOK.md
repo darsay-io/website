@@ -319,7 +319,18 @@ gh workflow run deploy.yml --repo darsay-io/website && gh run watch --repo darsa
 
 ## Docs lock
 
-Production `/docs/` tracks the latest **CLI GitHub Release**, not `main`. `docs.lock.json` holds that tag and commit.
+`docs.lock.json` records a **CLI release tag or exact commit**, never a
+moving branch. Release pins track the latest CLI GitHub Release. An exact
+commit pin stays fixed: the scheduled sync skips it, and an explicit release
+tag (including the CLI release workflow's dispatch) resumes release tracking.
+
+Use `npm run bump-docs-lock -- <vX.Y.Z-or-full-commit-sha>` to resolve the
+source and regenerate the lock, pages, and transform snapshots together.
+Exact commit pins let coordinated CLI and website work stay consistent
+without creating a release. Commit the CLI first, pin that full SHA here,
+then commit the website. Publish the CLI commit before pushing the website:
+CI and Deploy check out that exact SHA. Pinning locally neither publishes
+the CLI nor deploys the site.
 
 The transform derives its page list from the pinned source — every
 `docs/*.md` becomes `/docs/<stem>/`, plus `examples/README.md` — so a new CLI

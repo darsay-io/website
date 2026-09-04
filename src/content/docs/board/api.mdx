@@ -60,8 +60,8 @@ A call a key lacks the scope for answers `403 {"error": "forbidden", "scope": "�
 
 `/api/*` answers with `Access-Control-Allow-Origin: *`, so a browser-side
 agent can call it directly. Bodies are JSON objects; `multipart` is
-refused with `415`; a body over 64 KiB (256 KiB for `apply`, `batch`, and
-the catalog) with `413`.
+refused with `415`; a body over 64 KiB (256 KiB for `apply` and `batch`,
+2 MiB for the catalog) with `413`.
 
 ## The row
 
@@ -81,9 +81,14 @@ the catalog) with `413`.
   "address": { "kind": "dataset", "provider": "huggingface", "locator": "ESCAD/OpenRTLSet", "url": "https://huggingface.co/datasets/ESCAD/OpenRTLSet" },
   "lineage": { "family": null, "generation": null, "member": null, "variants": [], "formats": [], "read_from": "name" },
   "payload_bytes": 48318382080,
+  "size_basis": "repository",
+  "repository_bytes": 48318382080,
+  "unknown_size_count": 0,
   "artifact_type": "dataset",
   "hints": ["large"],
-  "policy": null,
+  "classification": null,
+  "gguf_variants": [],
+  "parameters_source": null,
   "precision": null,
   "closed": false,
   "claim": null
@@ -94,8 +99,52 @@ Four columns are **decided** — `desire`, `note`, `status`, `holders` — and
 they are what the audit trail records before and after. Everything else
 is **read from the work**: the address, the lineage from the name, the
 digest the Hub and the CLI priced (`payload_bytes`, `parameters`,
-`precision`, `bytes_per_param`, `hints`, `policy`, `parents`), and the
+`precision`, `bytes_per_param`, `hints`, `size_basis`, `classification`,
+`repository_bytes`, `gguf_variants`, `parameters_source`, `parents`), and the
 live `claim`. A row's identity is `source` + `revision` + `include`.
+
+### Read a size
+
+`payload_bytes` always names its scope in `size_basis`:
+
+| Scope | Files counted |
+| --- | --- |
+| `repository` | Every published file at the resolved revision, including alternative model encodings. |
+| `selection` | Files matching the row's include patterns, plus support files. |
+| `archive` | Files retained by CLI classification, including retained prints, support files, and unresolved weights. |
+
+`repository_bytes` records the inventory total separately. A nonzero
+`unknown_size_count` makes `payload_bytes` a lower bound, displayed as `≥`
+and **partial**. Without an estimate, the byte amounts and scope are `null`.
+Board totals group scope and status separately. Rows can overlap, so their
+sum does not measure unique bytes held in vaults.
+
+An archive's `classification` has a `verdicts` map (each verdict counts
+`sets`, `files`, and `bytes`), `skipped_bytes`, and `unclassified_count`.
+`unclassified_count` counts unresolved **weight sets**, not files; the
+`unknown` verdict's `files` field counts their member files. Automatic
+omission requires a byte-identical retained source in the same bundle
+(R15). An upstream duplicate (R2) remains retained, and GGUF beside another
+weight format (R9) remains unknown and retained. A negative/print label is
+teaching shorthand, not sufficient evidence for an omission decision.
+R15 establishes recovery of the omitted bytes, not that every original
+path exists in the selected payload. Use `--full` when you need the
+complete published layout for a loader or historical reproduction.
+
+`gguf_variants` lists the entire repository's model GGUF inventory even
+when the row selects one variant. Each variant has `name`, `precision`,
+`file_count`, `size_bytes`, `complete`, and exact `include` selectors.
+The variant amount counts its model GGUF files; estimating the selection
+also includes support files. Incomplete shard groups cannot be selected
+through the board's copy commands. A chosen variant has its own row identity;
+its commands do not claim the whole repository row. Optional projectors are
+separate artifacts and must be explicitly included if needed. Files outside
+a selection are outside the chosen scope, not proven disposable.
+
+`parameters_source` is `safetensors`, `gguf`, or `null`. Precision displays
+independently of a parameter count. `bytes_per_param` is supplied only for
+a complete, single model weight set; a sum across alternative encodings
+is not a model precision.
 
 Accepted spellings of a source: `owner/name`, `huggingface:owner/name`,
 `datasets/owner/name`, `hf:…`, a Hub URL, or an `https://` page on
@@ -147,7 +196,7 @@ Filters combine with AND. `?source=` matches an address in any accepted
 spelling after canonicalization — the cheap way to ask *is this already
 here?* `?status=want|have`, `?type=model|dataset|closed|opaque`,
 `?lens=` a comma-separated list of the board's own lens keys (`want`,
-`have`, `claimed`, `negatives`, `large`, `quant`, `redundant`, `gated`,
+`have`, `claimed`, `archive`, `large`, `quant`, `redundant`, `gated`,
 `subset`, `abliterated`, `base`, `moe`, `spec`, `dataset`, `closed`,
 `unpriced`), `?family=qwen`, `?desire_min=`, `?desire_max=`, `?q=` free
 text over source, note, holders, family, and member, `?dropped=`,
@@ -168,6 +217,13 @@ and any decided columns. A new address is priced from the Hub and added
 sent (`200`), restored if it was dropped (`200`), or — when nothing
 differs and it is already priced — left untouched at no cost and no
 revision bump (`200`). A closed work refuses a `revision` or an `include`.
+
+Send `refresh: true` to refresh the Hub inventory, variant list, and
+repository or selected-file size for an existing address. The page's
+**Refresh size** button performs this operation. Decided columns are
+preserved unless included in the request. To classify the default archive,
+use `darsay estimate <board-url>`. A failed explicit refresh returns
+`502 estimate_unavailable` and retains the previous estimate.
 
 ### Read one row
 
@@ -301,7 +357,7 @@ fills empty `holders` with the client. Answers the row.
 
 <Route method="GET" path="/api/boards/{id}/catalog.json" scope="read" />
 
-A `darsay.catalog` document, schema 2.x: the rows without `holders`,
+A `darsay.catalog` document, schema 3.x: the rows without `holders`,
 `status`, claims, or the board id. Dropped rows are left out. This is
 what `darsay estimate <board-url>` fetches.
 
@@ -423,7 +479,7 @@ Every teaching card the board shows — what a chip, lens, or column means
 and what a collector should do about it — with docs links made absolute.
 Public; no board needed. `GET /api/guide/{chip}` answers one card by its
 key, a lens key, or a hint word (`gated`, `large`, `quant`, `redundant`,
-`subset`, `negatives`, `closed`, `family`, `desire`, `claims`, `moe`…);
+`subset`, `archive`, `closed`, `family`, `desire`, `claims`, `moe`…);
 an unknown chip answers `404` with the list.
 
 ## The MCP server

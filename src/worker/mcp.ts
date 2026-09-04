@@ -32,6 +32,7 @@ import {
 	opRows,
 } from "./ops.ts";
 import { cardToApi, guideIndex, resolveCard } from "./guide.ts";
+import { MAX_INCLUDE_GLOB, MAX_INCLUDES } from "./validate.ts";
 
 /** Revisions served from per-request metadata, no handshake. */
 export const MCP_MODERN_VERSIONS = ["2026-07-28"] as const;
@@ -39,7 +40,7 @@ export const MCP_MODERN_VERSIONS = ["2026-07-28"] as const;
 export const MCP_LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** Everything the server speaks, newest first: what the card and `server/discover` advertise. */
 export const MCP_PROTOCOL_VERSIONS = [...MCP_MODERN_VERSIONS, ...MCP_LEGACY_VERSIONS] as const;
-export const MCP_SERVER = { name: "darsay.io board", title: "darsay.io board", version: "1.1.0" };
+export const MCP_SERVER = { name: "darsay.io board", title: "darsay.io board", version: "2.0.0" };
 export const MCP_CAPABILITIES = { tools: { listChanged: false } };
 /** How long a client may keep `tools/list` and `server/discover`: the tools are code, not data. */
 export const MCP_TTL_MS = 3_600_000;
@@ -54,7 +55,7 @@ const INSTRUCTIONS = [
 	"This server is one darsay.io board: a want-list of models and datasets a group is archiving into their own vaults.",
 	"A board has rows, not cards, and no columns. A row wants or has a work (status), is rated 1–9 (desire, which orders the list), carries a short note, and names who holds a copy (holders).",
 	"A row's identity is its address: the canonical source (huggingface:owner/name, huggingface:datasets/owner/name, or an https home page for a closed work), the pinned revision, and the include set. add_row and apply match on that address, so re-sending is safe.",
-	"Chips on a row (negatives, quant, gated, large, redundant, subset, closed, family…) are read from the work, never written by hand; call explain with a chip to learn what it means.",
+	"Chips on a row (archive, quant, gated, large, redundant, subset, closed, family…) are read from the work, never written by hand; call explain with a chip to learn what it means.",
 	"drop_row is undoable; remove_row is not. Pass expect_revision (from get_board) to refuse a write when someone else changed the board first. Use apply with dry_run: true to see a plan before committing it.",
 ].join("\n");
 
@@ -93,7 +94,7 @@ const ADDRESS_FIELDS = {
 		description: "owner/name, huggingface:owner/name, datasets/owner/name, a Hub URL, or an https home page for a closed work.",
 	},
 	revision: { type: ["string", "null"], maxLength: 64, description: "A commit or tag to pin; null means the default branch." },
-	include: { type: ["array", "null"], items: { type: "string", maxLength: 80 }, maxItems: 8, description: "Glob patterns that make this row a subset of the repo." },
+	include: { type: ["array", "null"], items: { type: "string", maxLength: MAX_INCLUDE_GLOB }, maxItems: MAX_INCLUDES, description: "Glob patterns that make this row a subset of the repo; a leading / anchors the repository path." },
 };
 
 const ID = { type: "integer", minimum: 1, description: "The row's stable id from get_board or find_rows." };
@@ -159,7 +160,7 @@ export const TOOLS: Tool[] = [
 		description: "Ensure a work is on the board. Matched by address: a new address is priced from the Hub and added; an existing one is updated with the fields you pass (a dropped one is restored); an identical one is left untouched. Safe to repeat.",
 		inputSchema: {
 			type: "object",
-			properties: { ...ADDRESS_FIELDS, ...ROW_FIELDS, expect_revision: EXPECT },
+			properties: { ...ADDRESS_FIELDS, ...ROW_FIELDS, refresh: { type: "boolean", description: "Refresh the Hub inventory and selection price, preserving the row's decisions. This does not run archive classification." }, expect_revision: EXPECT },
 			required: ["source"],
 			additionalProperties: false,
 		},
@@ -281,7 +282,7 @@ export const TOOLS: Tool[] = [
 	{
 		name: "explain",
 		title: "Explain a chip",
-		description: "The field guide: what a chip, lens, or column on a row means and what a collector should do about it. Pass a word such as negatives, quant, gated, large, redundant, subset, closed, family, desire, claims, dataset, or moe. With no chip, the whole guide.",
+		description: "The field guide: what a chip, lens, or column on a row means and what a collector should do about it. Pass a word such as archive, quant, gated, large, redundant, subset, closed, family, desire, claims, dataset, or moe. With no chip, the whole guide.",
 		inputSchema: { type: "object", properties: { chip: { type: "string", maxLength: 40 } }, additionalProperties: false },
 		readOnly: true,
 		idempotent: true,

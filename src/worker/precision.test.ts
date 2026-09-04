@@ -64,9 +64,9 @@ describe("precision (a port of the CLI's)", () => {
 		expect(bytesPerParam(1_561_000_000_000, 2_779_931_837_184)).toBe(0.562);
 		expect(bytesPerParam(null, 5)).toBeNull();
 		expect(bytesPerParam(5, 0)).toBeNull();
-		expect(describeBytesPerParam(2)).toBe("about one full-fidelity copy (16-bit)");
+		expect(describeBytesPerParam(2)).toBe("about one 16-bit weight copy");
 		expect(describeBytesPerParam(0.56)).toMatch(/^about half a byte/);
-		expect(describeBytesPerParam(8.6)).toMatch(/^well over one/);
+		expect(describeBytesPerParam(8.6)).toBe("more than two bytes per weight — wider encodings or additional stored data");
 		expect(describeBytesPerParam(null)).toBeNull();
 		expect(humanBytesPerParam(0.562)).toBe("0.56 B/param");
 		expect(humanBytesPerParam(null)).toBe("?");

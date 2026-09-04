@@ -334,7 +334,7 @@ describe("drop, restore, remove", () => {
 		const b = await addRow(h, id, { source: "Qwen/Qwen3-1.7B" });
 		await call(h, `/api/boards/${id}/entries/${b.row.id}/drop`, { method: "POST" });
 		const k = await mintKey(h, id, "cli-key", ["write"]);
-		const doc = { catalog_schema_version: "2.0.0", kind: "darsay.catalog", id: "summer", entries: [{ source: "huggingface:Qwen/Qwen3-1.7B", desire: 6 }] };
+		const doc = { catalog_schema_version: "3.0.0", kind: "darsay.catalog", id: "summer", entries: [{ source: "huggingface:Qwen/Qwen3-1.7B", desire: 6 }] };
 		const res = await call(h, "/api/board/catalog.json", jsonInit("POST", doc, bearer(k.key)));
 		expect(res.status).toBe(200);
 		expect(await res.json()).toMatchObject({ ok: true, added: 0, updated: 0, restored: 1, removed: 0, dropped: 1, entries: 1 });

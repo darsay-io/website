@@ -323,7 +323,7 @@ type Priced = { canonical: string; estimateJson: string | null; payloadBytes: nu
 
 async function price(identity: Identity): Promise<Priced> {
 	if (identity.kind !== "hf") return { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false };
-	const hit = await fetchEstimate(identity.parsed as HfCanonical, identity.revision || null);
+	const hit = await fetchEstimate(identity.parsed as HfCanonical, identity.revision || null, identity.include);
 	if (!hit) return { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false };
 	return {
 		canonical: hit.parsed.canonical,
@@ -410,12 +410,14 @@ export async function opRowAdd(ctx: OpCtx, body: Record<string, unknown>): Promi
 	// A priced row that is already here, with nothing to change, costs no
 	// fetch and no write. An unpriced one is priced again — the Hub may
 	// know it now, or know it only as a dataset.
-	const settled = !!existing && !existing.dropped && existing.estimate_json !== null;
+	if (body.refresh !== undefined && typeof body.refresh !== "boolean") return fail(400, "refresh must be a boolean");
+	const settled = !!existing && !existing.dropped && existing.estimate_json !== null && body.refresh !== true;
 	if (settled && diffFields(existing!, flds.fields).length === 0) {
 		return { status: 200, headers: { ETag: etag(ctx.board.revision) }, body: entryToApi(existing!) };
 	}
 	const now = utcNow();
 	const priced = settled ? { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false } : await price(identity);
+	if (body.refresh === true && !priced.priced) return fail(502, "estimate_unavailable");
 	if (!existing && priced.canonical !== identity.canonical) {
 		existing = findByIdentity(rows, priced.canonical, identity.revision, identity.includeKey);
 	}
@@ -500,7 +502,7 @@ export async function opRowPatch(ctx: OpCtx, id: number, body: Record<string, un
 	let payloadBytes = existing.payload_bytes;
 	if (identityChanged) {
 		if (parsedSrc.kind === "hf") {
-			const hit = await fetchEstimate(parsedSrc, rev || null);
+			const hit = await fetchEstimate(parsedSrc, rev || null, include);
 			if (hit) {
 				canonical = hit.parsed.canonical;
 				estimateJson = JSON.stringify(hit.digest);
@@ -1061,7 +1063,7 @@ export async function opCatalogImport(ctx: OpCtx, body: Record<string, unknown>)
 			stmts.push(
 				ctx.db
 					.prepare("UPDATE entries SET note = ?, desire = ?, payload_bytes = ?, estimate_json = ?, updated = ?, dropped = NULL WHERE id = ?")
-					.bind(row.note, row.desire, row.payloadBytes, row.digest ?? match.estimate_json, now, match.id),
+					.bind(row.note, row.desire, row.payloadBytes, row.digest, now, match.id),
 			);
 		} else {
 			added += 1;

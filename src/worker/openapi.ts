@@ -82,19 +82,44 @@ const schemas: Record<string, Json> = {
 			dropped: { type: ["string", "null"], format: "date-time", description: "Set while the row is dropped (soft-removed)." },
 			address: ref("Address"),
 			lineage: ref("Lineage"),
-			payload_bytes: { type: ["integer", "null"], description: "The price: what darsay archive fetches for this row." },
+			payload_bytes: { type: ["integer", "null"], description: "Known bytes at size_basis. A positive unknown_size_count makes this a lower bound. Repository inventory is not an archive classification or memory requirement." },
+			size_basis: { type: ["string", "null"], enum: ["repository", "selection", "archive", null], description: "repository: whole upstream inventory; selection: include patterns plus sidecars; archive: the CLI's classified default, including unresolved files." },
+			repository_bytes: { type: ["integer", "null"], description: "Whole repository total; null when any upstream size is unknown." },
+			unknown_size_count: { type: ["integer", "null"], minimum: 0 },
 			artifact_type: { type: ["string", "null"], enum: ["model", "dataset", null] },
 			gated: { type: ["boolean", "null"] },
 			parameters: { type: ["integer", "null"] },
+			parameters_source: { type: ["string", "null"], enum: ["safetensors", "gguf", null], description: "The Hub metadata field establishing the parameter count." },
 			dominant_dtype: { type: ["string", "null"] },
 			hints: { type: "array", items: { type: "string", enum: ["gated", "large", "quant", "redundant", "subset"] }, description: "The CLI's closed hint vocabulary." },
-			policy: { type: ["string", "null"], description: "negatives when the price is the negative set only." },
+			classification: ref("ClassificationSummary"),
+			gguf_variants: { type: "array", items: ref("GgufVariant"), description: "Model-weight alternatives in the whole repository, grouped across shards; companion projectors excluded. No preservation verdict is inferred from these filenames." },
 			precision: { type: ["string", "null"] },
 			bytes_per_param: { type: ["number", "null"] },
 			architecture: { type: ["string", "null"] },
 			parents: { type: ["array", "null"], items: { type: "object", properties: { source: { type: "string" }, relation: { type: ["string", "null"] } } } },
 			closed: { type: "boolean", description: "A closed work: a home page, no bytes, no price." },
 			claim: ref("Claim"),
+		},
+	},
+	GgufVariant: {
+		type: "object",
+		required: ["name", "precision", "file_count", "size_bytes", "complete", "include"],
+		properties: {
+			name: { type: "string" },
+			precision: { type: ["string", "null"], description: "Read from the GGUF filename." },
+			file_count: { type: "integer", minimum: 1 },
+			size_bytes: { type: ["integer", "null"], description: "Sum of this variant's files; null when a member has no known size." },
+			complete: { type: "boolean", description: "Every declared shard occurs exactly once." },
+			include: { type: "array", items: { type: "string" }, description: "Verified anchored selectors for precisely these variant files. Sidecars accompany an include selection." },
+		},
+	},
+	ClassificationSummary: {
+		type: ["object", "null"],
+		properties: {
+			verdicts: { type: "object", additionalProperties: { type: "object", properties: { sets: { type: "integer" }, files: { type: "integer" }, bytes: { type: "integer" } } } },
+			skipped_bytes: { type: "integer" },
+			unclassified_count: { type: "integer", description: "Unresolved weight sets kept by the archive. A classified archive is not proof that every retained file is a negative." },
 		},
 	},
 	RowFields: {
@@ -117,6 +142,7 @@ const schemas: Record<string, Json> = {
 		},
 	},
 	RowInput: { allOf: [ref("RowAddress"), ref("RowFields")], description: "Add or ensure a row: its address plus any decided columns." },
+	RowUpsert: { allOf: [ref("RowInput"), { type: "object", properties: { refresh: { type: "boolean", description: "Refresh the Hub inventory or include selection even for an existing row. Preserves decisions; does not classify archive weights. An unavailable estimate returns 502 and preserves the cached facts." } } }] },
 	RowPatch: {
 		allOf: [
 			{ type: "object", properties: { source: { type: "string", maxLength: MAX_SOURCE }, revision: { type: ["string", "null"] }, include: { type: ["array", "null"], items: { type: "string" } } } },
@@ -281,7 +307,7 @@ const schemas: Record<string, Json> = {
 			events: { type: "array", items: { type: "object", properties: { action: { type: "string" }, entry_id: { type: ["integer", "null"] }, before: {}, after: {} } } },
 		},
 	},
-	Catalog: { type: "object", description: "A darsay.catalog document, schema 2.x — the same file darsay estimate <board> fetches and pushes back.", additionalProperties: true },
+	Catalog: { type: "object", description: "A darsay.catalog document, schema 3.x — the same file darsay estimate <board> fetches and pushes back.", additionalProperties: true },
 	ImportResult: { type: "object", properties: { ok: { type: "boolean" }, added: { type: "integer" }, updated: { type: "integer" }, restored: { type: "integer" }, removed: { type: "integer" }, dropped: { type: "integer" }, entries: { type: "integer" }, revision: { type: "integer" } } },
 	GuideCard: {
 		type: "object",
@@ -314,7 +340,7 @@ const BOARD_ROUTES: Route[] = [
 	{
 		path: "/catalog.json",
 		ops: {
-			get: { summary: "Export the catalog", description: "A darsay.catalog document (schema 2.x): the rows without holders, status, claims, or the board id. Dropped rows are left out.", scope: "read", responses: { "200": json(ref("Catalog")) } },
+			get: { summary: "Export the catalog", description: "A darsay.catalog document (schema 3.x): the rows without holders, status, claims, or the board id. Dropped rows are left out.", scope: "read", responses: { "200": json(ref("Catalog")) } },
 			post: { summary: "Import a catalog (the CLI round trip)", description: "Authoritative for entries, desire, note, and digests; matched by address. Rows the document left out are removed by the URL and dropped by a key without remove. Board-side status, holders, and claims survive on kept rows.", scope: "write", parameters: [IF_MATCH, IDEMPOTENCY], requestBody: json(ref("Catalog")), responses: { "200": json(ref("ImportResult")), "400": err("Not a catalog, wrong major, or a bad entry."), "409": err("catalog_id mismatch.") } },
 		},
 	},
@@ -322,7 +348,7 @@ const BOARD_ROUTES: Route[] = [
 		path: "/entries",
 		ops: {
 			get: { summary: "Find rows", description: "Filter by address, status, type, the board's own lenses, family, desire range, or free text. Pass source to ask whether a work is already on the board.", scope: "read", parameters: [IF_NONE_MATCH, { name: "q", in: "query", schema: { type: "string" } }, { name: "source", in: "query", schema: { type: "string" }, description: SOURCE_DESC }, { name: "status", in: "query", schema: { type: "string", enum: ["want", "have"] } }, { name: "type", in: "query", schema: { type: "string", enum: ["model", "dataset", "closed", "opaque"] } }, { name: "lens", in: "query", schema: { type: "string" }, description: "Comma-separated, AND-combined: " + LENSES.map((l) => l.key).join(", ") }, { name: "family", in: "query", schema: { type: "string" } }, { name: "desire_min", in: "query", schema: { type: "integer" } }, { name: "desire_max", in: "query", schema: { type: "integer" } }, { name: "dropped", in: "query", schema: { type: "string", enum: ["none", "all", "only"] } }, { name: "limit", in: "query", schema: { type: "integer" } }], responses: { "200": json(ref("Rows")), "400": err("An unknown lens, status, or type.") } },
-			post: { summary: "Add a row (upsert by address)", description: "A new address is priced from the Hub and added (201). An address already on the board is updated with the fields sent, or restored if it was dropped, or left untouched when identical (200, no revision bump). Safe to repeat.", scope: "write", parameters: [IF_MATCH, IDEMPOTENCY], requestBody: json(ref("RowInput")), responses: { "201": json(ref("Row"), "Added."), "200": json(ref("Row"), "Already there: updated, restored, or unchanged."), "400": err("A bad address or field, or the board is full (entry_cap, " + MAX_ENTRIES + " rows)."), "412": err("Stale.") } },
+			post: { summary: "Add a row (upsert by address)", description: "A new address is priced from the Hub and added (201). An address already on the board is updated with the fields sent, or restored if it was dropped, or left untouched when identical (200, no revision bump). refresh: true reads a fresh Hub inventory while preserving decided columns.", scope: "write", parameters: [IF_MATCH, IDEMPOTENCY], requestBody: json(ref("RowUpsert")), responses: { "201": json(ref("Row"), "Added."), "200": json(ref("Row"), "Already there: updated, restored, refreshed, or unchanged."), "400": err("A bad address or field, or the board is full (entry_cap, " + MAX_ENTRIES + " rows)."), "412": err("Stale."), "502": err("estimate_unavailable: the explicit refresh failed; cached facts are unchanged.") } },
 		},
 	},
 	{
@@ -437,7 +463,7 @@ export function openapiDocument(origin: string): Json {
 		get: { summary: "The board as JSON, from its page address", description: "The same document as GET /api/boards/{id}. A request for /b/{id} with Accept: application/json (and not text/html) is answered the same way.", tags: ["Boards"], parameters: [ID_PARAM], security: [{}], responses: { "200": json(ref("Board")), "404": err("No such board.") } },
 	};
 	paths["/api/guide"] = { get: { summary: "The field guide", description: "Every teaching card the board shows: what a chip, lens, or column means and what a collector should do about it. Public.", tags: ["Guide"], security: [{}], responses: { "200": json(ref("Guide")) } } };
-	paths["/api/guide/{chip}"] = { get: { summary: "One card, by chip", tags: ["Guide"], security: [{}], parameters: [{ name: "chip", in: "path", required: true, schema: { type: "string" }, description: "A card key, a lens key, or a hint word: negatives, quant, gated, large, redundant, subset, closed, family, desire, claims, dataset, moe…" }], responses: { "200": json(ref("GuideCard")), "404": err("No such card; the answer lists the chips.") } } };
+	paths["/api/guide/{chip}"] = { get: { summary: "One card, by chip", tags: ["Guide"], security: [{}], parameters: [{ name: "chip", in: "path", required: true, schema: { type: "string" }, description: "A card key, a lens key, or a hint word: archive, quant, gated, large, redundant, subset, closed, family, desire, claims, dataset, moe…" }], responses: { "200": json(ref("GuideCard")), "404": err("No such card; the answer lists the chips.") } } };
 	paths["/api/openapi.json"] = { get: { summary: "This document", tags: ["Meta"], security: [{}], responses: { "200": json({ type: "object" }) } } };
 	paths["/openapi.json"] = paths["/api/openapi.json"];
 	paths["/api/mcp"] = {

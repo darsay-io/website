@@ -14,6 +14,7 @@ import {
 	parseView,
 	repoName,
 	tally,
+	tallyLabels,
 	type LensEntry,
 } from "./lenses.ts";
 
@@ -29,7 +30,7 @@ function row(over: Partial<LensEntry> = {}): LensEntry {
 		gated: false,
 		dominant_dtype: "BF16",
 		hints: [],
-		policy: null,
+		size_basis: "repository",
 		claim: null,
 		...over,
 	};
@@ -121,7 +122,7 @@ describe("effectiveHints", () => {
 
 describe("lenses", () => {
 	const rows = [
-		row({ source: "huggingface:MiniMaxAI/MiniMax-H3", payload_bytes: 330 * GiB, hints: ["large", "redundant"], policy: "negatives", claim: { state: "archiving" } }),
+		row({ source: "huggingface:MiniMaxAI/MiniMax-H3", payload_bytes: 330 * GiB, hints: ["large", "redundant"], size_basis: "archive", claim: { state: "archiving" } }),
 		row({ source: "huggingface:zai-org/GLM-5.3", payload_bytes: 704 * GiB, dominant_dtype: "F8_E4M3", status: "have" }),
 		row({ source: "huggingface:Uniboshi/Kimi-K3-Abliterated-V1", payload_bytes: 1454 * GiB, gated: true, dominant_dtype: "U8" }),
 		row({ source: "huggingface:Qwen/Qwen3-8B-Base", payload_bytes: 15 * GiB }),
@@ -131,7 +132,7 @@ describe("lenses", () => {
 		row({ source: "https://www.qwencloud.com/models/qwen3.8-max-0902", payload_bytes: null, dominant_dtype: null, closed: true }),
 	];
 	it("reads each row through every lens it passes", () => {
-		expect([...lensesFor(rows[0])].sort()).toEqual(["claimed", "large", "negatives", "redundant", "want"]);
+		expect([...lensesFor(rows[0])].sort()).toEqual(["archive", "claimed", "large", "redundant", "want"]);
 		expect([...lensesFor(rows[1])].sort()).toEqual(["have", "large", "quant"]);
 		expect([...lensesFor(rows[2])].sort()).toEqual(["abliterated", "gated", "large", "quant", "want"]);
 		expect([...lensesFor(rows[3])].sort()).toEqual(["base", "want"]);
@@ -176,9 +177,19 @@ describe("lenses", () => {
 		const t = tally(rows);
 		expect(t.n).toBe(8);
 		expect(t.unsized).toBe(1); // the closed row is not "unsized" — it has no size to have
-		expect(t.haveBytes).toBe(704 * GiB);
-		expect(t.wantBytes).toBe((330 + 1454 + 15 + 751 + 2) * GiB);
-		expect(t.bytes).toBe(t.haveBytes + t.wantBytes);
+		expect(t.groups).toEqual([
+			{ basis: "archive", status: "want", bytes: 330 * GiB, partial: false },
+			{ basis: "repository", status: "have", bytes: 704 * GiB, partial: false },
+			{ basis: "repository", status: "want", bytes: (1454 + 15 + 751 + 2) * GiB, partial: false },
+		]);
+	});
+	it("keeps selection and archive totals apart, and propagates unknown file sizes", () => {
+		const t = tally([
+			row({ size_basis: "selection", payload_bytes: 15 * GiB, unknown_size_count: 1 }),
+			row({ size_basis: "selection", payload_bytes: 5 * GiB }),
+			row({ size_basis: "archive", payload_bytes: 40 * GiB }),
+		]);
+		expect(tallyLabels(t)).toEqual(["≥ 20 GiB selection total · wanted", "40 GiB archive total · wanted"]);
 	});
 	it("every lens names a primer card, a noun, and a blurb", () => {
 		for (const l of LENSES) {

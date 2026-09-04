@@ -7,8 +7,9 @@
  * server round-trip. Wording mirrors `examples/README.md` in darsay-io/darsay;
  * user text is only ever placed inside single quotes, never in comments.
  */
-import { humanBytesPerParam } from "../worker/precision.ts";
 import { canonicalizeSource } from "../worker/sources.ts";
+import { humanParams, humanSize, modelFacts, scopedSize, type GgufVariant, type SizeFacts } from "./size.ts";
+export { humanParams, humanSize } from "./size.ts";
 
 /** ≳ 20 GiB: more than one sitting, and often more than one disk. */
 export const LARGE_BYTES = 20 * 1024 ** 3;
@@ -16,8 +17,6 @@ export const LARGE_BYTES = 20 * 1024 ** 3;
 export const BUDGET_GB = 10;
 /** The cookbook per-friend shard budget. */
 export const SHARD_GB = 20;
-/** The cookbook example glob for a GGUF pack. */
-export const QUANT_GLOB = "*Q4_K_M*";
 export const DEFAULT_VAULT = "~/darsay";
 
 export const DOCS = {
@@ -48,7 +47,7 @@ export const DOCS = {
 	export: { href: "/docs/examples/#export-to-a-usb-drive", label: "Cookbook → Export to a USB drive" },
 } as const;
 
-export type RecipeInput = {
+export type RecipeInput = SizeFacts & {
 	source: string;
 	revision: string | null;
 	include: string[] | null;
@@ -68,7 +67,6 @@ export type RecipeKey =
 	| "board"
 	| "budget"
 	| "halves"
-	| "subset"
 	| "shards"
 	| "adopt"
 	| "after"
@@ -137,25 +135,12 @@ export function revision12(revision: string | null | undefined): string {
 	return "<rev>";
 }
 
-export function humanSize(n: number | null | undefined): string {
-	if (n === null || n === undefined) return "—";
-	if (n < 1024) return `${n} B`;
-	const units = ["KiB", "MiB", "GiB", "TiB"];
-	let v = n / 1024;
-	let i = 0;
-	while (v >= 1024 && i < units.length - 1) {
-		v /= 1024;
-		i += 1;
-	}
-	return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
-}
-
-/** Mirrors the CLI's human_params: 2.45T, 27.78B, 596.0M. */
-export function humanParams(n: number): string {
-	if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
-	if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-	if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-	return String(n);
+/** Exact, quoted inventory selectors: choosing a variant creates a separate subset. */
+export function variantCommands(e: RecipeInput, variant: GgufVariant): string[] {
+	if (!variant.complete || !variant.include.length) return [];
+	const source = shellQuote(e.source) + (e.revision ? ` --revision ${shellQuote(e.revision)}` : "");
+	const selected = source + includeArgs(variant.include);
+	return [`darsay estimate ${selected}`, `darsay archive ${selected}`];
 }
 
 /** Half of the payload in GiB, rounded up to a multiple of 5 — the two-disk hand-over size. */
@@ -189,12 +174,11 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 	const dataset = kind === "dataset";
 	const include = e.include && e.include.length ? e.include : null;
 	const bytes = typeof e.payload_bytes === "number" ? e.payload_bytes : null;
-	const size = humanSize(bytes);
+	const size = scopedSize(e);
 	const packLarge = bytes !== null && bytes >= LARGE_BYTES;
 	const gated = e.gated === true;
-	/** A GGUF pack listed whole: the sane path is one glob, not the whole pack. */
-	const pack = !!hf && !include && !dataset && /gguf/i.test(e.source);
-	const large = packLarge && !include && !pack;
+	const pack = !!hf && !include && !dataset && (e.gguf_variants?.length ?? 0) > 1;
+	const large = packLarge && !pack && (!include || e.size_basis === "selection");
 	const bundle = bundleName(e.source);
 	const bundleArg = bundle ? shellQuote(bundle) : "<bundle>";
 	const rev = revision12(e.revision);
@@ -215,13 +199,11 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 
 	const facts: string[] = [];
 	if (closed) facts.push("closed");
-	else if (bytes !== null) facts.push(include ? `${size} before --include` : size);
+	else if (bytes !== null) facts.push(size);
 	else facts.push("size unknown");
-	if (e.parameters) {
-		const label = e.precision ?? e.dominant_dtype;
-		facts.push(humanParams(e.parameters) + (label ? ` ${label}` : ""));
-		if (typeof e.bytes_per_param === "number") facts.push(humanBytesPerParam(e.bytes_per_param));
-	}
+	const precision = modelFacts(e);
+	if (precision.length) facts.push(precision.join(" · "));
+	if ((e.gguf_variants?.length ?? 0) > 1) facts.push(`${e.gguf_variants!.length} GGUF variants in repository`);
 	if (kind) facts.push(kind);
 	if (gated) facts.push("gated");
 	if (include) facts.push(include.length === 1 ? "1 glob" : `${include.length} globs`);
@@ -249,13 +231,10 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 		verdict = `${size} is more than one sitting${dataset ? "" : ", and often more than one disk"}. Budget it, split it, or fetch it in halves — every run converges on the same pinned bundle.`;
 	} else if (include) {
 		headline = "Just the subset";
-		verdict = `Only files matching ${include.join(", ")} — config, tokenizer, and license sidecars ride along.${
-			packLarge ? ` The whole pack is ${size}; estimate --include prices just the glob.` : ""
-		}`;
+		verdict = `Files matching ${include.join(", ")}, plus recognized support files. ${e.size_basis === "selection" ? `The selected files are priced here: ${size}.` : "Estimate this selection before archiving."}`;
 	} else if (pack) {
-		headline = "Pick one quant";
-		verdict =
-			"A pack repo — likely hundreds of gigabytes of named quants. Price one glob and archive just that.";
+		headline = "Choose what to preserve";
+		verdict = `${e.gguf_variants!.length} GGUF variants are published here. ${size} covers ${e.size_basis === "archive" ? "the classified archive" : "the repository"}; each variant below is a different published encoding. Keep this publication in full, inspect its declared parent, or add a particular variant as a separate selection. Encoding and lineage alone do not establish which bytes can be recovered.`;
 	} else if (dataset) {
 		headline = "A dataset, same verbs";
 		verdict =
@@ -267,6 +246,7 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 		headline = "Small enough for tonight";
 		verdict = `${size}: one sitting. Estimate, archive, and talk to it offline before you sleep.`;
 	}
+	if (include) verdict += " This row collects the selected scope only. Other variants and optional projectors are unselected unless explicitly included; that does not make them proven recoverable.";
 
 	const estimate: Recipe = {
 		key: "estimate",
@@ -287,7 +267,7 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 		why: gated
 			? "The gate is enforced server-side; darsay does not bypass it. Accept the author's terms on the Hub, sign in once, then the same verb as any other source."
 			: include
-				? "Only files matching the globs, plus config, tokenizer, and license sidecars. The manifest records what was omitted upstream."
+				? "Collect the matched files plus recognized support files. Other variants and optional projectors remain outside this explicit scope; the manifest records that selection without calling the unselected artifacts disposable."
 				: dataset
 					? "Same verbs as a model; the payload lands under data/. Interrupt any time and rerun the same line."
 					: "Pin it, verify it, register it. Interrupt any time and rerun the same line — every run converges on the same bundle.",
@@ -349,18 +329,6 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 			...alignComments([[`darsay --vault /Volumes/big archive ${srcInc}`, "registers, zero network"]]),
 		],
 		doc: DOCS.halves,
-	};
-
-	const subset: Recipe = {
-		key: "subset",
-		title: "Grab just one quant",
-		why: "A pack repo — hundreds of gigabytes of named quants. --include prices a glob against Hub metadata, then archives only those files plus config, tokenizer, and license sidecars.",
-		label: "one glob",
-		lines: [
-			`darsay estimate ${src} --include ${quoteGlob(QUANT_GLOB)}`,
-			`darsay archive  ${src} --include ${quoteGlob(QUANT_GLOB)}`,
-		],
-		doc: DOCS.subset,
 	};
 
 	const shards: Recipe = {
@@ -444,7 +412,7 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 			? [...(board ? [halves] : []), shards, adopt, after]
 			: [...(board ? [shards] : []), archive, adopt, after];
 	} else if (pack) {
-		hero = [subset, estimate, ...(board ? [board] : []), adopt];
+		hero = [estimate, ...(board ? [board] : []), adopt];
 		more = [archive, ...(packLarge ? [budget] : []), shards, after];
 	} else if (include) {
 		hero = [estimate, archive, ...(board ? [board] : []), adopt];

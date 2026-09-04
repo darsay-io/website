@@ -131,7 +131,7 @@ export type HintDigest = {
 
 /**
  * Hints for a stored digest. Stored `hints` win (the CLI wrote them); an
- * older or board-written digest is derived on the fly the way the CLI's
+ * digest without them is derived from its measured fields the way the CLI's
  * `derive_hints` does — `large` and `gated` exactly, `quant` from the
  * dominant dtype only, `subset` from the entry's include globs. `redundant`
  * is live-estimate only and never re-derived here.

@@ -9,8 +9,9 @@ import { isClosed, moeFromName } from "./lenses.ts";
 import { displayGeneration, lineageOf, publisherOf } from "./lineage.ts";
 import type { PrimerKey } from "./primer.ts";
 import { BUDGET_GB, bundleName, halfBudgetGb, humanParams, humanSize, revision12 } from "./recipes.ts";
+import { scopedSize, sizeExplanation, type SizeFacts } from "./size.ts";
 
-export type RowFacts = {
+export type RowFacts = SizeFacts & {
 	source: string;
 	status: "want" | "have";
 	payload_bytes: number | null;
@@ -22,7 +23,6 @@ export type RowFacts = {
 	parameters?: number | null;
 	dominant_dtype?: string | null;
 	hints?: string[] | null;
-	policy?: string | null;
 	precision?: string | null;
 	bytes_per_param?: number | null;
 	parents?: Array<{ source: string; relation: string | null }> | null;
@@ -36,7 +36,7 @@ const GiB = 1024 ** 3;
 const LINK_MIB_S = 25;
 
 function ratioBand(ratio: number): string {
-	if (ratio >= REDUNDANT_FACTOR) return "well over one copy — the repo carries several weight sets";
+	if (ratio >= REDUNDANT_FACTOR) return "well over one copy — inspect the extra weight sets and their roles";
 	if (ratio >= 0.85) return "about one copy";
 	return "under one copy — packed weights, or a subset";
 }
@@ -59,20 +59,22 @@ function hoursAtLink(bytes: number): string {
 
 function dtypeNote(row: RowFacts): string | null {
 	if (isClosed(row)) return "A closed work: no weights to weigh yet.";
+	if ((row.gguf_variants?.length ?? 0) > 1 && row.size_basis !== "selection" && typeof row.bytes_per_param !== "number") {
+		return `${row.parameters ? `\`${humanParams(row.parameters)}\` parameters; ` : ""}${row.gguf_variants!.length} GGUF variants in the repository. The row shows **${scopedSize(row)}**. Open the variant list for each precision and size; dividing combined bytes across alternatives by parameters does not describe one model's precision.`;
+	}
 	// The CLI's measured figure wins when the digest carries it.
 	if (row.precision && typeof row.bytes_per_param === "number" && row.parameters) {
 		const desc = describeBytesPerParam(row.bytes_per_param);
-		const size = row.payload_bytes === null ? "" : ` — **${humanSize(row.payload_bytes)}** on the row`;
+		const size = row.payload_bytes === null ? "" : ` — **${scopedSize(row)}** on the row`;
 		return `\`${humanParams(row.parameters)}\` at \`${row.precision}\`, **${humanBytesPerParam(row.bytes_per_param)}** measured: ${desc}${size}.`;
 	}
 	const one = oneCopyBytes(row);
-	if (one === null || !row.parameters || !row.dominant_dtype) return null;
+	if (one === null || !row.parameters || !row.dominant_dtype) return row.precision ? `Release precision \`${row.precision}\`; **${scopedSize(row)}**. Parameter metadata is not available for a per-parameter comparison.` : null;
 	const width = DTYPE_WIDTHS[row.dominant_dtype.toUpperCase()];
 	const lead = `\`${humanParams(row.parameters)}\` × ${width} ${width === 1 ? "byte" : "bytes"} (\`${row.dominant_dtype}\`) ≈ **${humanSize(one)}** for one copy.`;
 	if (row.payload_bytes === null) return `${lead} The row has no size yet.`;
 	const ratio = row.payload_bytes / one;
-	const priced = row.policy === "negatives" ? "priced as the negative set at" : "priced at";
-	return `${lead} The row is ${priced} **${humanSize(row.payload_bytes)}** — ${ratio.toFixed(ratio >= 10 ? 0 : 1)}×, ${ratioBand(ratio)}.`;
+	return `${lead} The row shows **${scopedSize(row)}** — ${ratio.toFixed(ratio >= 10 ? 0 : 1)}×, ${ratioBand(ratio)}.`;
 }
 
 function familyNote(row: RowFacts): string {
@@ -87,7 +89,7 @@ function familyNote(row: RowFacts): string {
 	const publisher = publisherOf(row.source);
 	const parents = row.parents ?? [];
 	const edge = parents.length
-		? ` Upstream declares it a **${parents[0].relation ?? "derivative"}** of \`${parents[0].source}\`.`
+		? ` Upstream declares it a **${parents[0].relation ?? "derivative"}** of \`${parents[0].source}\`. This identifies lineage; it does not establish how to recover the published bytes.`
 		: "";
 	return `**${head}**, ${bits.join(", ")} — read from the name${publisher ? `, published by ${publisher}` : ""}.${edge}`;
 }
@@ -107,14 +109,18 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 			return dtypeNote(row);
 		case "large": {
 			if (bytes === null) return "No size on record yet, so no plan yet — `darsay estimate` prices it without writing a file.";
-			if (bytes < LARGE_PAYLOAD_BYTES) return `**${humanSize(bytes)}** is under the 20 GiB line: one sitting.`;
+			if (row.size_basis === "repository" && (row.gguf_variants?.length ?? 0) > 1) return `**${scopedSize(row)}** includes ${row.gguf_variants!.length} alternative GGUF variants. Choose a variant or classify the archive before planning disk space and transfer time.`;
+			if (bytes < LARGE_PAYLOAD_BYTES) return `**${scopedSize(row)}** is under the 20 GiB line${row.unknown_size_count ? "; unknown file sizes can raise the total" : ": one sitting"}.`;
 			const evenings = Math.ceil(bytes / GiB / BUDGET_GB);
-			return `**${humanSize(bytes)}**: ${evenings} evenings at \`--max-gb ${BUDGET_GB}\`, or about ${hoursAtLink(bytes)} of link time at ${LINK_MIB_S} MiB/s. In halves, ${halfBudgetGb(bytes)} GiB to each disk.`;
+			return `**${scopedSize(row)}**: ${row.unknown_size_count ? "at least " : ""}${evenings} evenings at \`--max-gb ${BUDGET_GB}\`, or about ${hoursAtLink(bytes)} of link time at ${LINK_MIB_S} MiB/s. In halves, ${halfBudgetGb(bytes)} GiB to each disk.`;
 		}
-		case "negatives":
+		case "archive": {
 			if (isClosed(row)) return "A closed work has no bytes to classify.";
-			if (row.policy === "negatives") return `Priced as the negative set: **${humanSize(bytes)}** is what \`archive\` will fetch, prints skipped on the record.`;
-			return `Not yet classified by the CLI, so the size is the whole repo. \`darsay estimate <board-url>\` re-prices every row as its negative set.`;
+			const c = row.classification;
+			const unknownFiles = c?.verdicts.unknown?.files;
+			const retained = c ? ` ${c.unclassified_count} unresolved weight set${c.unclassified_count === 1 ? "" : "s"}${typeof unknownFiles === "number" ? ` (${unknownFiles} file${unknownFiles === 1 ? "" : "s"})` : ""} retained; ${humanSize(c.skipped_bytes)} safely omitted.` : " Run `darsay estimate <board-url>` to record the classified archive estimate.";
+			return `**${scopedSize(row)}**. ${sizeExplanation(row)}${retained}`;
+		}
 		case "family":
 			return familyNote(row);
 		case "closed":
@@ -123,10 +129,10 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 		case "quant": {
 			const dt = row.dominant_dtype;
 			if (hints.includes("quant") && dt) {
-				return `Dominant dtype \`${dt}\` — below full fidelity, so the chip is on. If no higher-fidelity release exists upstream, this is the negative; if one does, this is a satellite of it.`;
+				return `Dominant dtype \`${dt}\`; the quant chip describes the published encoding. Check the publisher, source revision, and recovery evidence before deciding what to collect. A lower bit count does not make the artifact disposable.`;
 			}
-			if (hints.includes("quant")) return "The weight bytes are mostly GGUF — a published quant.";
-			if (dt) return `Dominant dtype \`${dt}\` — full fidelity. Not a quant; derive one at run time if you need it smaller.`;
+			if (hints.includes("quant")) return "The inventory contains a GGUF encoding. Check its precision and declared parent separately; a file format or importance-matrix marker does not prove recovery of its exact bytes.";
+			if (dt) return `Dominant dtype \`${dt}\` describes storage, not original training provenance. A smaller published encoding is a separate collection choice; this row keeps its current scope.`;
 			return null;
 		}
 		case "gated":
@@ -134,7 +140,7 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 			return "Not gated: anonymous fetches work.";
 		case "subset": {
 			if (row.include && row.include.length) {
-				return `Pinned as a subset: ${row.include.map((g) => `\`${g}\``).join(", ")} plus the sidecars${bytes !== null ? ". The size shown is the whole repo before `--include`" : ""}.`;
+				return `Selected scope: ${row.include.map((g) => `\`${g}\``).join(", ")} plus matching support files. ${row.size_basis === "selection" ? `**${scopedSize(row)}** measures those selected files.` : "The selection has not been priced; refresh the row or run `darsay estimate` with its include patterns."} Other weight variants and optional projectors are outside this selection unless explicitly included; that scope choice is not a recovery verdict.`;
 			}
 			return "Listed whole. Add include globs on the row only if you want part of the repo — a pack repo, or one satellite quant.";
 		}
@@ -150,18 +156,18 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 			const moe = moeFromName(row.source);
 			if (!moe) return null;
 			if (moe.total !== null && moe.active !== null) {
-				return `${moe.total}B total — ${bytes !== null ? `all **${humanSize(bytes)}** come home` : "all of it comes home"}. ${moe.active}B active — once loaded it runs like a ${moe.active}B dense model.`;
+				return `${moe.total}B total parameters, ${moe.active}B active per token. ${bytes !== null ? `The row shows **${scopedSize(row)}**; disk usage depends on the selected weight sets and their precision.` : "All experts must be available even though each token uses only some."}`;
 			}
 			return "Names itself a mixture of experts; the whole set of experts is the archive.";
 		}
 		case "abliterated":
-			return "Read from the name. Keep it beside its base — two negatives of one lineage.";
+			return "Read from the name. This labels a claimed weight edit; it does not prove the edit is irreversible or that its recipe is unavailable. Preserve the published artifact if it fits your collection, and record its base and recovery evidence separately.";
 		case "base":
 			return "Read from the name. The seed of a lineage; pair it with the post-trained release you use.";
 		case "spec":
 			return "Read from the name. Only useful beside the exact target it was made for — add that row too, at the same desire.";
 		case "dataset":
-			if (row.artifact_type === "dataset") return `A dataset row: payload lands under \`data/\`${bytes !== null ? `, **${humanSize(bytes)}**` : ""}. No engine — open the files.`;
+			if (row.artifact_type === "dataset") return `A dataset row: payload lands under \`data/\`${bytes !== null ? `, **${scopedSize(row)}**` : ""}. No engine — open the files.`;
 			return "A model row. Datasets are addressed as `datasets/owner/name`.";
 		case "desire": {
 			const d = row.desire

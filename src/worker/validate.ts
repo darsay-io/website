@@ -8,12 +8,12 @@ export const MAX_ENTRY_NOTE = 500;
 export const MAX_HOLDERS = 500;
 export const MAX_SOURCE = 300;
 export const MAX_REVISION = 64;
-export const MAX_INCLUDE_GLOB = 80;
-export const MAX_INCLUDES = 8;
+export const MAX_INCLUDE_GLOB = 1024;
+export const MAX_INCLUDES = 256;
 export const MAX_ENTRIES = 200;
 export const MAX_BODY = 64 * 1024;
 // A pushed catalog carries digests for up to MAX_ENTRIES rows.
-export const MAX_IMPORT_BODY = 256 * 1024;
+export const MAX_IMPORT_BODY = 2 * 1024 * 1024;
 export const MAX_CLIENT = 80;
 // An active claim by another client blocks a new claim until it goes
 // stale (no progress report inside the TTL) or reports done.
