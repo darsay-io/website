@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelFacts, scopedSize, sizeExplanation, variantSize, type GgufVariant } from "./size.ts";
+import { modelFacts, scopedSize, scopedSizeParts, sizeExplanation, variantSize, type GgufVariant } from "./size.ts";
 
 const GiB = 1024 ** 3;
 const variant: GgufVariant = { name: "model-Q4_K_M", precision: "Q4_K_M", file_count: 2, size_bytes: 120 * GiB, complete: true, include: ["/part1.gguf", "/part2.gguf"] };
@@ -14,6 +14,12 @@ describe("size scope", () => {
 		expect(sizeExplanation({ payload_bytes: GiB, size_basis: "archive", unknown_size_count: 1 })).toContain("1 file has unknown sizes");
 		expect(sizeExplanation({ payload_bytes: GiB, size_basis: "archive" })).toContain("prints without proven recovery");
 		expect(sizeExplanation({ payload_bytes: GiB, size_basis: "archive" })).toContain("byte duplicates within this bundle");
+	});
+	it("splits the same price into an amount and what it covers, for a column", () => {
+		expect(scopedSizeParts({ payload_bytes: 2355 * GiB, size_basis: "repository" })).toEqual({ amount: "2.3 TiB", basis: "repository total" });
+		expect(scopedSizeParts({ payload_bytes: 120 * GiB, size_basis: "archive", unknown_size_count: 2 })).toEqual({ amount: "≥ 120 GiB", basis: "archive · partial" });
+		expect(scopedSizeParts({ payload_bytes: null, size_basis: "repository" })).toEqual({ amount: "unpriced", basis: null });
+		expect(scopedSizeParts({ payload_bytes: 120 * GiB, size_basis: null })).toEqual({ amount: "unpriced", basis: null });
 	});
 	it("describes GGUF file sizes separately from an archive or repository", () => {
 		expect(variantSize(variant)).toBe("120 GiB GGUF files");

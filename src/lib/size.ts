@@ -56,9 +56,18 @@ export function humanParams(n: number): string {
 }
 
 export function scopedSize(row: SizeFacts): string {
-	if (row.payload_bytes === null || !row.size_basis) return "unpriced";
+	const p = scopedSizeParts(row);
+	return p.basis ? `${p.amount} ${p.basis}` : p.amount;
+}
+
+/** The same price split for a column: the amount on one line, what it covers beneath. */
+export function scopedSizeParts(row: SizeFacts): { amount: string; basis: string | null } {
+	if (row.payload_bytes === null || !row.size_basis) return { amount: "unpriced", basis: null };
 	const partial = (row.unknown_size_count ?? 0) > 0;
-	return `${partial ? "≥ " : ""}${humanSize(row.payload_bytes)} ${SIZE_LABELS[row.size_basis]}${partial ? " · partial" : ""}`;
+	return {
+		amount: `${partial ? "≥ " : ""}${humanSize(row.payload_bytes)}`,
+		basis: `${SIZE_LABELS[row.size_basis]}${partial ? " · partial" : ""}`,
+	};
 }
 
 export function variantSize(variant: GgufVariant): string {

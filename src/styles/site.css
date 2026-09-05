@@ -368,9 +368,7 @@ button.btn.compact {
 }
 
 .add-row input,
-.meta-field input,
-.work-bar input[type="text"],
-.work-bar input[type="number"] {
+.meta-field input {
 	width: 100%;
 	box-sizing: border-box;
 	background: var(--d-bg);
@@ -464,8 +462,7 @@ button.btn.compact {
 	max-width: 22rem;
 }
 
-.board-note-wrap,
-.work-note-wrap {
+.board-note-wrap {
 	display: flex;
 	flex-direction: column;
 	gap: 0.3rem;
@@ -493,13 +490,6 @@ button.btn.compact {
 .board-note {
 	font-size: 1.2rem;
 	min-height: 3.2rem;
-}
-
-.work-note {
-	font-size: 1.22rem;
-	font-style: italic;
-	color: var(--d-gold-hi);
-	min-height: 2.6rem;
 }
 
 .board-note:hover,
@@ -929,70 +919,6 @@ button.btn.bring-download {
 	background: var(--d-gold-dim);
 }
 
-.ledger {
-	display: flex;
-	flex-direction: column;
-	gap: 0.85rem;
-	min-width: 0;
-}
-
-.work-card {
-	background: var(--d-bg-raised);
-	border: 1px solid var(--d-border);
-	border-radius: 12px;
-	padding: 1.05rem 1.2rem 0.95rem;
-	display: flex;
-	flex-direction: column;
-	gap: 0.7rem;
-	min-width: 0;
-	max-width: 100%;
-	box-shadow: inset 3px 0 0 rgba(212, 176, 106, 0.55);
-}
-
-.work-top {
-	display: flex;
-	flex-direction: column;
-	gap: 0.55rem;
-	align-items: flex-start;
-}
-
-.work-id {
-	min-width: 0;
-	width: 100%;
-}
-
-.work-id a,
-.work-id > span {
-	font-family: var(--d-mono);
-	font-size: 0.92rem;
-	overflow-wrap: anywhere;
-	word-break: break-word;
-	color: var(--d-gold-hi);
-}
-
-.work-facts {
-	display: flex;
-	align-items: center;
-	gap: 0.55rem;
-	flex-shrink: 0;
-}
-
-.work-size {
-	font-variant-numeric: tabular-nums;
-	color: var(--d-muted);
-	white-space: nowrap;
-	font-size: 0.92rem;
-}
-
-.work-size-help {
-	border: 0;
-	background: transparent;
-	padding: 0;
-	cursor: help;
-	text-align: left;
-	white-space: normal;
-}
-
 .variant-inventory {
 	margin: 1.5rem 0 2rem;
 }
@@ -1075,72 +1001,6 @@ button.btn.secondary.variant-remove:hover {
 	max-width: 48rem;
 }
 
-.work-bar {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.65rem 1rem;
-	align-items: flex-end;
-	padding-top: 0.15rem;
-}
-
-.work-desire {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-	width: 4.6rem;
-}
-
-.work-desire span,
-.work-who span,
-.work-have span {
-	font-size: 0.68rem;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-	color: var(--d-muted);
-}
-
-.work-have {
-	display: flex;
-	align-items: center;
-	gap: 0.45rem;
-	padding-bottom: 0.45rem;
-	cursor: pointer;
-}
-
-.work-have input[type="checkbox"] {
-	appearance: none;
-	width: 1.1rem;
-	height: 1.1rem;
-	margin: 0;
-	border: 1px solid var(--d-gold);
-	border-radius: 4px;
-	background: var(--d-bg);
-	cursor: pointer;
-}
-
-.work-have input[type="checkbox"]:checked {
-	background: var(--d-gold);
-	box-shadow: inset 0 0 0 2px var(--d-bg);
-}
-
-.work-who {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-	flex: 1 1 12rem;
-	min-width: 10rem;
-	max-width: 22rem;
-}
-
-.work-who input,
-.work-desire input {
-	min-height: 2.15rem;
-}
-
-.work-bar > .btn {
-	margin-left: auto;
-}
-
 .add-card {
 	margin-top: 1rem;
 	padding: 1rem 1.15rem 1.1rem;
@@ -1183,11 +1043,6 @@ button.btn.secondary.variant-remove:hover {
 
 	.create-form {
 		max-width: none;
-	}
-
-	.work-top {
-		flex-direction: column;
-		gap: 0.45rem;
 	}
 
 	.bring-home {
@@ -1522,10 +1377,6 @@ button.btn.secondary.variant-remove:hover {
 }
 
 @media (max-width: 40rem) {
-	.work-facts {
-		flex-wrap: wrap;
-	}
-
 	.grimoire {
 		margin: 0.4rem 0.35rem 0.4rem;
 		padding: 1.1rem 0.9rem 1rem;
@@ -1617,7 +1468,7 @@ button.btn.secondary.variant-remove:hover {
 	outline: none;
 }
 
-.plain :is(.add-card input, .meta-field input, .work-bar input[type="text"], .work-bar input[type="number"]):focus {
+.plain :is(.add-card input, .meta-field input):focus {
 	border-color: var(--d-gold);
 	box-shadow: 0 0 0 3px rgba(212, 176, 106, 0.16);
 }
@@ -2023,17 +1874,6 @@ button.btn.secondary.variant-remove:hover {
 }
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
-.work-card {
-	animation: card-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-	transition:
-		border-color 0.2s ease,
-		box-shadow 0.2s ease;
-}
-
-.work-card.no-enter {
-	animation: none;
-}
-
 @keyframes card-in {
 	from {
 		opacity: 0;
@@ -2043,28 +1883,6 @@ button.btn.secondary.variant-remove:hover {
 		opacity: 1;
 		transform: none;
 	}
-}
-
-.work-card:hover {
-	border-color: rgba(212, 176, 106, 0.38);
-}
-
-.work-card.is-have {
-	box-shadow: inset 3px 0 0 var(--d-gold-hi);
-	background:
-		linear-gradient(90deg, rgba(212, 176, 106, 0.06), transparent 30%),
-		var(--d-bg-raised);
-}
-
-.work-card.is-claimed {
-	box-shadow: inset 3px 0 0 var(--d-gold);
-	animation:
-		card-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both,
-		rail-pulse 2.4s ease-in-out infinite;
-}
-
-.work-card.is-claimed.no-enter {
-	animation: rail-pulse 2.4s ease-in-out infinite;
 }
 
 @keyframes rail-pulse {
@@ -2105,28 +1923,6 @@ a.src-link:hover .src-name {
 .src-name {
 	color: var(--d-gold-hi);
 	font-weight: 600;
-}
-
-.work-sub {
-	margin-top: 0.15rem;
-	font-family: var(--d-mono);
-	font-size: 0.78rem;
-	color: var(--d-muted);
-	overflow-wrap: anywhere;
-}
-
-.work-facts {
-	flex-wrap: wrap;
-	justify-content: flex-start;
-	gap: 0.4rem;
-	row-gap: 0.4rem;
-	max-width: 100%;
-}
-
-.work-size {
-	font-size: 0.95rem;
-	color: var(--d-fg);
-	padding: 0 0.15rem;
 }
 
 /* Chips: one family. Every chip is a doorway into the field guide. */
@@ -2266,10 +2062,6 @@ a.src-link:hover .src-name {
 .work-link:hover {
 	color: var(--d-gold-hi);
 	border-color: var(--d-gold-hi);
-}
-
-.work-bar input:hover {
-	border-color: rgba(212, 176, 106, 0.45);
 }
 
 .grim-fact-btn {
@@ -3126,10 +2918,6 @@ dialog.guide {
 		justify-content: flex-start;
 	}
 
-	.work-link {
-		margin-left: auto;
-	}
-
 	.add-card {
 		padding: 1.1rem 1rem 1rem;
 	}
@@ -3399,34 +3187,7 @@ dialog.guide {
 	background: transparent;
 }
 
-.work-card.is-closed {
-	border-style: dashed;
-	box-shadow: inset 3px 0 0 rgba(181, 168, 148, 0.45);
-}
-
-.work-card.is-closed .src-link {
-	color: var(--d-muted);
-}
-
-.work-closed-note {
-	align-self: center;
-	font-size: 0.78rem;
-	color: var(--d-muted);
-	font-style: italic;
-}
-
 /* The row a link named keeps its rule; the spotlight below is the moment of arrival. */
-.work-card.is-linked {
-	box-shadow: inset 3px 0 0 var(--d-gold-hi);
-}
-
-.work-card.is-spotlit {
-	box-shadow:
-		inset 3px 0 0 var(--d-gold-hi),
-		0 0 0 3px rgba(212, 176, 106, 0.35);
-	transition: box-shadow 0.4s ease;
-}
-
 /* ── View pills: Ledger | Lineage ─────────────────────────────────────────── */
 
 .view-pills {
@@ -4920,4 +4681,757 @@ code.agents-key-label {
 
 .docs-foot a:hover {
 	color: var(--sl-color-white);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   The ledger at scale: ruled rows in one frame, a folio margin, runners
+   between groups, the curator's controls held to one line. Later in the
+   cascade on purpose — same specificity wins by order.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ledger {
+	display: flex;
+	flex-direction: column;
+	gap: 0.85rem;
+	min-width: 0;
+}
+
+/* Rows share one frame, ruled like a page of accounts. */
+.ledger.is-ruled {
+	gap: 0;
+	border: 1px solid var(--d-border);
+	border-radius: 12px;
+	background: var(--d-bg-raised);
+	box-shadow:
+		inset 0 1px 0 rgba(240, 217, 160, 0.07),
+		0 36px 60px -44px rgba(0, 0, 0, 0.95);
+}
+
+.ledger-head,
+.work-card {
+	display: grid;
+	grid-template-columns: 2.3rem minmax(0, 1fr) 6.6rem 2.7rem 2.1rem 8.6rem 1.9rem;
+	grid-template-areas:
+		"folio main size desire have who more"
+		"grim grim grim grim grim grim grim";
+	column-gap: 0.7rem;
+	align-items: start;
+}
+
+/* ── The head: the column names once, each a doorway into the guide ──────── */
+.ledger-head {
+	padding: 0.55rem 0.9rem 0.5rem 0.6rem;
+	border-bottom: 1px solid var(--d-border);
+	border-radius: 12px 12px 0 0;
+	background: linear-gradient(180deg, rgba(212, 176, 106, 0.055), transparent);
+	font-size: 0.64rem;
+	letter-spacing: 0.13em;
+	text-transform: uppercase;
+	color: var(--d-muted);
+	line-height: 1.3;
+}
+
+.ledger-head > * {
+	min-width: 0;
+}
+
+.ledger-head-folio {
+	grid-area: folio;
+	text-align: right;
+	color: var(--d-gold);
+	opacity: 0.6;
+}
+
+.ledger-head-main {
+	grid-area: main;
+}
+
+.ledger-head-size {
+	grid-area: size;
+	text-align: right;
+}
+
+.ledger-head-desire {
+	grid-area: desire;
+	text-align: center;
+}
+
+.ledger-head-have {
+	grid-area: have;
+	text-align: center;
+}
+
+.ledger-head-who {
+	grid-area: who;
+}
+
+.ledger-head-more {
+	grid-area: more;
+}
+
+.ledger-head .kicker-btn {
+	font-size: inherit;
+	letter-spacing: inherit;
+	line-height: inherit;
+	display: inline;
+}
+
+/* ── Runners: where the sort changes its answer, a heading holds ─────────── */
+.ledger-runner {
+	position: sticky;
+	top: var(--toolbar-h, 0px);
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	gap: 0.65rem;
+	padding: 0.46rem 0.9rem 0.38rem 0.6rem;
+	background: var(--d-bg-raised);
+	border-bottom: 1px solid var(--d-border);
+	box-shadow: 0 12px 18px -16px rgba(0, 0, 0, 0.85);
+}
+
+.ledger-head + .ledger-runner {
+	border-radius: 0;
+}
+
+.runner-label {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 1rem;
+	letter-spacing: 0.01em;
+	color: var(--d-gold-hi);
+	white-space: nowrap;
+	line-height: 1.2;
+}
+
+.runner-rule {
+	flex: 1 1 auto;
+	height: 1px;
+	background: linear-gradient(90deg, rgba(212, 176, 106, 0.5), rgba(212, 176, 106, 0.04));
+}
+
+.runner-n {
+	font-family: var(--d-mono);
+	font-size: 0.66rem;
+	font-variant-numeric: tabular-nums;
+	color: var(--d-gold);
+	opacity: 0.85;
+	cursor: default;
+}
+
+/* ── Rows ───────────────────────────────────────────────────────────────── */
+.work-card {
+	position: relative;
+	padding: 0.55rem 0.9rem 0.6rem 0.6rem;
+	background: transparent;
+	border: 0;
+	border-bottom: 1px solid rgba(212, 176, 106, 0.13);
+	border-radius: 0;
+	box-shadow: none;
+	animation: card-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+	transition:
+		background-color 0.18s ease,
+		box-shadow 0.2s ease;
+}
+
+.work-card:last-child {
+	border-bottom: 0;
+	border-radius: 0 0 12px 12px;
+}
+
+.work-card.no-enter {
+	animation: none;
+}
+
+.work-card:hover {
+	background: rgba(212, 176, 106, 0.035);
+}
+
+.work-card:hover .work-folio,
+.work-card:focus-within .work-folio {
+	color: var(--d-gold-hi);
+	opacity: 1;
+}
+
+.work-card.is-have {
+	box-shadow: inset 3px 0 0 var(--d-gold-hi);
+	background: linear-gradient(90deg, rgba(212, 176, 106, 0.075), transparent 34%);
+}
+
+.work-card.is-have:hover {
+	background: linear-gradient(90deg, rgba(212, 176, 106, 0.1), rgba(212, 176, 106, 0.035) 34%);
+}
+
+.work-card.is-claimed {
+	box-shadow: inset 3px 0 0 var(--d-gold);
+	animation:
+		card-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+		rail-pulse 2.4s ease-in-out infinite;
+}
+
+.work-card.is-claimed.no-enter {
+	animation: rail-pulse 2.4s ease-in-out infinite;
+}
+
+.work-card.is-closed {
+	box-shadow: inset 3px 0 0 rgba(181, 168, 148, 0.35);
+}
+
+.work-card.is-closed .src-link,
+.work-card.is-closed .src-name {
+	color: var(--d-muted);
+}
+
+/* The row a link named keeps its rule; the spotlight is the moment of arrival. */
+.work-card.is-linked {
+	box-shadow: inset 3px 0 0 var(--d-gold-hi);
+}
+
+.work-card.is-spotlit {
+	box-shadow:
+		inset 3px 0 0 var(--d-gold-hi),
+		inset 0 0 0 1px rgba(212, 176, 106, 0.5);
+	background: rgba(212, 176, 106, 0.09);
+	transition:
+		box-shadow 0.4s ease,
+		background-color 0.4s ease;
+}
+
+.work-folio {
+	grid-area: folio;
+	padding-top: 0.3rem;
+	font-family: var(--d-mono);
+	font-size: 0.66rem;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.02em;
+	text-align: right;
+	color: var(--d-gold);
+	opacity: 0.55;
+	user-select: none;
+	transition:
+		opacity 0.18s ease,
+		color 0.18s ease;
+}
+
+.work-main {
+	grid-area: main;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	min-width: 0;
+}
+
+.work-id {
+	min-width: 0;
+	width: auto;
+	line-height: 1.3;
+}
+
+.work-id .src-link {
+	font-size: 0.88rem;
+}
+
+/* The Hub scheme on every line of a long page is noise; the chip says what it is. */
+.src-scheme-hf {
+	display: none;
+}
+
+.work-sub {
+	margin: 0 0 0 0.5rem;
+	font-family: var(--d-mono);
+	font-size: 0.7rem;
+	color: var(--d-muted);
+	overflow-wrap: anywhere;
+}
+
+.work-facts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 0.3rem 0.32rem;
+	max-width: 100%;
+	flex-shrink: 1;
+}
+
+.work-card .chip {
+	min-height: 1.3rem;
+	padding: 0.06rem 0.42rem;
+	font-size: 0.64rem;
+}
+
+.work-card .chip-type {
+	font-size: 0.62rem;
+}
+
+.work-card .chip-family {
+	font-size: 0.74rem;
+}
+
+.work-card .grim-toggle {
+	min-height: 0;
+	padding: 0.14rem 0.6rem 0.14rem 0.5rem;
+	font-size: 0.64rem;
+	letter-spacing: 0.07em;
+}
+
+.work-add-note {
+	appearance: none;
+	background: none;
+	border: 0;
+	border-bottom: 1px dotted transparent;
+	padding: 0 0.15rem;
+	margin: 0;
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.84rem;
+	line-height: 1.3;
+	color: var(--d-muted);
+	opacity: 0.6;
+	cursor: pointer;
+	transition:
+		opacity 0.18s ease,
+		color 0.18s ease;
+}
+
+.work-add-note:hover,
+.work-add-note:focus-visible {
+	color: var(--d-gold-hi);
+	opacity: 1;
+	border-bottom-color: var(--d-gold);
+}
+
+.work-card .claim-gauge {
+	margin: 0.1rem 0 0;
+	gap: 0.2rem;
+	max-width: 42rem;
+}
+
+.work-card .claim-track {
+	height: 6px;
+}
+
+.work-card .claim-label {
+	font-size: 0.7rem;
+}
+
+/* The note: one italic line in the curator's hand, folded until it has the focus. */
+.work-note-wrap {
+	display: block;
+	margin-top: 0.05rem;
+}
+
+.work-note {
+	font-size: 1rem;
+	font-style: italic;
+	line-height: 1.4;
+	min-height: 1.85rem;
+	padding: 0.15rem 0.1rem 0.3rem;
+	color: var(--d-gold-hi);
+	border-bottom-color: transparent;
+}
+
+.work-note:not(.is-editing) {
+	max-height: calc(2 * 1.4em + 0.45rem);
+}
+
+.work-note.is-clipped:not(.is-editing) {
+	-webkit-mask-image: linear-gradient(180deg, #000 50%, transparent 100%);
+	mask-image: linear-gradient(180deg, #000 50%, transparent 100%);
+	cursor: text;
+}
+
+.work-note:hover {
+	border-bottom-color: var(--d-border);
+}
+
+.work-note:focus {
+	border-bottom-color: var(--d-gold);
+}
+
+.work-note-wrap[hidden],
+.work-add-note[hidden],
+.work-tray[hidden] {
+	display: none;
+}
+
+/* ── The price column: the amount, and what it covers beneath ───────────── */
+.work-size-cell {
+	grid-area: size;
+	display: flex;
+	justify-content: flex-end;
+	min-width: 0;
+	padding-top: 0.14rem;
+}
+
+.work-size {
+	appearance: none;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 0.06rem;
+	border: 0;
+	background: transparent;
+	padding: 0;
+	margin: 0;
+	font: inherit;
+	text-align: right;
+	color: var(--d-fg);
+	white-space: nowrap;
+	cursor: help;
+}
+
+.work-size-amount {
+	font-size: 0.9rem;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.01em;
+	line-height: 1.3;
+	transition: color 0.18s ease;
+}
+
+.work-size-basis {
+	max-width: 100%;
+	font-size: 0.58rem;
+	letter-spacing: 0.11em;
+	text-transform: uppercase;
+	color: var(--d-muted);
+	line-height: 1.2;
+	white-space: normal;
+}
+
+.work-size:hover .work-size-amount {
+	color: var(--d-gold-hi);
+}
+
+.work-size.is-unpriced .work-size-amount {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.88rem;
+	color: var(--d-muted);
+}
+
+.work-size-none {
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.85rem;
+	color: var(--d-muted);
+	text-align: right;
+	padding-top: 0.15rem;
+	cursor: help;
+}
+
+/* ── Desire · Have · Who · ⋯ ─────────────────────────────────────────────── */
+.work-ctl {
+	display: contents;
+}
+
+.work-desire {
+	grid-area: desire;
+	display: block;
+}
+
+.work-have {
+	grid-area: have;
+	display: flex;
+	justify-content: center;
+	padding-top: 0.34rem;
+	cursor: pointer;
+}
+
+.work-who {
+	grid-area: who;
+	display: block;
+	min-width: 0;
+}
+
+.work-more {
+	grid-area: more;
+	justify-self: end;
+}
+
+.work-desire input,
+.work-who input {
+	width: 100%;
+	box-sizing: border-box;
+	margin: 0;
+	min-height: 0;
+	background: transparent;
+	color: var(--d-fg);
+	border: 1px solid transparent;
+	border-bottom: 1px solid rgba(212, 176, 106, 0.28);
+	border-radius: 0;
+	padding: 0.16rem 0.15rem 0.22rem;
+	font: inherit;
+	line-height: 1.3;
+	transition:
+		border-color 0.18s ease,
+		background-color 0.18s ease;
+}
+
+.work-desire input {
+	font-family: var(--d-mono);
+	font-size: 0.98rem;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+	color: var(--d-gold-hi);
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+
+.work-desire input::-webkit-outer-spin-button,
+.work-desire input::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.work-who input {
+	font-size: 0.82rem;
+}
+
+.work-desire input:hover,
+.work-who input:hover {
+	border-bottom-color: rgba(212, 176, 106, 0.6);
+}
+
+.plain .work-desire input:focus,
+.plain .work-who input:focus {
+	border-bottom-color: var(--d-gold);
+	background: rgba(212, 176, 106, 0.06);
+	box-shadow: none;
+}
+
+.work-desire input::placeholder,
+.work-who input::placeholder {
+	color: var(--d-muted);
+	opacity: 0.55;
+	font-style: normal;
+}
+
+/* An empty Who is a blank with a rule under it; the prompt appears when the row is in hand. */
+@media (hover: hover) {
+	.work-card:not(:hover):not(:focus-within) .work-who input::placeholder {
+		opacity: 0;
+	}
+
+	.work-who input::placeholder {
+		transition: opacity 0.18s ease;
+	}
+}
+
+.work-have input[type="checkbox"] {
+	appearance: none;
+	width: 1rem;
+	height: 1rem;
+	margin: 0;
+	border: 1px solid var(--d-gold);
+	border-radius: 3px;
+	background: var(--d-bg);
+	cursor: pointer;
+	transition:
+		background-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.work-have input[type="checkbox"]:hover {
+	box-shadow: 0 0 0 3px rgba(212, 176, 106, 0.14);
+}
+
+.work-have input[type="checkbox"]:checked {
+	background: var(--d-gold);
+	box-shadow: inset 0 0 0 2px var(--d-bg);
+}
+
+.work-more {
+	appearance: none;
+	display: inline-grid;
+	place-items: center;
+	width: 1.7rem;
+	height: 1.7rem;
+	padding: 0;
+	margin: 0.05rem 0 0;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--d-muted);
+	font: inherit;
+	font-size: 1.05rem;
+	line-height: 1;
+	cursor: pointer;
+	transition:
+		color 0.18s ease,
+		border-color 0.18s ease,
+		background-color 0.18s ease;
+}
+
+.work-more:hover,
+.work-more[aria-expanded="true"] {
+	color: var(--d-gold-hi);
+	border-color: var(--d-border);
+	background: var(--d-gold-dim);
+}
+
+/* The tray behind ⋯: floats over the row's right edge, shifts nothing. */
+.work-tray {
+	position: absolute;
+	right: 0.6rem;
+	top: 0.32rem;
+	z-index: 6;
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	padding: 0.28rem 0.36rem;
+	border: 1px solid var(--d-border);
+	border-radius: 10px;
+	background: rgba(18, 16, 26, 0.97);
+	box-shadow:
+		0 18px 36px -18px rgba(0, 0, 0, 0.9),
+		0 0 0 1px rgba(8, 7, 12, 0.6);
+	animation: tray-in 0.18s ease both;
+}
+
+@keyframes tray-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.work-tray .btn.compact {
+	min-height: 1.9rem;
+	padding: 0.25rem 0.7rem;
+	font-size: 0.78rem;
+}
+
+.work-card .grim-wrap {
+	grid-area: grim;
+	margin-top: 0;
+}
+
+.work-card .grim-wrap.is-open {
+	margin-top: 0.55rem;
+}
+
+.work-card .grimoire {
+	margin: 0.2rem 0 0.35rem;
+}
+
+/* ── The toolbar at scale: family chips wrap, and stop at a cap ─────────── */
+.lens-group {
+	flex-wrap: wrap;
+}
+
+.lens-more {
+	border-style: dashed;
+	color: var(--d-gold);
+}
+
+.lens-group-family .lens-chip.lens-more {
+	font-family: var(--d-sans);
+	font-style: normal;
+	font-size: 0.78rem;
+}
+
+/* ── Touch, motion, small screens ───────────────────────────────────────── */
+@media (pointer: coarse) {
+	.work-card .chip {
+		min-height: 1.5rem;
+		padding: 0.1rem 0.5rem;
+	}
+
+	.work-card .grim-toggle {
+		min-height: 1.6rem;
+	}
+
+	.work-more {
+		width: 2.2rem;
+		height: 2.2rem;
+	}
+
+	.work-have input[type="checkbox"] {
+		width: 1.25rem;
+		height: 1.25rem;
+	}
+
+	.work-desire input,
+	.work-who input {
+		min-height: 2.1rem;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.work-tray {
+		animation: none;
+	}
+}
+
+@media (max-width: 52rem) {
+	.ledger-head {
+		display: none;
+	}
+
+	.ledger-runner:first-child {
+		border-radius: 12px 12px 0 0;
+	}
+
+	.work-card {
+		grid-template-columns: 1.7rem minmax(0, 1fr) auto;
+		grid-template-areas:
+			"folio main size"
+			"folio ctl ctl"
+			"grim grim grim";
+		column-gap: 0.55rem;
+		row-gap: 0.4rem;
+		padding: 0.62rem 0.75rem 0.62rem 0.5rem;
+	}
+
+	.work-ctl {
+		display: flex;
+		grid-area: ctl;
+		align-items: center;
+		gap: 0.55rem;
+		min-width: 0;
+	}
+
+	.work-desire {
+		flex: 0 0 2.6rem;
+		width: 2.6rem;
+	}
+
+	.work-have {
+		flex: 0 0 auto;
+		padding-top: 0;
+	}
+
+	.work-who {
+		flex: 1 1 8rem;
+	}
+
+	.work-more {
+		margin-left: auto;
+	}
+
+	.work-note:not(.is-editing) {
+		max-height: calc(3 * 1.4em + 0.45rem);
+	}
+}
+
+@media (max-width: 40rem) {
+	/* The toolbar scrolls away on phones; runners hold at the top instead. */
+	.ledger-runner {
+		top: 0;
+		padding-left: 0.5rem;
+	}
+
+	.ledger.is-ruled {
+		margin: 0 -0.35rem;
+		border-radius: 10px;
+	}
+
+	.work-card:last-child {
+		border-radius: 0 0 10px 10px;
+	}
 }

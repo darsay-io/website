@@ -58,7 +58,7 @@ import {
 import { compareGenerations, displayGeneration, familiesOf, familyKey, groupByFamily, lineageOf, publisherOf } from "./lineage.ts";
 import { HINT_PRIMER, type PrimerKey } from "./primer.ts";
 import { deriveRecipes, humanSize, variantCommands, type Recipe } from "./recipes.ts";
-import { modelFacts, scopedSize, sizeExplanation, variantSize, type SizeFacts } from "./size.ts";
+import { modelFacts, scopedSize, scopedSizeParts, sizeExplanation, variantSize, type SizeFacts } from "./size.ts";
 
 type Entry = SizeFacts & {
 	id: number;
@@ -111,14 +111,33 @@ type Board = {
 };
 
 function fitTextarea(n: HTMLTextAreaElement) {
+	const floor = Number(n.dataset.min ?? 44);
 	n.style.height = "auto";
-	n.style.height = `${Math.max(n.scrollHeight, 44)}px`;
+	n.style.height = `${Math.max(n.scrollHeight, floor)}px`;
+	// A folded field (a stylesheet max-height while not being edited) fades
+	// its last line when there is more beneath the fold. clientHeight leaves
+	// out the field's own borders; a few pixels of slack keeps a field that
+	// fits exactly from reading as folded.
+	n.classList.toggle("is-clipped", n.scrollHeight > n.clientHeight + 3);
 }
 
 function area(attrs: Record<string, string>, value: string): HTMLTextAreaElement {
 	const n = el("textarea", attrs);
 	n.value = value;
 	n.addEventListener("input", () => fitTextarea(n));
+	// While it is being written the field shows all of itself; folded again,
+	// it shows its first lines, not wherever the caret left it.
+	n.addEventListener("focus", () => {
+		n.classList.add("is-editing");
+		fitTextarea(n);
+	});
+	n.addEventListener("blur", () => {
+		n.classList.remove("is-editing");
+		requestAnimationFrame(() => {
+			fitTextarea(n);
+			n.scrollTop = 0;
+		});
+	});
 	queueMicrotask(() => fitTextarea(n));
 	return n;
 }
@@ -160,6 +179,9 @@ function humanError(msg: string): string {
 
 /** No hover: a phone. The `?` shortcut and hover titles are for keyboards. */
 const hasKeyboard = () => typeof window === "undefined" || !window.matchMedia?.("(hover: none)").matches;
+/** Family chips shown before "+N more" — and no cap at all for a surplus of one or two. */
+const FAMILY_CAP = 8;
+const FAMILY_SLACK = 2;
 
 export function mountCreate(root: HTMLElement) {
 	const title = el("input", {
@@ -267,6 +289,38 @@ export function compareEntries(a: Entry, b: Entry, key: SortKey, dir: "asc" | "d
 	}
 	if (cmp !== 0) return dir === "asc" ? cmp : -cmp;
 	return a.id - b.id;
+}
+
+const GiB = 1024 ** 3;
+
+/**
+ * The heading a row files under when the ledger is sorted by `key` — a
+ * runner between groups gives a long scroll its landmarks. The source
+ * order has none: every name is its own.
+ */
+export function ledgerGroup(e: Entry, key: SortKey): { key: string; label: string } | null {
+	if (key === "source") return null;
+	if (key === "desire") return e.desire === null ? { key: "none", label: "no desire yet" } : { key: String(e.desire), label: `desire ${e.desire}` };
+	if (key === "status") return e.status === "have" ? { key: "have", label: "in a vault" } : { key: "want", label: "wanted" };
+	if (key === "type") {
+		if (isClosed(e)) return { key: "closed", label: "closed works" };
+		const t = entryArtifactType(e);
+		if (t === "dataset") return { key: "dataset", label: "datasets" };
+		if (t === "model") return { key: "model", label: "models" };
+		return { key: "other", label: "unnamed kinds" };
+	}
+	if (key === "family") {
+		const lin = lineageOf(e.source);
+		const fk = familyKey(lin);
+		return fk && lin.family ? { key: fk, label: lin.family } : { key: "none", label: "no family read from the name" };
+	}
+	const b = e.payload_bytes;
+	if (b === null) return { key: "unpriced", label: "unpriced" };
+	if (b >= 1024 * GiB) return { key: "tib", label: "a tebibyte and up" };
+	if (b >= 100 * GiB) return { key: "100g", label: "100 GiB to 1 TiB" };
+	if (b >= 10 * GiB) return { key: "10g", label: "10 to 100 GiB" };
+	if (b >= GiB) return { key: "1g", label: "1 to 10 GiB" };
+	return { key: "small", label: "under 1 GiB" };
 }
 
 /** Which field-guide card a recipe-card fact opens, if any. */
@@ -387,6 +441,13 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	const openRecipes = new Set<number>();
 	let firstPaint = true;
 	let stickyWatch: IntersectionObserver | null = null;
+	let toolbarWatch: ResizeObserver | null = null;
+	/** Rows without a note that have a field open for one this visit. */
+	const noting = new Set<number>();
+	/** Family chips past the cap show only on request. */
+	let familiesExpanded = false;
+	/** The tray behind a row's ⋯ — one open at a time; closes on a click elsewhere or Escape. */
+	let closeTray: (() => void) | null = null;
 	/** Entry writes go one at a time, so a note blur and a Have click cannot race. */
 	let writes: Promise<unknown> = Promise.resolve();
 
@@ -984,7 +1045,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const prefix = parsed.artifactType === "dataset" ? "huggingface:datasets/" : "huggingface:";
 		const [owner, ...rest] = parsed.locator.split("/");
 		return [
-			el("span", { class: "src-scheme" }, prefix),
+			el("span", { class: "src-scheme src-scheme-hf" }, prefix),
 			el("span", { class: "src-owner" }, `${owner}/`),
 			el("span", { class: "src-name" }, rest.join("/")),
 		];
@@ -1000,6 +1061,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (firstPaint && !reducedMotion()) card.style.animationDelay = `${Math.min(index, 10) * 45}ms`;
 		else card.classList.add("no-enter");
 
+		// The folio: this row's place in the list as sorted and lensed, so a
+		// long scroll always knows where it is.
+		const folio = el("span", { class: "work-folio", "aria-hidden": "true" }, String(index + 1));
+
 		const src = el("div", { class: "work-id" });
 		const href = closed ? e.source : hfUrlFromCanonical(e.source);
 		if (href) src.append(el("a", { href, rel: "noreferrer", target: "_blank", class: "src-link" }, ...sourceLabel(e.source)));
@@ -1007,23 +1072,18 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const sub: string[] = [];
 		if (e.revision) sub.push(`pin ${e.revision.length > 12 ? e.revision.slice(0, 12) : e.revision}`);
 		if (e.include?.length) sub.push(`include ${e.include.join(", ")}`);
-		if (sub.length) src.append(el("div", { class: "work-sub" }, sub.join(" · ")));
+		if (sub.length) src.append(el("span", { class: "work-sub" }, sub.join(" · ")));
 
 		const kind = entryArtifactType(e);
 		const facts = el("div", { class: "work-facts" });
 		if (e.status === "have") {
-			facts.append(teachChip(e.holders ? `have · ${e.holders}` : "have", "desire", "chip-have", e, "In a member's vault — who says whose"));
+			facts.append(teachChip("have", "desire", "chip-have", e, "In a member's vault — the Who column says whose"));
 		}
 		if (closed) facts.append(teachChip("closed", "closed", "chip-type chip-closed", e, "A home page, not a source — a place held in its family"));
 		else if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset", e));
 		else if (kind === "model") facts.append(teachChip("model", "bundle", "chip-type chip-type-model", e, "What lands on disk for a model"));
 		else facts.append(el("span", { class: "muted" }, "—"));
 
-		if (!closed) {
-			const size = el("button", { type: "button", class: "work-size work-size-help", title: sizeExplanation(e) }, scopedSize(e));
-			size.addEventListener("click", () => openGuide("archive", size, e));
-			facts.append(size);
-		}
 		const parts = modelFacts(e);
 		if (parts.length) {
 			const origin = e.parameters_source === "gguf" ? "Parameter count from Hub GGUF metadata. " : e.parameters_source === "safetensors" ? "Parameter count from safetensors metadata. " : "";
@@ -1087,28 +1147,72 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		});
 		facts.append(toggle);
 
+		// The note: a line in the curator's own hand, folded to two lines
+		// until it has the focus. A row without one keeps a quiet "+ note"
+		// instead of an empty field, so a long ledger is not a column of
+		// placeholders.
 		const note = area(
 			{
 				class: "work-note",
-				rows: "2",
+				rows: "1",
 				maxlength: "500",
 				placeholder: "A sentence for why this one.",
 				"aria-label": `Note for ${e.source}`,
 				"data-entry": String(e.id),
 				"data-field": "note",
+				"data-min": "30",
 			},
 			e.note || "",
 		);
 		note.addEventListener("change", () => {
 			void patchEntry(e.id, { note: note.value });
 		});
+		const noteWrap = el("div", { class: "work-note-wrap" }, note);
+		const addNote = el("button", { type: "button", class: "work-add-note", title: "Add a sentence for why this one" }, "+ note");
+		const showNote = Boolean(e.note) || noting.has(e.id);
+		noteWrap.hidden = !showNote;
+		addNote.hidden = showNote;
+		addNote.addEventListener("click", () => {
+			noting.add(e.id);
+			noteWrap.hidden = false;
+			addNote.hidden = true;
+			note.focus();
+			fitTextarea(note);
+		});
+		note.addEventListener("blur", () => {
+			// Nothing written: the field folds away again.
+			if (note.value.trim() === "" && !e.note) {
+				noting.delete(e.id);
+				noteWrap.hidden = true;
+				addNote.hidden = false;
+			}
+		});
+		facts.append(addNote);
+
+		// The price, in its own column: the amount, and what it covers beneath.
+		const sizeCell = el("div", { class: "work-size-cell" });
+		if (closed) {
+			sizeCell.append(el("span", { class: "work-size-none", title: "A closed work: no bytes to hold — a place in the family until weights ship" }, "no bytes"));
+		} else {
+			const p = scopedSizeParts(e);
+			const size = el(
+				"button",
+				{ type: "button", class: `work-size work-size-help${p.basis ? "" : " is-unpriced"}`, title: sizeExplanation(e) },
+				el("span", { class: "work-size-amount" }, p.amount),
+			);
+			if (p.basis) size.append(el("span", { class: "work-size-basis" }, p.basis));
+			size.addEventListener("click", () => openGuide("archive", size, e));
+			sizeCell.append(size);
+		}
 
 		const desire = el("input", {
 			type: "number",
 			min: "1",
 			max: "9",
 			inputmode: "numeric",
+			placeholder: "·",
 			value: e.desire ? String(e.desire) : "",
+			title: "Desire, 1 to 9",
 			"aria-label": `Desire for ${e.source}, 1 to 9`,
 			"data-entry": String(e.id),
 			"data-field": "desire",
@@ -1118,7 +1222,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			void patchEntry(e.id, { desire: v });
 		});
 
-		const have = el("input", { type: "checkbox", "data-entry": String(e.id), "data-field": "have" });
+		const have = el("input", { type: "checkbox", "data-entry": String(e.id), "data-field": "have", "aria-label": `Have ${e.source}` });
 		if (e.status === "have") have.checked = true;
 		have.addEventListener("change", () => {
 			void patchEntry(e.id, { status: have.checked ? "have" : "want" });
@@ -1126,9 +1230,10 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 		const who = el("input", {
 			type: "text",
-			placeholder: "Maya, USB in Berlin",
+			placeholder: "who holds it",
 			value: e.holders || "",
 			maxlength: "500",
+			title: "Who holds it — a name, a drive, a city",
 			"aria-label": `Who holds ${e.source}`,
 			"data-entry": String(e.id),
 			"data-field": "who",
@@ -1136,6 +1241,16 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		who.addEventListener("change", () => {
 			void patchEntry(e.id, { holders: who.value });
 		});
+
+		const more = el(
+			"button",
+			{ type: "button", class: "work-more", "aria-expanded": "false", "aria-label": `More for ${repoName(e.source)}`, title: "Refresh size · Link · Drop" },
+			el("span", { "aria-hidden": "true" }, "⋯"),
+		);
+		const ctl = el("div", { class: "work-ctl" }, el("label", { class: "work-desire" }, desire));
+		// Nothing to hold in a closed work: a place, not bytes.
+		if (!closed) ctl.append(el("label", { class: "work-have", title: "In a vault" }, have), el("label", { class: "work-who" }, who));
+		ctl.append(more);
 
 		// Dropping is undoable, so it asks nothing: the row leaves the list
 		// and the catalog, and the toast (or the Agents panel) brings it back.
@@ -1163,19 +1278,6 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			}
 		});
 
-		const desireKicker = el("button", { type: "button", class: "kicker-btn", title: "What desire does" }, "Desire");
-		desireKicker.addEventListener("click", () => openGuide("desire", desireKicker, e));
-		const bar = el("div", { class: "work-bar" }, el("label", { class: "work-desire" }, desireKicker, desire));
-		if (closed) {
-			// Nothing to hold: a closed work is a place, not bytes.
-			bar.append(el("span", { class: "work-closed-note" }, "no bytes to hold — a place in the family until weights ship"));
-		} else {
-			bar.append(
-				el("label", { class: "work-have" }, have, el("span", {}, "Have")),
-				el("label", { class: "work-who" }, el("span", {}, "Who"), who),
-			);
-		}
-
 		// A link to this row: the page address plus `#row=owner/name`. It
 		// names the source, not the id, so it still lands after a remove
 		// and re-add; the address bar takes the same fragment.
@@ -1195,6 +1297,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			if (await copyText(href)) flashCopied(link, "Link copied ✓");
 			else toast("Select the address bar and copy it — it is the link.", "error");
 		});
+		const tray = el("div", { class: "work-tray", role: "group", "aria-label": `Actions for ${repoName(e.source)}` });
+		tray.hidden = true;
 		if (!closed && canonicalizeSource(e.source).kind === "hf") {
 			const refresh = el("button", { type: "button", class: "btn compact secondary", title: "Refresh repository or selection sizes and GGUF variants from the Hub. Use darsay estimate to classify the archive." }, "Refresh size");
 			refresh.addEventListener("click", () => {
@@ -1215,19 +1319,74 @@ export async function mountBoard(root: HTMLElement, id: string) {
 					}
 				});
 			});
-			bar.append(refresh);
+			tray.append(refresh);
 		}
-		bar.append(link, rm);
+		tray.append(link, rm);
+		const setTray = (on: boolean) => {
+			tray.hidden = !on;
+			more.setAttribute("aria-expanded", on ? "true" : "false");
+			card.classList.toggle("is-tools", on);
+		};
+		more.addEventListener("click", () => {
+			const opening = tray.hidden;
+			closeTray?.();
+			if (!opening) return;
+			setTray(true);
+			const onDown = (ev: PointerEvent) => {
+				const t = ev.target as Node;
+				if (!tray.contains(t) && !more.contains(t)) closeTray?.();
+			};
+			const onKey = (ev: KeyboardEvent) => {
+				if (ev.key !== "Escape") return;
+				closeTray?.();
+				more.focus();
+			};
+			document.addEventListener("pointerdown", onDown, true);
+			document.addEventListener("keydown", onKey, true);
+			closeTray = () => {
+				setTray(false);
+				document.removeEventListener("pointerdown", onDown, true);
+				document.removeEventListener("keydown", onKey, true);
+				closeTray = null;
+			};
+		});
 
+		const main = el("div", { class: "work-main" }, src, facts);
 		const claimRow = renderClaim(e);
-		card.append(
-			el("div", { class: "work-top" }, src, facts),
-			...(claimRow ? [claimRow] : []),
-			el("label", { class: "work-note-wrap" }, el("span", { class: "work-note-kicker" }, "Note"), note),
-			bar,
-			wrap,
-		);
+		if (claimRow) main.append(claimRow);
+		main.append(noteWrap);
+		card.append(folio, main, sizeCell, ctl, tray, wrap);
 		return card;
+	}
+
+	/** The column names, once, at the head of the page — each a doorway into the guide. */
+	function renderLedgerHead(): HTMLElement {
+		const sizeK = el("button", { type: "button", class: "kicker-btn", title: "What a size covers" }, "Size");
+		sizeK.addEventListener("click", () => openGuide("archive", sizeK));
+		const desireK = el("button", { type: "button", class: "kicker-btn", title: "What desire does" }, "Desire");
+		desireK.addEventListener("click", () => openGuide("desire", desireK));
+		return el(
+			"div",
+			{ class: "ledger-head" },
+			el("span", { class: "ledger-head-folio" }, "#"),
+			el("span", { class: "ledger-head-main" }, "Source"),
+			el("span", { class: "ledger-head-size" }, sizeK),
+			el("span", { class: "ledger-head-desire" }, desireK),
+			el("span", { class: "ledger-head-have" }, "Have"),
+			el("span", { class: "ledger-head-who" }, "Who"),
+			el("span", { class: "ledger-head-more" }),
+		);
+	}
+
+	/** A runner between groups: the heading the sort just changed, and how many rows it holds. */
+	function renderRunner(label: string, n: number): HTMLElement {
+		return el(
+			"div",
+			{ class: "ledger-runner" },
+			el("span", { class: "runner-label" }, label),
+			el("span", { class: "runner-rule", "aria-hidden": "true" }),
+			el("span", { class: "runner-n", title: plural(n, "row") }, String(n)),
+		);
 	}
 
 	function paintIds() {
@@ -1444,7 +1603,13 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const families = familiesOf(all);
 		if (families.length > 1 || family) {
 			const famGroup = el("span", { class: "lens-group lens-group-family" });
-			for (const f of families) {
+			// A long board reads more families than a toolbar row can hold:
+			// the commonest show, the rest wait behind one chip.
+			const capped = families.length > FAMILY_CAP + FAMILY_SLACK;
+			const shown = familiesExpanded || !capped ? families : families.slice(0, FAMILY_CAP);
+			const activeFam = family ? families.find((f) => f.key === family) : null;
+			if (activeFam && !shown.includes(activeFam)) shown.push(activeFam);
+			for (const f of shown) {
 				const active = family === f.key;
 				const n = applyLenses(all, lenses, f.key).length;
 				const b = el(
@@ -1466,6 +1631,25 @@ export async function mountBoard(root: HTMLElement, id: string) {
 					shells.toolbar.querySelector<HTMLElement>(`.lens-chip[data-family="${f.key}"]`)?.focus({ preventScroll: true });
 				});
 				famGroup.append(b);
+			}
+			if (capped) {
+				const rest = families.length - FAMILY_CAP;
+				const moreBtn = el(
+					"button",
+					{
+						type: "button",
+						class: "lens-chip lens-more",
+						"aria-expanded": familiesExpanded ? "true" : "false",
+						title: familiesExpanded ? "Show the commonest families only" : `${plural(rest, "more family", "more families")}, by how many rows each has`,
+					},
+					familiesExpanded ? "fewer" : `+${rest} more`,
+				);
+				moreBtn.addEventListener("click", () => {
+					familiesExpanded = !familiesExpanded;
+					paintToolbar(visible);
+					shells.toolbar.querySelector<HTMLElement>(".lens-more")?.focus({ preventScroll: true });
+				});
+				famGroup.append(moreBtn);
 			}
 			chips.append(famGroup);
 		}
@@ -1545,12 +1729,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 	}
 
 	function paintLedger() {
+		closeTray?.();
 		linkedIds = new Set(linked ? resolveRowLink(board.entries, linked).map((r) => r.id) : []);
 		const sorted = [...board.entries].sort((a, b) => compareEntries(a, b, sortKey, sortDir));
 		const visible = applyLenses(sorted, lenses, family);
 		paintToolbar(visible);
 		shells.ledger.replaceChildren();
 		shells.ledger.classList.toggle("is-lineage", view === "lineage");
+		shells.ledger.classList.toggle("is-ruled", view !== "lineage" && visible.length > 0);
 		if (view === "lineage" && visible.length) {
 			shells.ledger.append(renderLineage(visible));
 			firstPaint = false;
@@ -1578,7 +1764,24 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			empty.append(el("p", { class: "ledger-empty-t" }, n === 1 ? "Nothing through this lens." : "Nothing through these lenses together."), clear);
 			shells.ledger.append(empty);
 		} else {
-			visible.forEach((e, i) => shells.ledger.append(renderEntry(e, i)));
+			// Runners land where the sort changes its answer; each knows its count.
+			const runners = new Map<number, { label: string; n: number }>();
+			let last: { key: string; label: string; n: number; at: number } | null = null;
+			visible.forEach((e, i) => {
+				const g = ledgerGroup(e, sortKey);
+				if (!g) return;
+				if (last && last.key === g.key) last.n += 1;
+				else {
+					last = { ...g, n: 1, at: i };
+					runners.set(i, last);
+				}
+			});
+			shells.ledger.append(renderLedgerHead());
+			visible.forEach((e, i) => {
+				const r = runners.get(i);
+				if (r) shells.ledger.append(renderRunner(r.label, r.n));
+				shells.ledger.append(renderEntry(e, i));
+			});
 		}
 		firstPaint = false;
 	}
@@ -1861,8 +2064,16 @@ export async function mountBoard(root: HTMLElement, id: string) {
 
 	function watchSticky() {
 		stickyWatch?.disconnect();
+		toolbarWatch?.disconnect();
 		const sentinel = el("div", { class: "sticky-sentinel", "aria-hidden": "true" });
 		shells.toolbar.before(sentinel);
+		if ("ResizeObserver" in window) {
+			// Runners hold just beneath the toolbar, whatever its height today.
+			toolbarWatch = new ResizeObserver(() => {
+				shells.ledger.style.setProperty("--toolbar-h", `${Math.round(shells.toolbar.getBoundingClientRect().height)}px`);
+			});
+			toolbarWatch.observe(shells.toolbar);
+		}
 		if (!("IntersectionObserver" in window)) return;
 		stickyWatch = new IntersectionObserver(
 			([entry]) => shells.toolbar.classList.toggle("is-stuck", !entry.isIntersecting),

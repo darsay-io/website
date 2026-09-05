@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareEntries, compareFamily, entryArtifactType, factPrimer, resolveRowLink, rowLinkTarget, sameRowIdentity } from "./board.ts";
+import { compareEntries, compareFamily, entryArtifactType, factPrimer, ledgerGroup, resolveRowLink, rowLinkTarget, sameRowIdentity } from "./board.ts";
 
 const row = (
 	id: number,
@@ -46,6 +46,38 @@ describe("compareEntries", () => {
 		];
 		rows.sort((a, b) => compareEntries(a, b, "type", "asc"));
 		expect(rows.map((r) => r.id)).toEqual([2, 1]);
+	});
+});
+
+describe("ledgerGroup", () => {
+	const GiB = 1024 ** 3;
+	it("files a row under the heading its sort changes on, and under none for the source order", () => {
+		expect(ledgerGroup(row(1, { desire: 9 }), "desire")).toEqual({ key: "9", label: "desire 9" });
+		expect(ledgerGroup(row(1, { desire: null }), "desire")).toEqual({ key: "none", label: "no desire yet" });
+		expect(ledgerGroup(row(1, { status: "have" }), "status")).toEqual({ key: "have", label: "in a vault" });
+		expect(ledgerGroup(row(1, {}), "status")).toEqual({ key: "want", label: "wanted" });
+		expect(ledgerGroup(row(1, { source: "huggingface:datasets/a/c", artifact_type: "dataset" }), "type")).toEqual({ key: "dataset", label: "datasets" });
+		expect(ledgerGroup(row(1, { source: "https://www.qwencloud.com/models/qwen3.8-max-0902" }), "type")).toEqual({ key: "closed", label: "closed works" });
+		expect(ledgerGroup(row(1, { source: "huggingface:Qwen/Qwen3.8-27B" }), "family")).toEqual({ key: "qwen", label: "Qwen" });
+		expect(ledgerGroup(row(1, {}), "source")).toBeNull();
+	});
+
+	it("buckets sizes by the order of magnitude an archivist plans around", () => {
+		const bucket = (bytes: number | null) => ledgerGroup(row(1, { payload_bytes: bytes }), "size")?.label;
+		expect(bucket(2 * 1024 * GiB)).toBe("a tebibyte and up");
+		expect(bucket(1024 * GiB)).toBe("a tebibyte and up");
+		expect(bucket(500 * GiB)).toBe("100 GiB to 1 TiB");
+		expect(bucket(42 * GiB)).toBe("10 to 100 GiB");
+		expect(bucket(3 * GiB)).toBe("1 to 10 GiB");
+		expect(bucket(200 * 1024 * 1024)).toBe("under 1 GiB");
+		expect(bucket(null)).toBe("unpriced");
+	});
+
+	it("keeps consecutive rows of one sort key under one runner", () => {
+		const rows = [row(1, { desire: 9 }), row(2, { desire: 9 }), row(3, { desire: 7 }), row(4, { desire: null })];
+		rows.sort((a, b) => compareEntries(a, b, "desire", "desc"));
+		const keys = rows.map((r) => ledgerGroup(r, "desire")?.key);
+		expect(keys).toEqual(["9", "9", "7", "none"]);
 	});
 });
 
