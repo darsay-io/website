@@ -1,0 +1,114 @@
+---
+title: "Quantization, from the inside"
+description: "How a quantizer decides what to round, the families you will meet (GGUF K and I quants, dynamic quants, AWQ, GPTQ, FP8, MXFP4 and NVFP4), what an importance matrix is, how quality is measured, and why a published quant is a distinct artifact rather than a smaller copy of its source."
+slug: docs/learn/quantization
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+> **In one sentence.** Quantization rounds every weight to one of a few values per block, choosing the rounding so that the model's outputs change as little as possible, and the choices depend on inputs that usually are not published with the result.
+
+[The numbers inside](/docs/learn/numbers/) explained what a four-bit
+weight is. This page is about the decision behind it: given a BF16 model,
+which weights get which bits, and how the quantizer knows. That decision
+is what makes one Q4 better than another, and what makes it a thing worth
+preserving in its own right.
+
+## Post-training quantization in three steps
+
+Nearly every quant you will meet is **post-training quantization**, PTQ:
+the model is finished, and the quantizer works on the weights alone. The
+recipe has three steps.
+
+1. **Group.** Split each weight matrix into blocks, typically 32 or 128 numbers along a row. Each block gets its own scale, so a block of small weights is not crushed by a neighbouring large one.
+2. **Round.** Map each weight in the block to the nearest of the format's values. A plain Q4 has sixteen evenly spaced levels; an I-quant looks the level up in a small codebook shaped like real weight distributions; NF4 uses sixteen levels placed where a normal distribution has equal mass.
+3. **Correct.** Adjust the scale, or nudge neighbouring weights, so the *output* of the layer on typical inputs is preserved, not just each weight. This step is where the methods differ and where the calibration data enters.
+
+Step three is the interesting one. **GPTQ** processes the columns of a
+matrix in order and pushes each column's rounding error onto the columns
+not yet rounded, using a few hundred calibration examples to know which
+directions matter. **AWQ** notices that a small fraction of weight channels
+carry most of the activation energy and scales them up before rounding so
+they lose less. Both need calibration text, and both bake its influence
+into the result.
+
+## The importance matrix
+
+llama.cpp's version of step three is the **importance matrix**. Run the
+BF16 model over a calibration corpus, a few hundred thousand tokens of
+whatever you think the model will see, and record, for every weight
+column, how much the activations flowing through it contributed. Then
+quantize with that matrix in hand: columns that mattered are rounded more
+carefully, and the block scales are chosen to minimize the weighted error.
+
+The GGUF header records that this happened: `quantize.imatrix.file`,
+`quantize.imatrix.dataset`, and the counts of entries and chunks. It does
+not record the matrix itself or the corpus. darsay's classifier treats a
+set with those keys as rule **R7**, a negative retained in full, because
+the published bytes depend on an input that is not in the repository. A
+set *without* those keys is not therefore reproducible: the exact tool
+version and its options are still missing. The header is evidence of
+what was used, never proof of what could be rebuilt.
+
+## The families you will meet
+
+| Family | Where | Bits | Calibration | Notes |
+|---|---|---|---|---|
+| Q8_0, Q6_K, Q5_K_M, Q4_K_M, Q3_K_M, Q2_K | GGUF | 8 → 2 | optional imatrix | The **K-quants**: super-blocks of 256 with 6-bit scales; `_M`, `_S`, `_L` say how many tensors are kept larger. |
+| IQ4_XS, IQ3_XXS, IQ2_XXS, IQ1_M | GGUF | 4 → 1 | imatrix expected | The **I-quants**: codebook lookup, near-optimal at each bit width, slower on some hardware. |
+| UD-Q4_K_XL and the other `UD-` | GGUF | mixed | imatrix | **Dynamic** quants: bit widths chosen per tensor by the publisher's own rules; the recipe changes with the tool. |
+| GPTQ, AWQ | safetensors | 4, 8 | required | Made for GPU runtimes; group size and act-order are part of the artifact. |
+| FP8 | safetensors | 8 | none | Block-scaled float; some frontier releases ship in it natively. |
+| MXFP4, NVFP4 | safetensors, GGUF | 4 | none | Microscaling floats with a shared exponent per block of 32 or 16; NVFP4 adds a second-level FP8 scale. Native on Blackwell. |
+| INT8 and INT4 (bitsandbytes, HQQ) | at load time | 8, 4 | none | Quantized when the model is loaded, not published as files. |
+| QAT | any | any | training | **Quantization-aware training**: the model is trained knowing it will be rounded; the result quantizes with far less loss. |
+
+The names on a board's variant table are these. Precision on a row is the
+family; bytes per parameter is the measured result.
+
+## How quality is measured
+
+Two numbers do most of the work. **Perplexity** on held-out text says how
+surprised the model is by real sentences; a quant that raises it by two
+percent is barely changed, by twenty percent is damaged. **KL divergence**
+between the quant's next-token distribution and the original's, measured
+token by token, is the sharper tool: it says how far the quant's *choices*
+have moved, and its tail (the worst tokens) is where a quant breaks on
+arithmetic or code while the average still looks fine. Task benchmarks
+come last, because they are noisy at the differences that matter here.
+
+<div class="docs-note"><strong>Rule of thumb.</strong> Q8 and Q6 are indistinguishable from BF16 for almost all uses. Q5 and Q4_K_M are the working standard: small measurable losses, big savings. Below Q4 the losses grow fast and unevenly, and an imatrix is what makes a Q3 or Q2 usable at all. A small model quantizes worse than a large one at the same bits, so a 7B at Q4 loses more than a 70B at Q4.</div>
+
+## Why a quant is not a smaller copy
+
+The photography metaphor on [the quantization page](/docs/quantization/#1-negatives-and-prints)
+says a negative is what nothing can regenerate and a print is a cast of
+one. A quant looks like a print. It is not one, for reasons that follow
+from everything above:
+
+- **The inputs are missing.** The calibration corpus, the importance matrix, and the publisher's per-tensor rules are not in the repository. Without them you can make a sibling, not the same file.
+- **The tool is part of the recipe.** llama.cpp's quantizer changes: block layouts, which tensors it protects, how it handles the embedding. The same command on the same source, a year apart, gives different bytes.
+- **Floating point is not deterministic across machines.** The imatrix is computed in BF16 on a GPU; a different GPU or kernel gives slightly different sums and slightly different roundings.
+- **The source may be a conversion itself.** The BF16 GGUF a quant was made from is often an upcast of an FP8 release that lives in another repository, so "the original" is two steps away.
+
+darsay therefore never skips a quant on the theory that it could be
+remade. The only automatic omission is a weight set whose every file
+hashes identical to one already retained in the same bundle. A collector
+who wants less than the whole repository chooses a **selection**, and the
+manifest records that as a choice about scope, not a finding about
+recoverability.
+
+## Try it
+
+<Stage label="see the verdicts" lines={[
+	"darsay classify unsloth/GLM-5.3-Flash-GGUF              # R7 on every imatrix quant, R10 on the BF16",
+	"darsay estimate unsloth/GLM-5.3-Flash-GGUF --variants   # each variant: files, bytes, precision",
+	"darsay archive  unsloth/GLM-5.3-Flash-GGUF --include '/UD-Q4_K_XL/*'   # one variant, as a selection",
+]} />
+
+## Where this bites
+
+- **Same name, different bytes.** Two publishers' Q4_K_M of the same model differ. Their imatrix corpora differ, their tool versions differ, and their protected-tensor lists differ. Keep the one you tested.
+- **The embedding and the output head are usually not four bits.** That is why a "4-bit" model is 0.58 bytes per parameter and why the small models quantize worse: those two tensors are a larger share of them.
+- **Runtime quantization is not a published artifact.** A model loaded with `load_in_4bit` is rounded fresh every time from the BF16 files. It is convenient and unreproducible in exactly the same way.
+- **Calibration language matters.** An imatrix built on English prose protects the weights English prose uses. The same quant can be noticeably worse in code or in another language.

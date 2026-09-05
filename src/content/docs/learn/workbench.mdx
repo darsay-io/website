@@ -1,0 +1,104 @@
+---
+title: "The workbench"
+description: "Setting up the machine where models get worked on: the vault-and-bench separation, hardware and what it buys, the software layers (drivers, Python, the runtimes, the trainers), moving bundles from the vault to the bench with darsay hydrate and .mvb.tar, a directory layout that keeps provenance, and a checklist for a new artifact."
+slug: docs/learn/workbench
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+> **In one sentence.** A workbench is a machine where the vault's pinned bytes become new things, and it is set up so that nothing you make there can ever be confused with what you started from.
+
+The vault is for keeping; the bench is for doing. This page is the bench:
+what to put on it, how a bundle gets there, and the habits that let you
+experiment freely because the original is always somewhere it cannot be
+touched.
+
+## The separation
+
+| | The vault | The workbench |
+|---|---|---|
+| Holds | pinned bundles: payload, manifest, hashes | hydrated copies, environments, outputs |
+| Writes | only `darsay archive`, `mv`, `cp` | anything, by anyone, all the time |
+| Truth | the manifest and `SHA256SUMS` | a recipe file beside each artifact |
+| Backed up | yes, and verified | rebuildable from the vault plus the recipes |
+| Network | not needed after archiving | needed for tools; not for models |
+
+They can be the same machine. What matters is that the vault directory
+is never a working directory: hydration builds environments *outside* the
+bundle, trainers read `model/` and write elsewhere, and a converter's
+output lands in the bench's own tree. A bundle that passes `darsay verify`
+today passes it in a decade, whatever happened on the bench in between.
+
+## Hardware, and what each part buys
+
+- **Memory bandwidth** sets single-stream speed. Unified memory on Apple silicon, HBM on datacentre cards, GDDR7 on consumer ones.
+- **Memory size** sets what fits at all. This is the number to buy. 24 GiB runs 32B models at four bits; 64 to 128 GiB runs 70B comfortably and MoE giants with offloading; 512 GiB runs nearly anything published.
+- **Compute** sets prompt processing, batch throughput, and training speed. A GPU matters here; for one person chatting, less than you would think.
+- **Disk** is the vault's concern, but the bench wants fast local NVMe for hydrated copies and checkpoints: a 70B fine-tune writes hundreds of gigabytes of checkpoints.
+- **A CPU-only box** with lots of RAM is a legitimate bench for MoE models, small models, and conversions. Quantizing a 70B needs RAM to hold it, not a GPU.
+
+<div class="docs-note"><strong>Two good benches.</strong> A Mac with 128 GiB of unified memory runs and fine-tunes 70B-class models with adapters and converts anything, quietly, on a desk. A Linux box with one or two 24 to 32 GiB NVIDIA cards and 128 GiB of RAM runs the full CUDA toolchain, trains faster, serves more users, and offloads what does not fit. Many people end up with one of each.</div>
+
+## The software layers
+
+1. **Driver and compute stack.** CUDA on NVIDIA, ROCm on AMD, Metal on Apple (nothing to install). Match versions to what the runtimes were built against.
+2. **Python, managed.** `uv` or `pipx` for tools; a separate environment per project, never a global install. darsay does this itself for hydration: content-addressed environments under the vault's `.runtime/`, shared between bundles with the same needs.
+3. **Runtimes.** llama.cpp built from source (so you control the commit), plus the one server runtime you actually use.
+4. **Converters.** llama.cpp's Python scripts, `mlx-lm`, `llm-compressor` as needed.
+5. **Trainers.** TRL and PEFT, and one of Unsloth, Axolotl, or MLX-LM.
+6. **Evaluation.** `lm-evaluation-harness` for benchmarks, and your own prompt set in a file.
+7. **darsay** itself, pointed at the vault, for `hydrate`, `run`, `verify`, and the manifests.
+
+## From the vault to the bench
+
+<Stage label="three ways a bundle arrives" lines={[
+	"darsay hydrate qwen--qwen3-8b                    # same machine: an env, and model/ ready to read",
+	"darsay cp qwen--qwen3-8b /mnt/bench/vault        # another machine's vault, mounted here; verified where the disk lives",
+	"darsay export qwen--qwen3-8b -o /mnt/usb         # sneakernet: one .mvb.tar, coreutils can open it",
+]} />
+
+`hydrate` does not copy the payload; it builds an environment and
+records, in `hydration.json`, what it built and every run made against
+it. Point tools at the bundle's `model/` directory and treat it as
+read-only, which it is. When the bench is a different machine, `cp`
+carries a bundle into a vault on a mounted share, manifest and all, and
+verifies it there; with a `[host]` section in that vault's `config.toml`
+naming the machine that owns the disk, the hashes are checked on that
+machine over ssh instead of being read back across the wire. An exported
+`.mvb.tar` is the same bundle as one file, openable with `tar` and
+checkable with `sha256sum` on a machine with no darsay at all.
+
+## A layout that keeps provenance
+
+```text
+~/bench/
+  work/glm-5.3-flash/               one directory per source, named by the bundle
+    RECIPE.md                       what was done, from which pin, with which tool
+    gguf/glm-Q4_K_M.gguf            outputs, each with its checks recorded
+    imatrix/calibration_v5.txt      the inputs that are not in any repository
+    adapters/house-style-r16/       an adapter, its config, its data, its eval
+  envs/                             per-project Python environments
+  eval/prompts.jsonl                the fifty prompts you always run
+```
+
+The rule is one line: **everything the bench makes names the pin it
+came from.** The pin is the bundle id with its revision, exactly as the
+manifest records it. With that, any output can be traced back to bytes
+that are still verifiable; without it, a directory of GGUFs is a
+directory of mysteries within a year.
+
+## A checklist for a new artifact
+
+1. **Start from a bundle**, not a download. If it is not in the vault, archive it first; the bench reads only what the vault has pinned.
+2. **Note the tool commit** before you run it.
+3. **Keep the inputs** that are not in any repository: calibration text, training data, prompts.
+4. **Check it**: loads, speaks, perplexity or KL, your prompt set.
+5. **Write the recipe** beside the output, with hashes.
+6. **Decide what to keep**: the adapter or the merged model, the checks, the recipe. Delete the rest without guilt; it is rebuildable.
+
+## Where this bites
+
+- **Never write into the bundle.** Tools that "save" into the model directory (some converters default to it) break the hashes. Output elsewhere; `darsay verify` will tell you if something slipped.
+- **Environments rot.** A runtime built against last year's CUDA will not load next year. Hydration pins package versions so a rebuild gets the same ones; do the same for your own environments.
+- **The bench is not a backup.** Hydrated copies, checkpoints, and outputs are rebuildable from the vault and the recipes; the vault is what you back up.
+- **Provenance is the cheap part.** Ten lines in a recipe file cost a minute and save the artifact.

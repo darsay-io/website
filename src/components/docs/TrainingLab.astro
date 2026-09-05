@@ -1,0 +1,137 @@
+---
+/**
+ * The Training Lab: what it costs to train a model of a given size on a
+ * given number of tokens. FLOPs ≈ 6 × parameters × tokens; GPU-hours from
+ * a card's peak dense BF16 rate and a utilization you choose; memory from
+ * the mixed-precision Adam recipe of 16 bytes per parameter. Rules of
+ * thumb the page beside it explains. Authored text only.
+ */
+---
+<div class="lab" data-lab="training">
+	<p class="lab-kicker"><span aria-hidden="true">✦ </span>Training Lab</p>
+	<h3 class="lab-title">What would it take to make these weights?</h3>
+	<div class="lab-controls">
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Parameters</span>
+			<span class="lab-ctl-v" data-out="params">8B</span>
+			<input type="range" min="0" max="27" step="1" value="6" data-in="params" aria-label="Parameters" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Training tokens</span>
+			<span class="lab-ctl-v" data-out="tokens">15T</span>
+			<input type="range" min="0" max="13" step="1" value="8" data-in="tokens" aria-label="Training tokens" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Accelerator</span>
+			<select data-in="gpu" aria-label="Accelerator">
+				<option value="312,80">A100 · 312 TFLOPs · 80 GiB</option>
+				<option value="989,80" selected>H100 SXM · 989 TFLOPs · 80 GiB</option>
+				<option value="1307,141">MI300X · 1,307 TFLOPs · 192 GiB</option>
+				<option value="2250,192">B200 · 2,250 TFLOPs · 192 GiB</option>
+				<option value="165,24">RTX 4090 · 165 TFLOPs · 24 GiB</option>
+				<option value="210,32">RTX 5090 · 210 TFLOPs · 32 GiB</option>
+			</select>
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Utilization</span>
+			<span class="lab-ctl-v" data-out="mfu">40%</span>
+			<input type="range" min="20" max="60" step="5" value="40" data-in="mfu" aria-label="Model FLOPs utilization, percent" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Accelerators</span>
+			<span class="lab-ctl-v" data-out="count">1,024</span>
+			<input type="range" min="0" max="14" step="1" value="7" data-in="count" aria-label="Number of accelerators" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Price per hour</span>
+			<span class="lab-ctl-v" data-out="price">$2.50</span>
+			<input type="range" min="1" max="8" step="0.5" value="2.5" data-in="price" aria-label="Dollars per accelerator-hour" />
+		</label>
+	</div>
+	<dl class="lab-out">
+		<div><dt>Compute</dt><dd><span data-out="flops">—</span><small>FLOPs</small></dd></div>
+		<div><dt>Accelerator-hours</dt><dd><span data-out="hours">—</span><small>hours</small></dd></div>
+		<div><dt>Wall clock</dt><dd><span data-out="days">—</span><small>days</small></dd></div>
+		<div><dt>Bill</dt><dd><span data-out="cost">—</span><small>USD</small></dd></div>
+	</dl>
+	<p class="lab-formula" data-out="formula"></p>
+	<dl class="lab-out lab-out-2">
+		<div><dt>Memory for states</dt><dd><span data-out="mem">—</span><small>GiB · weights, gradients, optimizer</small></dd></div>
+		<div><dt>Accelerators to hold them</dt><dd><span data-out="minGpus">—</span><small>before activations</small></dd></div>
+	</dl>
+	<p class="lab-note" data-out="ratio"></p>
+	<p class="lab-note">Rules of thumb. Compute is 6 × parameters × tokens; hours are compute ÷ (peak dense BF16 × utilization); the states are 16 bytes per parameter for mixed-precision AdamW: 2 for the working weights, 4 for the master copy, 4 + 4 for the two moments, 2 for the gradient. Activations, checkpoints, and evaluation are extra.</p>
+</div>
+
+<script>
+	const PARAMS = [0.5, 1, 2, 3, 4, 7, 8, 9, 12, 14, 20, 24, 27, 32, 35, 40, 48, 56, 70, 72, 110, 120, 235, 400, 480, 671, 1000, 2000];
+	const TOKENS = [0.1, 0.3, 0.5, 1, 2, 4, 8, 10, 15, 18, 20, 25, 30, 40];
+	const COUNTS = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
+	const GiB = 1024 ** 3;
+
+	const SUP = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+	/** 7.2 × 10²³: scientific notation the way a page writes it. */
+	function big(n: number): string {
+		if (!(n > 0)) return "0";
+		const exp = Math.floor(Math.log10(n));
+		const mant = n / 10 ** exp;
+		const sup = String(exp).split("").map((d) => SUP[Number(d)]).join("");
+		return `${mant.toFixed(1)} × 10${sup}`;
+	}
+	function count(n: number): string {
+		if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+		if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+		if (n >= 1e3) return `${Math.round(n).toLocaleString()}`;
+		return n.toFixed(n >= 100 ? 0 : 1);
+	}
+	function money(n: number): string {
+		if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+		if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+		if (n >= 1e3) return `$${Math.round(n / 1e3)}k`;
+		return `$${Math.round(n)}`;
+	}
+
+	for (const lab of document.querySelectorAll<HTMLElement>('.lab[data-lab="training"]')) {
+		const inp = (k: string) => lab.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-in="${k}"]`)!;
+		const out = (k: string) => lab.querySelector<HTMLElement>(`[data-out="${k}"]`)!;
+		function paint() {
+			const pB = PARAMS[Number(inp("params").value)];
+			const n = pB * 1e9;
+			const tT = TOKENS[Number(inp("tokens").value)];
+			const d = tT * 1e12;
+			const [peak, mem] = inp("gpu").value.split(",").map(Number);
+			const mfu = Number(inp("mfu").value) / 100;
+			const gpus = COUNTS[Number(inp("count").value)];
+			const price = Number(inp("price").value);
+
+			const flops = 6 * n * d;
+			const hours = flops / (peak * 1e12 * mfu * 3600);
+			const days = hours / gpus / 24;
+			const cost = hours * price;
+			const states = 16 * n;
+			const minGpus = Math.ceil(states / (mem * GiB * 0.85));
+			const ratio = d / n;
+
+			out("params").textContent = `${pB}B`;
+			out("tokens").textContent = `${tT}T`;
+			out("mfu").textContent = `${Math.round(mfu * 100)}%`;
+			out("count").textContent = gpus.toLocaleString();
+			out("price").textContent = `$${price.toFixed(2)}`;
+			out("flops").textContent = big(flops);
+			out("hours").textContent = count(hours);
+			out("days").textContent = days >= 100 ? String(Math.round(days)) : days.toFixed(1);
+			out("cost").textContent = money(cost);
+			out("mem").textContent = count(states / GiB);
+			out("minGpus").textContent = String(minGpus);
+			out("formula").textContent = `6 × ${pB}B × ${tT}T = ${big(flops)} FLOPs ÷ (${peak.toLocaleString()} TFLOPs × ${Math.round(mfu * 100)}%) = ${count(hours)} accelerator-hours ÷ ${gpus.toLocaleString()} = ${days >= 100 ? Math.round(days) : days.toFixed(1)} days`;
+			out("ratio").textContent =
+				ratio < 20
+					? `${Math.round(ratio)} tokens per parameter: under the Chinchilla-optimal 20, so for this compute a smaller model trained longer would score better.`
+					: ratio < 100
+						? `${Math.round(ratio)} tokens per parameter: past the compute-optimal 20, the way open releases are trained, which buys a cheaper model to run at the cost of a dearer one to train.`
+						: `${Math.round(ratio)} tokens per parameter: deep into overtraining, the small-model recipe, where every extra token pays back at inference time.`;
+		}
+		for (const el of lab.querySelectorAll("[data-in]")) el.addEventListener("input", paint);
+		paint();
+	}
+</script>

@@ -185,7 +185,134 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 		case "formats":
 			if (row.dominant_dtype) return `The Hub reported a safetensors header for this row — dominant dtype \`${row.dominant_dtype}\`.`;
 			return null;
+		case "training":
+			return trainingNote(row);
+		case "posttrain":
+			return postTrainNote(row);
+		case "finetune":
+			return fineTuneNote(row);
+		case "memory":
+			return memoryNote(row);
+		case "runtime":
+			return runtimeNote(row);
+		case "convert":
+			return convertNote(row);
+		case "workbench":
+			return workbenchNote(row);
 		default:
 			return null;
 	}
+}
+
+/* ── The workbench cards, applied to a row ──────────────────────────────── */
+
+const SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+/** 1.2 × 10²⁵: scientific notation the way a card writes it. */
+function sci(n: number): string {
+	if (!(n > 0)) return "0";
+	const exp = Math.floor(Math.log10(n));
+	const mant = n / 10 ** exp;
+	const sup = String(exp).split("").map((d) => SUPERSCRIPT[Number(d)]).join("");
+	return `${mant.toFixed(1)} × 10${sup}`;
+}
+
+/** 160B, 15T: a token count the way a card says it. */
+function humanTokens(n: number): string {
+	if (n >= 1e12) return `${(n / 1e12).toFixed(n < 1e13 ? 1 : 0)}T`;
+	return `${Math.round(n / 1e9)}B`;
+}
+
+/** The single weight set this row prices, in bytes, or null when it prices a whole multi-variant repository. */
+function weightBytes(row: RowFacts): number | null {
+	if (typeof row.bytes_per_param === "number" && row.parameters) return row.parameters * row.bytes_per_param;
+	if (row.payload_bytes !== null && row.size_basis && row.size_basis !== "repository") return row.payload_bytes;
+	if (row.payload_bytes !== null && (row.gguf_variants?.length ?? 0) <= 1) return row.payload_bytes;
+	return null;
+}
+
+function trainingNote(row: RowFacts): string | null {
+	if (isClosed(row)) return "A closed work: whatever made it, the weights are not published.";
+	if (row.artifact_type === "dataset") return "A dataset is the other half of a run: the tokens, not the weights. Six FLOPs per parameter per token of it.";
+	const p = row.parameters;
+	if (!p) return "No parameter count on record — `darsay estimate` reads it from the headers, and then this card can price the run.";
+	const tokens = 20 * p;
+	const flops = 6 * p * tokens;
+	const hours = flops / (989e12 * 0.4 * 3600);
+	const days = hours / 1024 / 24;
+	return `**${humanParams(p)}** parameters trained Chinchilla-style on ${humanTokens(tokens)} tokens is about 6 × ${humanParams(p)} × ${humanTokens(tokens)} = ${sci(flops)} FLOPs: ${Math.round(hours).toLocaleString()} H100-hours at 40% utilization, ${days < 1 ? "under a day" : `${days.toFixed(1)} days`} on 1,024 of them. Open releases train far longer than that. The optimizer states alone would be ${humanSize(16 * p)}.`;
+}
+
+function postTrainNote(row: RowFacts): string | null {
+	if (isClosed(row)) return null;
+	if (row.artifact_type === "dataset") return "A dataset row. If it is conversations, it is post-training data; if it is prompts with answers, it is what a verifiable reward checks.";
+	const variants = lineageOf(row.source).variants;
+	const parts: string[] = [];
+	if (variants.includes("base")) parts.push("**base** — the pretrained predictor; it completes text and does not answer");
+	if (variants.includes("instruct") || variants.includes("chat")) parts.push("**instruct** — SFT and preference-tuned to hold a conversation");
+	if (variants.includes("thinking")) parts.push("**thinking** — trained with verifiable rewards to reason in text before answering; budget context for the trace");
+	if (variants.includes("distill")) parts.push("**distill** — trained on a larger teacher's answers; two parents");
+	if (variants.includes("abliterated") || variants.includes("uncensored")) parts.push("**edited** — a refusal direction removed after training; bytes that depend on the prompts and machine used");
+	if (!parts.length) return "Read from the name: it says neither base nor instruct. The card and the chat template say which stage this is; `generation_config.json` carries the sampling the publisher tuned for.";
+	return `Read from the name: ${parts.join("; ")}. A claim by the publisher, usually true; the chat template in the files is what the runtime believes.`;
+}
+
+function fineTuneNote(row: RowFacts): string | null {
+	if (isClosed(row)) return null;
+	if (row.artifact_type === "dataset") return "A dataset row: fine-tuning data is one JSON object per line in the model's chat format. Hold a tenth out before you start.";
+	const p = row.parameters;
+	if (!p) return "No parameter count on record yet, so no adapter arithmetic — `darsay estimate` reads it from the headers.";
+	return `**${humanParams(p)}** parameters: a LoRA on the BF16 base needs about ${humanSize(2 * p)} for the frozen weights plus a gigabyte or two for the adapter and its states; QLoRA at four bits, about ${humanSize(0.58 * p)} plus the same; a full fine-tune, ${humanSize(16 * p)} before activations. Activations are the knob when it does not fit.`;
+}
+
+function memoryNote(row: RowFacts): string | null {
+	if (isClosed(row)) return "A closed work: nothing to load.";
+	if (row.artifact_type === "dataset") return "A dataset does not load into memory as a model does; readers stream its rows.";
+	const w = weightBytes(row);
+	if (w === null) {
+		if (row.payload_bytes !== null && (row.gguf_variants?.length ?? 0) > 1) return `**${scopedSize(row)}** prices ${row.gguf_variants!.length} alternative variants together. Choose one — Add variant on the recipe card — and this note sizes it.`;
+		return "No weight set is priced on this row yet — `darsay estimate` sizes it, and then this note says what it needs.";
+	}
+	const moe = moeFromName(row.source);
+	const activeFrac = moe && moe.total !== null && moe.active !== null ? moe.active / moe.total : 1;
+	const read = w * activeFrac;
+	const tps = (gbps: number) => {
+		const v = (gbps * 1e9) / read;
+		return v < 1 ? "under 1" : String(Math.round(v));
+	};
+	const dense = activeFrac === 1;
+	return `**${humanSize(w)}** of weights, so about ${humanSize(w * 1.1)} with the runtime, before the KV cache for your context. One stream reads ${dense ? "all of it " : `only the active experts, about ${humanSize(read)}, `}per token: near ${tps(546)} tokens/s on an Apple Max-class machine, ${tps(1008)} on an RTX 4090, ${tps(90)} on a desktop with two channels of DDR5.${dense ? " A mixture of experts whose name does not say so reads only its active experts, and runs faster than this." : ""}`;
+}
+
+function runtimeNote(row: RowFacts): string | null {
+	if (isClosed(row)) return "A closed work: an API, not a runtime.";
+	if (row.artifact_type === "dataset") return "A dataset matches no engine: `darsay run` has nothing to run, and any Parquet or JSON Lines reader opens the files under `data/`.";
+	const n = row.gguf_variants?.length ?? 0;
+	const gguf = n > 0 || /gguf/i.test(row.source);
+	if (gguf) {
+		return `GGUF: llama.cpp, Ollama, or LM Studio on any hardware. \`darsay run\` picks the llama-cpp engine${n > 1 ? ` and, with ${n} variants here, needs \`--weights\` to say which` : ""}.`;
+	}
+	const dt = row.dominant_dtype ?? "";
+	if (/F8|FP8|E4M3/i.test(dt) || /-(AWQ|GPTQ|FP8|NVFP4|MXFP4)$/i.test(row.source)) return "A quantized safetensors release: vLLM or SGLang read it as published. `darsay run` uses transformers; llama.cpp needs a GGUF conversion first.";
+	return `Safetensors: transformers for correctness, vLLM or SGLang to serve, MLX on a Mac, or convert to GGUF for llama.cpp. \`darsay run\` uses transformers${/mlx/i.test(row.source) ? "" : ", or \`--engine mlx\` on Apple silicon"}.`;
+}
+
+function convertNote(row: RowFacts): string | null {
+	if (isClosed(row)) return null;
+	if (row.artifact_type === "dataset") return "Datasets convert between Parquet, JSON Lines, and Arrow losslessly; the tokenizer that reads them belongs to the model.";
+	const c = row.classification;
+	const n = row.gguf_variants?.length ?? 0;
+	const variants = n > 1 ? `${n} GGUF variants are published here, each a distinct artifact of one toolchain run. ` : "";
+	if (!c) return `${variants}Not classified yet — \`darsay estimate <board-url>\` records each weight set's verdict and the evidence it rests on.`;
+	const neg = c.verdicts.negative?.sets ?? 0;
+	const prints = c.verdicts.print?.sets ?? 0;
+	const unknown = c.verdicts.unknown?.sets ?? 0;
+	return `${variants}Classified: ${neg} negative set${neg === 1 ? "" : "s"}, ${unknown} unknown, ${prints} print${prints === 1 ? "" : "s"}; ${c.skipped_bytes ? `${humanSize(c.skipped_bytes)} proven duplicate and omitted` : "nothing proven duplicate, nothing skipped"}. A print is a hash match, never a conversion that could be redone.`;
+}
+
+function workbenchNote(row: RowFacts): string | null {
+	if (isClosed(row)) return "A closed work has no bundle to hydrate.";
+	const dir = bundleName(row.source);
+	if (!dir) return null;
+	if (row.artifact_type === "dataset") return `Lands as \`~/darsay/${dir}/${revision12(row.revision)}/data/\`; no engine to hydrate — open the files with any reader, and write anything you make elsewhere.`;
+	return `\`darsay hydrate ${dir}\` builds an environment under the vault's \`.runtime/\` and leaves \`~/darsay/${dir}/${revision12(row.revision)}/model/\` to be read in place; point a converter or trainer at that directory and write the output beside a recipe that names this pin.`;
 }

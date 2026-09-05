@@ -18,6 +18,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const SYNCED_DIR = path.join(ROOT, "src/content/docs/docs");
 /** Site-authored pages (the board, for agents): their URL comes from a `slug:` line. */
 export const AUTHORED_DIR = path.join(ROOT, "src/content/docs/board");
+/** Every site-authored directory: the board, and the field (Learn). */
+export const AUTHORED_DIRS = [AUTHORED_DIR, path.join(ROOT, "src/content/docs/learn")];
 
 export const SIDEBAR = [
 	{ label: "All docs", slug: "docs" },
@@ -38,6 +40,25 @@ export const SIDEBAR = [
 			{ label: "Catalogs", slug: "docs/catalogs" },
 			{ label: "Doctor", slug: "docs/doctor" },
 			{ label: "FAQ", slug: "docs/faq" },
+		],
+	},
+	{
+		label: "Learn the field",
+		items: [
+			{ label: "The map", slug: "docs/learn" },
+			{ label: "A model, on disk", slug: "docs/learn/anatomy" },
+			{ label: "The numbers inside", slug: "docs/learn/numbers" },
+			{ label: "Quantization", slug: "docs/learn/quantization" },
+			{ label: "Inside the transformer", slug: "docs/learn/architecture" },
+			{ label: "How a model is trained", slug: "docs/learn/training" },
+			{ label: "Base to assistant", slug: "docs/learn/post-training" },
+			{ label: "Fine-tuning", slug: "docs/learn/fine-tuning" },
+			{ label: "Running it locally", slug: "docs/learn/inference" },
+			{ label: "The conversion toolchain", slug: "docs/learn/conversions" },
+			{ label: "The workbench", slug: "docs/learn/workbench" },
+			{ label: "Datasets and tokens", slug: "docs/learn/datasets" },
+			{ label: "Reading a lineage", slug: "docs/learn/lineage" },
+			{ label: "Glossary", slug: "docs/learn/glossary" },
 		],
 	},
 	{
@@ -67,18 +88,27 @@ export const SIDEBAR = [
 	},
 ];
 
+/** The authored directories an options bag names: `authoredDirs`, else the one `authoredDir`, else all of ours. */
+export function authoredDirsOf({ authoredDir, authoredDirs } = {}) {
+	if (authoredDirs) return authoredDirs;
+	if (authoredDir) return [authoredDir];
+	return AUTHORED_DIRS;
+}
+
 /** The slugs that have a page: the synced docs, and the site-authored ones. */
-export function pageSlugs({ syncedDir = SYNCED_DIR, authoredDir = AUTHORED_DIR } = {}) {
+export function pageSlugs({ syncedDir = SYNCED_DIR, ...rest } = {}) {
 	const synced = [];
 	for (const f of fs.readdirSync(syncedDir)) {
 		if (!f.endsWith(".mdx")) continue;
 		synced.push(f === "index.mdx" ? "docs" : `docs/${f.replace(/\.mdx$/, "")}`);
 	}
 	const authored = [];
-	for (const f of fs.readdirSync(authoredDir)) {
-		if (!f.endsWith(".mdx")) continue;
-		const m = /^slug:\s*(\S+)\s*$/m.exec(fs.readFileSync(path.join(authoredDir, f), "utf8"));
-		if (m) authored.push(m[1]);
+	for (const dir of authoredDirsOf(rest)) {
+		for (const f of fs.readdirSync(dir)) {
+			if (!f.endsWith(".mdx")) continue;
+			const m = /^slug:\s*(\S+)\s*$/m.exec(fs.readFileSync(path.join(dir, f), "utf8"));
+			if (m) authored.push(m[1]);
+		}
 	}
 	return { synced: synced.sort(), authored: authored.sort() };
 }

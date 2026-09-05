@@ -1,0 +1,45 @@
+---
+/**
+ * The training loop, drawn: a ring of five stations and the weights in
+ * the middle they all read or write. Inline SVG in the site's palette;
+ * text is authored. Sized by its container.
+ */
+interface Props {
+	caption?: string;
+}
+const { caption = "One step. Repeat a few million times." } = Astro.props;
+const stations = [
+	{ x: 400, y: 58, k: "1 · Batch", t: "a few million tokens" },
+	{ x: 668, y: 190, k: "2 · Forward", t: "predict the next token" },
+	{ x: 604, y: 420, k: "3 · Loss", t: "how wrong, in nats" },
+	{ x: 196, y: 420, k: "4 · Backward", t: "a gradient per weight" },
+	{ x: 132, y: 190, k: "5 · Update", t: "AdamW nudges each weight" },
+];
+---
+<figure class="loop">
+	<svg viewBox="0 0 800 500" role="img" aria-label="The training loop: a batch of tokens goes forward through the model, a loss is measured, gradients flow backward, the optimizer updates the weights, and the next batch begins.">
+		<defs>
+			<marker id="loop-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+				<path d="M0,0 L10,5 L0,10 z" fill="var(--d-gold)" />
+			</marker>
+		</defs>
+		<circle cx="400" cy="250" r="168" fill="none" stroke="rgba(212,176,106,0.18)" stroke-width="1" />
+		<path d="M 470 96 A 168 168 0 0 1 560 306" fill="none" stroke="var(--d-gold)" stroke-width="1.5" marker-end="url(#loop-arrow)" />
+		<path d="M 520 380 A 168 168 0 0 1 280 380" fill="none" stroke="var(--d-gold)" stroke-width="1.5" marker-end="url(#loop-arrow)" />
+		<path d="M 240 306 A 168 168 0 0 1 330 96" fill="none" stroke="var(--d-gold)" stroke-width="1.5" marker-end="url(#loop-arrow)" />
+		<g class="loop-core">
+			<circle cx="400" cy="250" r="82" fill="#0a090f" stroke="var(--d-gold)" stroke-width="1.5" />
+			<text x="400" y="246" text-anchor="middle" class="loop-core-k">the weights</text>
+			<text x="400" y="268" text-anchor="middle" class="loop-core-t">read by 2, written by 5</text>
+		</g>
+		{stations.map((s) => (
+			<g class="loop-station">
+				<circle cx={s.x} cy={s.y} r="7" fill="var(--d-gold)" />
+				<text x={s.x} y={s.y - 22} text-anchor="middle" class="loop-k">{s.k}</text>
+				<text x={s.x} y={s.y + 30} text-anchor="middle" class="loop-t">{s.t}</text>
+			</g>
+		))}
+		<text x="400" y="486" text-anchor="middle" class="loop-t">a checkpoint every few thousand steps: the weights, the optimizer moments, the step counter</text>
+	</svg>
+	<figcaption>{caption}</figcaption>
+</figure>

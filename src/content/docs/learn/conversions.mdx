@@ -1,0 +1,107 @@
+---
+title: "The conversion toolchain"
+description: "How a published model becomes the file your runtime reads: safetensors to GGUF with llama.cpp's converter, importance matrices and quantization, MLX and AWQ and GPTQ conversions, checking the result, recording the recipe, and why byte-exact reconstruction of a published artifact is so hard that darsay never assumes it."
+slug: docs/learn/conversions
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+> **In one sentence.** A conversion is a deterministic function of its inputs, and the reason two people's conversions differ is that "its inputs" includes the tool, the version, the options, the calibration data, and the machine.
+
+Most of what a workbench makes is conversions: the same weights in a
+different container, a different precision, a different layout for a
+different runtime. This page is the toolchain, the checks that tell you
+a conversion is good, and the discipline that makes one repeatable.
+
+## Safetensors to GGUF
+
+The path almost every local model has taken:
+
+<Stage label="from the bundle to a GGUF" lines={[
+	"darsay hydrate zai-org--glm-5.3-flash                          # a runnable copy, the bundle untouched",
+	"git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp && git rev-parse HEAD   # note the commit",
+	"python convert_hf_to_gguf.py ~/darsay/zai-org--glm-5.3-flash/<rev>/model --outtype bf16 --outfile glm-bf16.gguf",
+	"llama-imatrix -m glm-bf16.gguf -f calibration.txt -o glm.imatrix    # activations over a corpus",
+	"llama-quantize --imatrix glm.imatrix glm-bf16.gguf glm-Q4_K_M.gguf Q4_K_M",
+	"llama-perplexity -m glm-Q4_K_M.gguf -f wiki.test.raw                # did it survive?",
+]} />
+
+1. **Convert.** `convert_hf_to_gguf.py` reads the config, tokenizer, and safetensors, maps every tensor name to llama.cpp's naming, and writes one GGUF at the requested float type. An FP8 source is dequantized on the way; that is the upcast the [numbers page](/docs/learn/numbers/#upcasting-and-what-it-cannot-give-back) describes.
+2. **Measure.** `llama-imatrix` runs the BF16 GGUF over a text file and records per-column activation statistics: the importance matrix.
+3. **Quantize.** `llama-quantize` rounds every tensor to the chosen type, using the matrix to decide where to spend bits, and writes the header keys that say it did.
+4. **Check.** Perplexity on a held-out file, or KL divergence against the BF16 with `llama-perplexity --kl-divergence`, tells you what was lost.
+
+Each step has options that change the bytes: the output type of the
+convert, the corpus and chunk count of the imatrix, the `--output-tensor-type`
+and `--token-embedding-type` overrides of the quantize, and the tool
+commit for all three.
+
+## The other conversions
+
+| From | To | Tool | Notes |
+|---|---|---|---|
+| safetensors | MLX | `mlx_lm.convert --quantize` | Apple silicon; group size and bits are options; fast and simple. |
+| safetensors | AWQ | AutoAWQ, llm-compressor | Needs calibration data; for vLLM and SGLang. |
+| safetensors | GPTQ | GPTQModel, llm-compressor | Needs calibration data; group size and act-order are part of the result. |
+| safetensors | FP8 | llm-compressor | No calibration for weight-only; per-block scales. |
+| safetensors | NVFP4 / MXFP4 | llm-compressor, TensorRT Model Optimizer | Blackwell targets. |
+| GGUF | safetensors | `gguf-py` dequantize scripts | Lossy if the GGUF was quantized: you get the rounded values, upcast. |
+| BF16 adapter | merged model | PEFT `merge_and_unload` | Then any of the above. |
+| any | EXL3 | `exllamav3` convert | Consumer CUDA, best low-bit quality. |
+
+## Checking a conversion
+
+Three checks, in increasing cost:
+
+- **It loads and speaks.** The cheapest and the one people skip. Run the converted model with the runtime it is for and read a paragraph. Tokenizer mistakes (a wrong pre-tokenizer, a missing special token) show up here as garbled text or a model that never stops.
+- **Perplexity or KL.** Compare against the BF16 on a few hundred kilobytes of text. A Q4_K_M with an imatrix should be within a few percent on perplexity and under 0.05 mean KL; a Q2 will be several times that.
+- **A task you care about.** Fifty of your own prompts, before and after. Numbers on a benchmark are less telling than five answers read side by side.
+
+Record the numbers with the file. A conversion without its measurements
+is a conversion you will redo.
+
+## Why byte-exact recovery is hard
+
+Suppose you keep the BF16 source and the exact command line. Can you
+throw the Q4 away and remake it later? In practice, no, and the reasons
+are worth knowing because they are the reasons darsay retains every
+published quant:
+
+1. **The tool moves.** llama.cpp changes tensor layouts, protected-tensor rules, and quantization kernels; the same command on a later commit produces different bytes that score about the same.
+2. **The calibration data is not in the artifact.** The GGUF header says an imatrix was used and what file it was; it does not contain the matrix or the corpus.
+3. **Floating point is machine-dependent.** The imatrix and the quantization error minimization sum many terms in BF16 and F32; different GPUs, different kernels, even different thread counts change the last bits, and the rounding decisions with them.
+4. **The source may itself be a conversion.** A BF16 GGUF upcast from an FP8 release, from a training checkpoint nobody published.
+
+A conversion is repeatable in the sense that matters for *use*: you can
+always make another good Q4. It is not repeatable in the sense that
+matters for *archives*: you cannot make the same one. That gap is the
+whole difference between the metaphor's print and darsay's **R15**, the
+only rule that lets a file be skipped, which requires the retained
+twin's hashes to match, file for file.
+
+## Recording a recipe
+
+If you make artifacts on the workbench, keep them the way the vault
+keeps upstream ones. Next to the output:
+
+```text
+source:      huggingface:zai-org/GLM-5.3-Flash @ 2975ab414d30…  (darsay manifest sha256 …)
+tool:        llama.cpp b7712 (git 4c1f0e2…), built with CUDA 13.1
+convert:     convert_hf_to_gguf.py --outtype bf16
+imatrix:     calibration_v5.txt (sha256 …), 400 chunks of 512
+quantize:    Q4_K_M --imatrix glm.imatrix
+checks:      ppl 5.12 (bf16 5.01) on wiki.test.raw; mean KL 0.031
+machine:     RTX 5090, driver 590.44
+output:      glm-5.3-flash-Q4_K_M.gguf  sha256 …
+```
+
+The source line is the manifest's pin; the rest is what the manifest
+cannot know. With this file beside the GGUF, a reader a year later can
+say what it is, and a checker can say whether a rebuild matched.
+
+## Where this bites
+
+- **Tokenizer conversion is the usual failure.** New models add pre-tokenizer rules the converter has not seen; the symptom is a model that speaks slightly wrong. Check the converter's model list, and read output before trusting perplexity.
+- **The imatrix corpus is a choice.** Code, prose, multilingual: the quant will be best at what its matrix saw.
+- **F16 output can overflow.** Convert to BF16, not F16, unless the runtime needs F16.
+- **Naming lies.** Two files called `Q4_K_M` from two toolchains are two artifacts. Hash them.

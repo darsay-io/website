@@ -1,0 +1,141 @@
+---
+title: "How a model is trained"
+description: "Pretraining from the inside: next-token prediction, the loop of forward, loss, backward and update, mixed precision, why training a model takes sixteen bytes per parameter and six FLOPs per parameter per token, how the work is split across thousands of accelerators, what a checkpoint is, and what the scaling laws say about size versus data. With the Training Lab."
+slug: docs/learn/training
+---
+
+import Loop from "../../../components/docs/Loop.astro";
+import TrainingLab from "../../../components/docs/TrainingLab.astro";
+
+> **In one sentence.** Training is guessing the next token a few trillion times and, after every guess, nudging every one of the billions of weights a little in the direction that would have made the guess better.
+
+The weights in a bundle are the residue of one enormous computation. This
+page is about that computation: what it does, what it costs, and what it
+leaves behind. Nothing here requires you to run it, but everything about
+what you collect (why BF16, why checkpoints have optimizer files, why a
+"base" model behaves as it does) follows from it.
+
+## The objective
+
+A language model is trained on one task: given the tokens so far,
+predict the next one. Feed it a document, and at every position it
+outputs a probability for every token in the vocabulary. The **loss** is
+how much probability it failed to put on the token that actually came
+next, averaged over the batch and measured in nats. A loss of 2.0 means
+the model is, on average, as uncertain as if it were choosing among
+about seven equally likely tokens. Pretraining drives that number from
+about 10 (random) down to under 2 (fluent), and the entire behaviour of
+the model, grammar, facts, reasoning, style, is whatever helps it get
+there.
+
+## The loop
+
+<Loop />
+
+1. **A batch.** A few million tokens of text, sampled from the corpus and cut into sequences of 4k to 32k tokens.
+2. **Forward.** The batch goes through the model, producing a next-token distribution at every position, and the loss is computed against the real next tokens.
+3. **Backward.** By the chain rule, the loss's sensitivity to every weight is computed, working backward through the blocks: the **gradient**, one number per parameter.
+4. **Update.** The optimizer, almost always **AdamW**, moves each weight a small step against its gradient, scaled by running averages of the gradient's size so that every weight moves at about the same rate. The **learning rate** sets the step; it warms up, holds, and decays over the run.
+5. **Repeat.** A few hundred thousand to a few million times. A **checkpoint** is written every few thousand steps: the weights, the optimizer's running averages, the data position, the step count.
+
+The whole run is one continuous nudge. There is no moment where the
+model "learns a fact"; there is only the loss going down.
+
+## What it costs in memory
+
+For every parameter, mixed-precision training holds:
+
+| What | Bytes | Why |
+|---|---|---|
+| Working weights, BF16 | 2 | what the forward pass reads |
+| Master weights, F32 | 4 | small updates would vanish in BF16 |
+| Gradient, BF16 | 2 | from the backward pass |
+| Adam first moment, F32 | 4 | running mean of the gradient |
+| Adam second moment, F32 | 4 | running mean of its square |
+| **Total** | **16** | per parameter, before activations |
+
+Sixteen bytes per parameter is 128 GiB for an 8B model, 1.1 TiB for a
+70B, and 10 TiB for a 671B: the states alone do not fit on one
+accelerator past a few billion parameters. On top of that come the
+**activations**, the intermediate values the backward pass needs,
+which scale with batch size times sequence length times depth and are
+usually the larger term. Activation checkpointing recomputes them in the
+backward pass instead of storing them, trading compute for memory.
+
+This is why a published model is a fraction of the run: the BF16 working
+weights, 2 of the 16 bytes. The optimizer moments, which are what you
+would need to *continue* the run, are almost never released.
+
+## What it costs in compute
+
+The forward pass of one token through one parameter is about two
+floating-point operations (a multiply and an add); the backward pass is
+twice that. So:
+
+> Training FLOPs ≈ 6 × parameters × tokens
+
+An 8B model on 15 trillion tokens is 7 × 10²³ FLOPs. An H100 delivers
+about 10¹⁵ per second at full tilt and about 40 percent of that in
+practice, so that run is 5 × 10⁸ accelerator-seconds: 140,000
+accelerator-hours, or six days on 1,024 cards. The lab does this for any
+size.
+
+<TrainingLab />
+
+## Scaling laws, and why models are overtrained
+
+Given a fixed compute budget, how big a model and how much data? The
+**Chinchilla** result (Hoffmann et al., 2022) says the loss is minimized at
+about 20 tokens per parameter: an 8B model on 160B tokens. But the
+compute-optimal model is not the cheapest to *run*, and inference is
+where the bill lands. So open releases are trained far past that point,
+15 trillion tokens for an 8B is nearly 2,000 per parameter, because a
+smaller model that has seen more data is a better model per byte in
+your memory forever after. The lab's last line says where a given run
+sits.
+
+## Parallelism
+
+No single accelerator holds a modern run, so it is cut four ways at once:
+
+- **Data parallel.** Every group of accelerators holds a full copy of the model and trains on different batches; gradients are averaged across groups every step. **FSDP** and **ZeRO** shard the optimizer states and weights across the group so each holds only a slice, gathering what it needs on the fly.
+- **Tensor parallel.** A single matrix is split across several accelerators in one node, connected by fast links, and each computes its slice of every layer.
+- **Pipeline parallel.** The blocks are split into stages on different accelerators, and micro-batches flow through them like an assembly line.
+- **Expert parallel.** For mixtures of experts, different experts live on different accelerators, and tokens are shuffled to wherever their expert is.
+
+A frontier run uses all four: 8-way tensor within a node, pipeline across
+a few nodes, expert parallel for the MoE layers, and data parallel across
+hundreds of such groups. The frameworks are Megatron-LM, DeepSpeed,
+and PyTorch's own FSDP; the checkpoint they write is sharded the same
+way the run was, and *consolidating* it into the safetensors you download
+is its own step.
+
+## Precision during training
+
+Weights are held in F32 as the master copy and cast to BF16 for the
+forward and backward passes, so the matrix multiplies run at the fast
+rate while small updates accumulate accurately. **FP8 training**, used
+for some recent frontier runs, casts the matrix inputs to eight bits with
+per-block scales and keeps everything else as before; it roughly doubles
+throughput on Hopper and later at some cost in stability. The model that
+comes out is still BF16 weights, or a native FP8 release if the
+publisher quantizes at the end.
+
+## From run to release
+
+At the end of pretraining the publisher has a **base** model: a next-token
+predictor that continues any text it is given. It is not yet an assistant;
+that is [post-training](/docs/learn/post-training/). The released files are
+the working weights consolidated to safetensors, the config and tokenizer,
+a card, and, from careful publishers, the training data mixture, the
+hyperparameters, and intermediate checkpoints. What is almost never
+released: the data itself, the optimizer states, or the exact code.
+This is the first reason no published model is reproducible from its
+description, and why the bytes are the artifact.
+
+## Where this bites
+
+- **A base model completes; it does not answer.** Ask it a question and it may continue with more questions. That is correct behaviour for what it is.
+- **Checkpoint directories are not models.** A raw training checkpoint has sharded optimizer states and no tokenizer. The safetensors release is the consolidated, loadable form.
+- **"Trained on 15T tokens" is a compute claim.** Multiply by six and by the parameter count to see what it cost; the lab does it.
+- **Continued pretraining needs the moments.** Without the optimizer states, continuing a run restarts the optimizer cold; it works, with a warm-up, but it is not the same run resumed.

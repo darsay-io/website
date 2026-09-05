@@ -16,7 +16,7 @@ export const GET: APIRoute = () =>
 	new Response(
 		buildLlmsTxt({
 			syncedDir: path.join(root, "src/content/docs/docs"),
-			authoredDir: path.join(root, "src/content/docs/board"),
+			authoredDirs: [path.join(root, "src/content/docs/board"), path.join(root, "src/content/docs/learn")],
 		}),
 		{ headers: { "Content-Type": "text/plain; charset=utf-8" } },
 	);

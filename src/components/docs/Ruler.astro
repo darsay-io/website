@@ -1,0 +1,47 @@
+---
+/**
+ * The precision ruler: bytes per parameter for the encodings a collector
+ * meets, drawn to scale, with the size of one model at each. Authored
+ * numbers; the GGUF figures are typical measured ratios for a whole file
+ * (scales and metadata included), not the nominal bit width.
+ */
+interface Props {
+	/** The model the right-hand column prices, in billions of parameters. */
+	params?: number;
+}
+const { params = 70 } = Astro.props;
+const rows = [
+	{ name: "F32", bpp: 4, note: "training master weights; never shipped for inference" },
+	{ name: "BF16 · F16", bpp: 2, note: "the training and publishing default" },
+	{ name: "FP8 · Q8_0 · INT8", bpp: 1.03, note: "near-lossless; FP8 is native on Hopper and newer" },
+	{ name: "Q6_K", bpp: 0.82, note: "hard to tell from BF16 by ear" },
+	{ name: "Q5_K_M", bpp: 0.71, note: "" },
+	{ name: "Q4_K_M · IQ4_XS · AWQ · MXFP4", bpp: 0.58, note: "the sweet spot most people run" },
+	{ name: "Q3_K_M · IQ3_XXS", bpp: 0.46, note: "visible losses on hard tasks" },
+	{ name: "Q2_K · IQ2_XXS", bpp: 0.33, note: "for fitting a model that otherwise would not" },
+	{ name: "IQ1_M", bpp: 0.22, note: "a curiosity, and a lifeboat" },
+];
+const max = 4;
+const GiB = 1024 ** 3;
+function size(bpp: number): string {
+	const g = (params * 1e9 * bpp) / GiB;
+	return g >= 100 ? `${Math.round(g)} GiB` : `${g.toFixed(1)} GiB`;
+}
+---
+<div class="ruler" role="table" aria-label={`Bytes per parameter by encoding, and the size of a ${params}B model at each`}>
+	<div class="ruler-head" role="row">
+		<span role="columnheader">Encoding</span>
+		<span role="columnheader">Bytes per parameter</span>
+		<span role="columnheader">{params}B model</span>
+	</div>
+	{rows.map((r) => (
+		<div class="ruler-row" role="row">
+			<span class="ruler-name" role="cell">{r.name}</span>
+			<span class="ruler-bar" role="cell" aria-label={`${r.bpp} bytes per parameter`}>
+				<span class="ruler-fill" style={`width:${(r.bpp / max) * 100}%`}></span>
+				<span class="ruler-bpp">{r.bpp}</span>
+			</span>
+			<span class="ruler-size" role="cell">{size(r.bpp)}<small>{r.note}</small></span>
+		</div>
+	))}
+</div>

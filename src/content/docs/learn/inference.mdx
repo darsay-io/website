@@ -1,0 +1,140 @@
+---
+title: "Running it locally"
+description: "Local inference from the hardware up: why generation is bound by memory bandwidth, how to size weights and KV cache for a machine, which runtime fits which files and hardware (llama.cpp, Ollama, LM Studio, MLX, vLLM, SGLang, ExLlama), offloading, batching, sampling settings, serving an OpenAI-compatible endpoint, and darsay run."
+slug: docs/learn/inference
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+import MemoryLab from "../../../components/docs/MemoryLab.astro";
+
+> **In one sentence.** Generating a token means reading every active weight once, so local inference is a memory problem first, a bandwidth problem second, and a compute problem a distant third.
+
+The workbench's most common job is the simplest: run the model. This
+page is what decides whether it runs, and how fast, on the machine you
+have, and which of the runtimes to reach for.
+
+## The two numbers
+
+**Memory.** The weights must be in memory, plus the KV cache for the
+context you will actually use, plus a little for the runtime. From
+[the numbers inside](/docs/learn/numbers/): a 32B model at Q4_K_M is 18
+GiB of weights; at 32k context with a GQA cache that is another 2 GiB;
+call it 22 GiB. It fits a 24 GiB card, a 32 GiB Mac, and not a 16 GiB
+anything.
+
+**Bandwidth.** Once loaded, a single stream of tokens comes out at
+roughly *bandwidth ÷ bytes per token*. That 18 GiB model on a machine
+with 546 GB/s of memory bandwidth tops out near 30 tokens per second; on
+a desktop with two channels of DDR5 at 90 GB/s, near 5. The compute to
+do the arithmetic is rarely the limit for one user, which is why an
+Apple laptop with a large, fast, unified memory competes with a discrete
+GPU that has more FLOPs and less memory.
+
+| Machine | Memory | Bandwidth | A 32B at Q4 | A 70B at Q4 |
+|---|---|---|---|---|
+| Desktop, 64 GiB DDR5, no GPU | 64 GiB | 90 GB/s | ~5 t/s | ~2 t/s |
+| RTX 4090 | 24 GiB | 1,008 GB/s | ~50 t/s | does not fit |
+| RTX 5090 | 32 GiB | 1,792 GB/s | ~90 t/s | does not fit |
+| Mac, M-series Max, 128 GiB | 128 GiB | 546 GB/s | ~30 t/s | ~13 t/s |
+| Mac, M-series Ultra, 512 GiB | 512 GiB | 819 GB/s | ~45 t/s | ~20 t/s |
+| H100 | 80 GiB | 3,350 GB/s | ~170 t/s | ~80 t/s |
+
+Prompt processing, reading your input before the first token, is the
+exception: it *is* compute-bound, and a GPU is many times faster than a
+CPU at it. A long document on a CPU-only machine is a long wait before
+the first word.
+
+<MemoryLab params={32} />
+
+## Offloading, and why it is slow
+
+When the weights do not fit in the fast memory, runtimes can keep some
+layers in slower memory: a GPU runtime spills layers to system RAM,
+llama.cpp with `-ngl` puts the first N layers on the GPU and the rest
+on the CPU. It works, and it runs at the speed of the slowest tier for
+its share of the model: put a third of a 70B on a 4090 and two thirds in
+DDR5, and you get DDR5 speed. Offloading is for making a model *possible*,
+not fast. A model that fits is always the better experience, which is
+the whole argument for a smaller quant.
+
+MoE models are the happy exception: the runtime can keep the attention
+and shared layers on the GPU and stream experts from RAM, because each
+token only needs a few.
+
+## Which runtime
+
+| Runtime | Reads | Hardware | Reach for it when |
+|---|---|---|---|
+| **llama.cpp** | GGUF | everything: CUDA, Metal, ROCm, Vulkan, CPU | You have one machine and one user. The reference for GGUF, with `llama-server` for an OpenAI-compatible endpoint. |
+| **Ollama**, **LM Studio** | GGUF | same | You want llama.cpp with a model manager and an app around it. |
+| **MLX** and **mlx-lm** | safetensors, MLX quants | Apple silicon | You are on a Mac and want the fastest path; quantizes on the fly and trains adapters too. |
+| **vLLM** | safetensors, AWQ, GPTQ, FP8 | CUDA, ROCm | You are serving many users; paged attention and continuous batching make one GPU serve dozens of streams at full bandwidth. |
+| **SGLang** | safetensors, FP8 | CUDA | Like vLLM, with faster structured output and prefix caching for agent workloads. |
+| **ExLlamaV3** | EXL3 | CUDA | Consumer GPUs, a single user, and the best quality per bit at 2 to 4 bits. |
+| **transformers** | safetensors | CUDA, MPS, CPU | Correctness over speed: the reference implementation every other runtime is checked against. |
+| **TensorRT-LLM** | compiled engines | CUDA | Production serving on NVIDIA where the build step is worth it. |
+
+The file format usually decides. A GGUF repository is a llama.cpp
+model; a safetensors repository is everything else's, and becomes a
+GGUF through [the conversion toolchain](/docs/learn/conversions/).
+
+## Batching: many users, one read
+
+A single stream reads the weights once per token and uses a sliver of
+the compute. Serve sixteen streams at once and the runtime reads the
+weights once per *step*, computing sixteen tokens for the price of one
+read. That is why a server runtime's throughput is so much higher than
+its single-stream speed, and why the same GPU that gives one person 50
+tokens per second can give thirty people 30 each. Continuous batching
+lets streams join and leave mid-step; paged attention lets their KV
+caches share memory in blocks. For one person on one machine, none of
+this matters; for a workbench that serves a team, it is the difference
+between a toy and a tool.
+
+## Sampling
+
+The model outputs a probability for every token; **sampling** picks one.
+**Temperature** rescales the probabilities (below 1 sharpens, above 1
+flattens). **Top-p** keeps only the smallest set of tokens whose
+probabilities add to p; **top-k** keeps the k most likely; **min-p** drops
+anything below a fraction of the top choice. A **repetition penalty**
+discourages recent tokens. The publisher's `generation_config.json`
+carries the settings they tuned for, and reasoning models in particular
+are sensitive: run them at the recommended temperature or they loop.
+Greedy decoding (temperature 0) is deterministic and often worse.
+
+## Serving
+
+Every runtime above can present an HTTP endpoint in the shape of the
+OpenAI chat API, and every client library and tool speaks that shape.
+Run `llama-server`, `vllm serve`, or `mlx_lm.server`, point a client at
+`http://localhost:8080/v1`, and the model is a service. For a workbench,
+that endpoint is how other tools (an editor, an agent, a batch job) use
+the model without each loading its own copy.
+
+## darsay run
+
+<Stage label="a bundle, run offline" lines={[
+	"darsay run qwen--qwen3-8b Say hello              # hydrates on first use, then generates",
+	"darsay run qwen--qwen3-8b --repl                 # interactive; the model stays loaded",
+	"darsay run qwen--qwen3-8b --engine mlx           # on a Mac, the Metal path",
+	"darsay run unsloth--glm-5.3-flash-gguf --weights model/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+	"darsay envs                                      # the environments hydration built, and who uses them",
+]} />
+
+`darsay run` builds an isolated environment outside the bundle,
+chooses an engine from the files (transformers for safetensors, llama-cpp
+for GGUF, MLX by request), and generates with the network off, so a
+successful run is evidence the bundle is self-sufficient. It records the
+device, precision, timings, and tokens per second into the bundle's
+`hydration.json` and the manifest's tested-hardware list. It is a
+verification tool and a first conversation, not a serving stack; when you
+want the endpoint, hydrate and hand the `model/` directory to the runtime
+of your choice.
+
+## Where this bites
+
+- **Context is a memory cost you pay whether you use it or not.** Runtimes reserve the cache for the context you ask for. Ask for what you need.
+- **Bandwidth, not FLOPs, is the spec to read.** A card's memory bandwidth predicts single-stream speed; its TFLOPs predict prompt processing and batch throughput.
+- **Quantized KV cache is a real option.** Q8 cache is nearly free in quality and halves the cost of long context.
+- **Two runtimes, two answers.** The same model at the same quant can differ slightly between llama.cpp and vLLM: kernels round differently. Neither is wrong; record which one you measured with.

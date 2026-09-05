@@ -28,9 +28,16 @@ export type PrimerKey =
 	| "closed"
 	| "desire"
 	| "claims"
-	| "agents";
+	| "agents"
+	| "training"
+	| "posttrain"
+	| "finetune"
+	| "memory"
+	| "runtime"
+	| "convert"
+	| "workbench";
 
-export type PrimerGroup = "Policy" | "Formats" | "Anatomy" | "Names" | "Lineage" | "The ledger";
+export type PrimerGroup = "Policy" | "Formats" | "Anatomy" | "Names" | "Lineage" | "The ledger" | "The workbench";
 
 export type PrimerCard = {
 	key: PrimerKey;
@@ -512,6 +519,149 @@ export const PRIMER: PrimerCard[] = [
 		},
 		doc: { href: "/docs/board/", label: "Docs → The board, for agents" },
 		related: ["desire", "claims"],
+	},
+	{
+		key: "training",
+		group: "The workbench",
+		title: "How weights are made",
+		lede: "Guess the next token a few trillion times; after every guess, nudge every weight a little toward the answer. The weights in a bundle are what that leaves behind.",
+		body: [
+			"Pretraining drives one number down: the loss, how much probability the model failed to put on the token that actually came next. Every step is a batch of a few million tokens forward through the model, a gradient per weight backward, and an **AdamW** update. Repeat a few million times on a few thousand accelerators.",
+			"Two rules of thumb price any run. Compute is about **6 × parameters × tokens** floating-point operations; holding the optimizer states costs **16 bytes per parameter** (working weights, master weights, two Adam moments, the gradient). A released model is the 2 bytes of working weights out of those 16; the moments that would let anyone *continue* the run are almost never published.",
+			"Open models are trained far past the compute-optimal twenty tokens per parameter, because a smaller model that has seen more data is cheaper to run forever after. What a publisher shares of the run — data mixture, hyperparameters, checkpoints — is on the card; the data itself, the states, and the exact code almost never are. That is the first reason the bytes are the artifact.",
+		],
+		collect: "Keep the release as published; nothing in your vault can regenerate it. If you mean to continue or fine-tune it, keep the base as well as the post-trained release.",
+		doc: { href: "/docs/learn/training/#what-it-costs-in-compute", label: "Learn → How a model is trained" },
+		link: { href: "https://arxiv.org/abs/2203.15556", label: "Hoffmann et al., 2022 — Training compute-optimal large language models" },
+		related: ["posttrain", "dtype", "base"],
+	},
+	{
+		key: "posttrain",
+		group: "The workbench",
+		title: "Base to assistant",
+		lede: "A base model knows the language. Post-training teaches it to answer, to prefer what people prefer, and lately to think before it speaks.",
+		body: [
+			"**Supervised fine-tuning** shows the model conversations laid out in its chat template and trains on the assistant's turns. **Preference optimization** — RLHF with a reward model, then DPO on chosen-versus-rejected pairs, then GRPO on groups of sampled answers — teaches *better*, not just *good*. **Reinforcement learning on verifiable rewards** (math with an answer key, code with tests) is what produced the reasoning models: the same architecture, trained to spend tokens thinking.",
+			"**Distillation** trains a smaller model on a larger one's answers, so a `-Distill-` model has two parents. **Merges** average fine-tunes of one base. **Abliteration** edits the refusal direction out of the weights with no data at all. Each is a distinct artifact whose bytes depend on inputs that were not published.",
+			"The suffixes are the publisher's claims: `-Base`, `-Instruct`, `-Thinking`, `-Distill-`, `-abliterated`. The chat template is part of the artifact — serve a model with the wrong one and it still speaks, badly.",
+		],
+		collect: "Base and Instruct are different artifacts of the same size. Keep the one you will use; keep both if you intend to post-train. A reasoning model needs context and time for its trace.",
+		doc: { href: "/docs/learn/post-training/", label: "Learn → From base to assistant" },
+		link: { href: "https://arxiv.org/abs/2305.18290", label: "Rafailov et al., 2023 — Direct preference optimization" },
+		related: ["training", "finetune", "base", "abliterated"],
+	},
+	{
+		key: "finetune",
+		group: "The workbench",
+		title: "Fine-tuning on a bench",
+		lede: "You cannot retrain a model on a workbench. You can teach it a task, a voice, or a format in an afternoon with a few million extra weights riding on the frozen ones.",
+		body: [
+			"**LoRA** freezes the model and trains two thin matrices per chosen weight matrix whose product is the update; at rank 16 that is half a percent of an 8B model, and the only thing the optimizer holds states for. **QLoRA** quantizes the frozen base to four bits and keeps the adapter in BF16, so a 70B fits one 48 GiB card. Memory is the base at its precision plus a gigabyte or two, plus activations — the knob you turn when it does not fit.",
+			"The data is a file of conversations in the model's chat template, a held-out tenth kept aside; a few hundred examples teach a format, a few thousand a domain. The tools are TRL and PEFT underneath everything, with Unsloth, Axolotl, LLaMA-Factory, or MLX-LM on a Mac as the front. Train, read the evaluation loss, read actual outputs, adjust.",
+			"An adapter is bound to the exact base revision it was trained on. Merge it into the **BF16** base to make an ordinary model you can convert and quantize; keep the adapter, its data, the command line, and the evaluation as the record of what you did.",
+		],
+		collect: "Keep the base pinned and unchanged in the vault; the adapter is meaningless without that exact revision. Keep the adapter and its recipe even after you merge.",
+		cmd: {
+			label: "the base, from the vault",
+			lines: [
+				"darsay hydrate qwen--qwen3-8b                # a runnable copy; the bundle is never written to",
+				"# point the trainer at …/<rev>/model, write the adapter elsewhere",
+			],
+		},
+		doc: { href: "/docs/learn/fine-tuning/#lora-the-adapter", label: "Learn → Fine-tuning on a workbench" },
+		link: { href: "https://arxiv.org/abs/2305.14314", label: "Dettmers et al., 2023 — QLoRA: efficient finetuning of quantized LLMs" },
+		related: ["posttrain", "workbench", "dtype", "pin"],
+	},
+	{
+		key: "memory",
+		group: "The workbench",
+		title: "Will it fit, and how fast?",
+		lede: "Generating a token reads every active weight once. Local inference is a memory problem first, a bandwidth problem second, and a compute problem a distant third.",
+		body: [
+			"Memory is **parameters × bytes per parameter** for the weights, plus the **KV cache** — 2 × layers × KV heads × head dimension × bytes for every token of context — plus a tenth for the runtime. A 32B at Q4_K_M is 18 GiB of weights and about 2 GiB of cache at 32k context: it fits a 24 GiB card and not a 16 GiB anything.",
+			"Speed for one stream is roughly **bandwidth ÷ bytes per token**, which is why a laptop with large, fast unified memory keeps up with a discrete GPU that has more compute and less memory. Offloading layers to slower memory makes a model *possible*, at the slow tier's speed. A mixture of experts reads only its active experts per token, so it runs like a model of its active size while occupying its total.",
+			"Serving many streams reads the weights once per step for all of them; that is where a server runtime's throughput comes from, and why it does not matter for one person at a keyboard.",
+		],
+		collect: "Budget memory by the total weight bytes plus the cache for the context you will actually use. Read a machine's bandwidth for single-stream speed and its compute for prompt processing and batches.",
+		doc: { href: "/docs/learn/inference/#the-two-numbers", label: "Learn → Running it locally" },
+		related: ["runtime", "moe", "dtype", "large"],
+	},
+	{
+		key: "runtime",
+		group: "The workbench",
+		title: "Which engine",
+		lede: "The file format usually decides: a GGUF repository is a llama.cpp model, a safetensors repository is everyone else's, and one becomes the other on the bench.",
+		body: [
+			"**llama.cpp** reads GGUF on everything — CUDA, Metal, ROCm, Vulkan, CPU — and is the reference for one machine and one user; Ollama and LM Studio are it with a manager around it. **MLX** is the fast path on Apple silicon and trains adapters too. **vLLM** and **SGLang** serve many users from safetensors, AWQ, GPTQ, and FP8 with paged attention and continuous batching. **ExLlamaV3** wins quality per bit on consumer CUDA. **transformers** is the reference every other runtime is checked against.",
+			"Every one of them can present an OpenAI-shaped HTTP endpoint, which is how the rest of a workbench uses a model without loading its own copy. Two runtimes can give slightly different answers from the same file: kernels round differently.",
+			"`darsay run` chooses an engine from the bundle's files — transformers for safetensors, llama-cpp for GGUF, MLX by request — in an environment built outside the bundle, with the network off, and records what it measured.",
+		],
+		collect: "Collect the format your runtime reads, or the safetensors release you can convert from. A GGUF pack and its safetensors parent are two rows with two purposes.",
+		table: {
+			head: ["Runtime", "Reads", "Reach for it when"],
+			rows: [
+				["llama.cpp · Ollama · LM Studio", "GGUF", "one machine, one user, any hardware"],
+				["MLX", "safetensors, MLX quants", "a Mac; fastest path, trains adapters"],
+				["vLLM · SGLang", "safetensors, AWQ, GPTQ, FP8", "serving many users on CUDA"],
+				["ExLlamaV3", "EXL3", "consumer CUDA at 2 to 4 bits"],
+				["transformers", "safetensors", "correctness over speed"],
+			],
+		},
+		cmd: {
+			label: "run a bundle, offline",
+			lines: [
+				"darsay run qwen--qwen3-8b Say hello          # hydrates on first use",
+				"darsay run qwen--qwen3-8b --engine mlx       # on a Mac",
+			],
+		},
+		doc: { href: "/docs/learn/inference/#which-runtime", label: "Learn → Which runtime" },
+		related: ["memory", "formats", "convert", "workbench"],
+	},
+	{
+		key: "convert",
+		group: "The workbench",
+		title: "The conversion toolchain",
+		lede: "A conversion is a deterministic function of its inputs, and its inputs include the tool, the version, the options, the calibration data, and the machine.",
+		body: [
+			"Safetensors becomes GGUF through llama.cpp's converter at BF16, then `llama-imatrix` over a calibration corpus, then `llama-quantize` with the matrix in hand, then a perplexity or KL check against the BF16. An FP8 source is upcast on the way in. MLX, AWQ, GPTQ, FP8, and NVFP4 conversions follow the same shape with their own tools, and a merged adapter is the starting point for any of them.",
+			"You can always make another *good* Q4 from a kept source. You cannot make the *same* one: the tool moves, the calibration data is not in the artifact, floating point differs by machine, and the source is often itself a conversion. That gap is why darsay retains every published quant, and why its only automatic omission, **R15**, needs a hash match file for file.",
+			"An artifact made on the bench deserves what a bundle gets: a recipe beside it naming the source pin, the tool commit, the options, the inputs that are in no repository, the checks, and the output's hash.",
+		],
+		collect: "Record the recipe with every conversion you make, and hash the result. Keep the published quant you tested, not the theory that you could remake it.",
+		cmd: {
+			label: "safetensors → GGUF, checked",
+			lines: [
+				"python convert_hf_to_gguf.py …/<rev>/model --outtype bf16 --outfile m-bf16.gguf",
+				"llama-imatrix -m m-bf16.gguf -f calibration.txt -o m.imatrix",
+				"llama-quantize --imatrix m.imatrix m-bf16.gguf m-Q4_K_M.gguf Q4_K_M",
+				"llama-perplexity -m m-Q4_K_M.gguf -f wiki.test.raw    # then the same for the BF16, and compare",
+			],
+		},
+		doc: { href: "/docs/learn/conversions/#why-byte-exact-recovery-is-hard", label: "Learn → The conversion toolchain" },
+		link: { href: "https://arxiv.org/abs/2306.00978", label: "Lin et al., 2023 — AWQ: activation-aware weight quantization" },
+		related: ["quant", "archive", "runtime", "workbench"],
+	},
+	{
+		key: "workbench",
+		group: "The workbench",
+		title: "From the vault to the bench",
+		lede: "The vault is where bytes are kept, pinned and never edited. The bench is where they become new things, set up so nothing made there can be confused with what it started from.",
+		body: [
+			"A bundle reaches the bench three ways. `darsay hydrate` builds an environment *outside* the bundle and leaves `model/` to be read in place; `darsay cp` carries a bundle to another vault, a mounted one included, and verifies it where the disk lives; an exported `.mvb.tar` is the same bundle as one file that `tar` and `sha256sum` can open with no darsay at all.",
+			"On the bench, one rule: everything you make names the pin it came from — the bundle id with its revision, exactly as the manifest records it. A directory per source, a recipe file beside each output, the inputs that are in no repository kept alongside, and the fifty prompts you always run. Delete the rest without guilt; it is rebuildable.",
+			"Never write into a bundle. Converters that save into the model directory break the hashes, and `darsay verify` will say so. Environments rot; hydration pins the package versions it used so a rebuild gets the same ones.",
+		],
+		collect: "Start every artifact from a bundle, not a download. The vault is what you back up; the bench is rebuildable from the vault and the recipes.",
+		cmd: {
+			label: "a bundle, on the bench",
+			lines: [
+				"darsay hydrate qwen--qwen3-8b --dry-run     # the plan: engine, env, nothing written",
+				"darsay hydrate qwen--qwen3-8b               # an env under the vault's .runtime/",
+				"darsay verify  qwen--qwen3-8b               # afterwards: the payload is what it was",
+			],
+		},
+		doc: { href: "/docs/learn/workbench/#from-the-vault-to-the-bench", label: "Learn → The workbench" },
+		related: ["bundle", "mv", "runtime", "convert"],
 	},
 ];
 

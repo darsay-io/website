@@ -1,0 +1,135 @@
+---
+title: "Fine-tuning on a workbench"
+description: "How to change a model on hardware you own: full fine-tuning and what it needs, LoRA and QLoRA adapters and their memory arithmetic, choosing rank and targets, preparing a dataset, the tools (TRL and PEFT, Unsloth, Axolotl, LLaMA-Factory, MLX-LM), evaluating the result, and merging and exporting it so it can be kept and run."
+slug: docs/learn/fine-tuning
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+> **In one sentence.** You cannot retrain a model on a workbench, but you can teach it a task, a voice, or a format in an afternoon by training a small set of extra weights that ride on top of the frozen ones.
+
+Pretraining needs a cluster. Post-training, at the scale of one task and
+one machine, needs a GPU with enough memory and a few hours. The method
+that made that true is the **adapter**, and this page is the arithmetic
+and the workflow around it, from a bundle in your vault to a new artifact
+you can run and keep.
+
+## Full fine-tuning, and what it costs
+
+**Full fine-tuning** updates every weight, exactly as pretraining does,
+just on your data. It also *costs* what pretraining does per parameter:
+sixteen bytes for the states, plus activations. An 8B model needs about
+130 GiB before activations, which is two 80 GiB cards with sharding, or
+one 192 GiB card. A 70B needs over a terabyte. It is the right tool when
+you have that hardware and a large, diverse dataset; it is the wrong
+tool for teaching a format to a model on a laptop.
+
+## LoRA: the adapter
+
+**Low-rank adaptation** freezes the model and, for each weight matrix you
+choose, trains two thin matrices whose product is the update:
+`W' = W + B·A`, where `A` is `rank × in` and `B` is `out × rank`, with a
+**rank** of 8 to 128. For a 4,096 × 4,096 matrix, a rank-16 adapter is
+131,000 parameters instead of 16.8 million. Across a whole 8B model,
+adapters on every attention and MLP matrix at rank 16 come to about
+40 million trainable parameters: half a percent of the model, and the
+only thing the optimizer has to hold states for.
+
+| | Frozen weights | Adapter | Optimizer states | Total, before activations |
+|---|---|---|---|---|
+| 8B, LoRA, BF16 base | 16 GiB | ~0.1 GiB | ~0.5 GiB | ~17 GiB |
+| 8B, QLoRA, 4-bit base | 5 GiB | ~0.1 GiB | ~0.5 GiB | ~6 GiB |
+| 70B, QLoRA, 4-bit base | 40 GiB | ~0.6 GiB | ~2.5 GiB | ~43 GiB |
+
+**QLoRA** is the second row: quantize the frozen base to four bits (NF4
+with double quantization, in the original), keep the adapters in BF16,
+and dequantize each block on the fly as the forward pass reaches it. A
+70B fits on one 48 GiB card with room for activations at modest sequence
+lengths. Quality is close to a BF16 LoRA, because the adapter learns
+around the quantization noise.
+
+<div class="docs-note"><strong>Rule of thumb.</strong> Memory for an adapter run is the frozen base at its precision, plus a gigabyte or two for the adapter and its states, plus activations, which scale with batch × sequence length and are the knob you turn when it does not fit. Gradient checkpointing halves them again at a third more compute.</div>
+
+## Choosing rank and targets
+
+Rank is capacity. Rank 8 learns a format or a tone; rank 64 learns a
+domain; rank 256 approaches full fine-tuning. **Alpha** scales the
+adapter's contribution (a common setting is twice the rank). **Targets**
+are which matrices get adapters: the attention projections alone are the
+cheap default, all linear layers the thorough one. Learning rate for
+adapters is higher than for full training, around 1e-4 to 2e-4, because
+the adapter starts at zero and has little to lose. **DoRA** splits the
+update into magnitude and direction and often edges out LoRA at the same
+rank; it is a flag in the same tools.
+
+## The data
+
+A fine-tuning set is a file of conversations, one JSON object per line,
+in the chat format the model's template will render:
+
+```json
+{"messages": [
+  {"role": "system", "content": "You answer in the house style."},
+  {"role": "user", "content": "Summarize the manifest for me."},
+  {"role": "assistant", "content": "It pins one revision of …"}
+]}
+```
+
+A few hundred good examples teach a format; a few thousand teach a
+domain; past ten thousand, quality matters more than count. Hold out a
+tenth for evaluation before you start. Deduplicate. Check that the
+answers are the answers you want, because the model will learn them
+exactly, including their mistakes. For preference training, each line
+holds a `prompt`, a `chosen`, and a `rejected`.
+
+## The tools
+
+| Tool | Runs on | Good for |
+|---|---|---|
+| **TRL** + **PEFT** (Hugging Face) | CUDA, ROCm, MPS | The reference implementations: SFT, DPO, GRPO, and every adapter type. Everything else wraps them. |
+| **Unsloth** | CUDA | Hand-written kernels for the common models; two to five times faster and about half the memory for LoRA and QLoRA on one GPU. |
+| **Axolotl** | CUDA, multi-GPU | A YAML config over TRL/PEFT for reproducible runs, with sharding and packing built in. |
+| **LLaMA-Factory** | CUDA, multi-GPU | A web UI and configs covering hundreds of models and every method; the most beginner-friendly. |
+| **MLX-LM** | Apple silicon | `mlx_lm.lora` trains adapters on a Mac using unified memory; a 70B QLoRA fits on a 128 GiB machine. |
+| **torchtune** | CUDA, multi-GPU | PyTorch-native recipes, hackable, no abstractions in the way. |
+
+## A run, end to end
+
+<Stage label="an adapter, from the vault" lines={[
+	"darsay hydrate qwen--qwen3-8b                        # the bundle, made runnable, outside the vault",
+	"# point the trainer at the bundle's model/ directory:",
+	"python train.py --model ~/darsay/qwen--qwen3-8b/<rev>/model --data train.jsonl \\",
+	"  --lora-rank 16 --lora-alpha 32 --targets all-linear --lr 2e-4 --epochs 2",
+	"# evaluate on the held-out tenth, then merge:",
+	"python merge.py --base …/model --adapter out/adapter --out out/merged   # BF16 safetensors",
+]} />
+
+The details vary by tool; the shape does not. Train, evaluate on the
+held-out set (loss, and then reading actual outputs), adjust rank or data,
+repeat. Watch **training loss** fall and **evaluation loss** follow it; when
+evaluation loss turns up while training loss keeps falling, the model is
+memorizing, and you have trained enough.
+
+## Merging and exporting
+
+An adapter is a small file (`adapter_model.safetensors`, tens of
+megabytes) that loads on top of the base at inference time. Runtimes that
+support that directly (vLLM, llama.cpp with `--lora`, MLX) can serve many
+adapters over one base. To make a single self-contained model, **merge**:
+compute `W + B·A` for every adapted matrix and write new safetensors. A
+merged model is an ordinary model: convert it to GGUF, quantize it, run it
+anywhere. Merge into the *BF16* base, not the 4-bit one you trained
+against, or you bake the quantization noise into the weights.
+
+What to keep afterwards: the adapter with its config (the smallest
+complete record of what you did), the training data and the command
+line, the evaluation numbers, and the merged model if you will run it.
+Keep the base pinned in the vault, unchanged; the adapter is meaningless
+without the exact base it was trained on.
+
+## Where this bites
+
+- **The adapter is bound to its base revision.** A LoRA trained on one revision of a model may not load on the next. The manifest's pinned revision is the answer to "which base".
+- **Sequence length is the memory knob.** Long examples cost activation memory quadratically in the attention. Truncate, pack, or use gradient checkpointing.
+- **Chat template mismatch ruins runs quietly.** If your trainer renders conversations with a different template than the model expects, the model learns the wrong wrapper. Render one example and read it.
+- **Evaluation loss is not quality.** It is the gate that tells you when to stop. Whether the model does the job is a question only reading its answers answers.

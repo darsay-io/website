@@ -111,6 +111,28 @@ describe("rowNote", () => {
 		expect(rowNote("family", row({ parents: [{ source: "huggingface:zai-org/GLM-5.3-Flash", relation: "quantized" }] }))).toContain("does not establish how to recover");
 	});
 
+	it("applies the workbench cards to the row's own numbers", () => {
+		const variant = { name: "Q4_K_M/x", precision: "Q4_K_M", file_count: 2, size_bytes: 1, complete: true, include: ["/Q4_K_M/*"] };
+		const r = row({ bytes_per_param: 2, precision: "BF16", size_basis: "archive", gguf_variants: [] });
+		expect(rowNote("memory", r)).toContain("**52 GiB** of weights");
+		expect(rowNote("memory", r)).toContain("tokens/s on an Apple Max-class machine");
+		expect(rowNote("memory", row({ gguf_variants: [variant, variant] }))).toContain("prices 2 alternative variants together");
+		expect(rowNote("training", r)).toContain("**27.78B** parameters trained Chinchilla-style on 556B tokens");
+		expect(rowNote("training", row({ parameters: null }))).toContain("No parameter count on record");
+		expect(rowNote("finetune", r)).toContain("QLoRA at four bits, about 15 GiB");
+		expect(rowNote("posttrain", row({ source: "huggingface:Qwen/Qwen3-32B-Instruct" }))).toContain("**instruct**");
+		expect(rowNote("posttrain", row({ source: "huggingface:Qwen/Qwen3-32B" }))).toContain("neither base nor instruct");
+		expect(rowNote("runtime", row({ source: "huggingface:unsloth/GLM-5.3-Flash-GGUF", gguf_variants: [variant, variant] }))).toContain("needs `--weights`");
+		expect(rowNote("runtime", row({ gguf_variants: [] }))).toContain("`--engine mlx`");
+		expect(rowNote("runtime", row({ artifact_type: "dataset" }))).toContain("matches no engine");
+		const classified = { verdicts: { negative: { sets: 11, files: 61, bytes: 1 }, unknown: { sets: 3, files: 9, bytes: 1 } }, skipped_bytes: 0, unclassified_count: 3 };
+		expect(rowNote("convert", row({ classification: classified }))).toContain("11 negative sets, 3 unknown, 0 prints; nothing proven duplicate");
+		expect(rowNote("convert", row({ classification: null }))).toContain("Not classified yet");
+		expect(rowNote("workbench", r)).toContain("`darsay hydrate ");
+		expect(rowNote("workbench", r)).toContain("/model/`");
+		expect(rowNote("workbench", row({ artifact_type: "dataset" }))).toContain("/data/`");
+	});
+
 	it("never leaves a backtick open, for any card and a bare row", () => {
 		const bare = row({ parameters: null, dominant_dtype: null, payload_bytes: null, hints: [], source: "test:acme/toy" });
 		for (const c of PRIMER) {

@@ -1,0 +1,73 @@
+---
+title: "Learn the field"
+description: "A short course on how model weights are made, stored, changed, and run: training, precision, quantization, the transformer, local inference, and the toolchain that carries a darsay archive onto a workbench."
+slug: docs/learn
+---
+
+import Journey from "../../../components/docs/Journey.astro";
+
+> **In one sentence.** A model is a very large table of numbers, and everything in this field is a way of making that table, shrinking it, moving it, or reading it fast.
+
+You keep models because you intend to do something with them. This course
+is the something: the working knowledge behind every file in a bundle and
+every verb on a workbench, from the cluster that trained the weights to the
+laptop that runs them tonight. Fourteen pages, in an order that builds. Each
+one ends where the next begins, carries the arithmetic you will actually
+use, and points at the darsay command that lets you try it on your own vault.
+
+<Journey />
+
+## What a workbench is
+
+A **vault** is where bytes are kept, pinned and hashed, and never edited.
+A **workbench** is where bytes are worked on: a machine with the runtimes,
+the converters, and the training tools installed, where a hydrated bundle
+becomes a quantized copy, a fine-tuned variant, or a served endpoint. The
+vault answers *what exactly do we have*; the workbench answers *what can we
+make of it*. Keeping them apart is what lets you experiment freely without
+ever wondering whether the original is still the original.
+
+The pages under **Made** and **Worked** are about the bench. The pages
+under **Kept** are the rest of this site. If you only ever want to run a
+model, read the first three pages and *Running it locally*; if you want to
+change one, read to the end.
+
+## The course
+
+<div class="docs-doors">
+	<div class="docs-door">
+		<p class="docs-door-k">I · The artifact</p>
+		<h3>What is on the disk</h3>
+		<p>The files in a repository and what each one is for. The numbers inside a tensor and how many bytes each takes. What quantization keeps, what it throws away, and why a quant is not a smaller copy of the original.</p>
+		<p class="docs-door-links"><a href="/docs/learn/anatomy/">A model, on disk →</a> <a href="/docs/learn/numbers/">The numbers inside →</a> <a href="/docs/learn/quantization/">Quantization →</a></p>
+	</div>
+	<div class="docs-door">
+		<p class="docs-door-k">II · The machine</p>
+		<h3>How it computes and how it was made</h3>
+		<p>Inside the transformer: attention, the KV cache, experts, context. Then the loop that made the weights, the memory it needs, the compute it burns, and the post-training that turns a text predictor into an assistant.</p>
+		<p class="docs-door-links"><a href="/docs/learn/architecture/">Inside the transformer →</a> <a href="/docs/learn/training/">How a model is trained →</a> <a href="/docs/learn/post-training/">Base to assistant →</a></p>
+	</div>
+	<div class="docs-door">
+		<p class="docs-door-k">III · The bench</p>
+		<h3>Doing things with it</h3>
+		<p>Fine-tuning with adapters on hardware you own. Running locally: which runtime, how much memory, how fast. The conversion toolchain, and why byte-exact recovery is hard. Setting up the workbench itself.</p>
+		<p class="docs-door-links"><a href="/docs/learn/fine-tuning/">Fine-tuning →</a> <a href="/docs/learn/inference/">Running it locally →</a> <a href="/docs/learn/conversions/">Conversions →</a> <a href="/docs/learn/workbench/">The workbench →</a></p>
+	</div>
+	<div class="docs-door">
+		<p class="docs-door-k">IV · The record</p>
+		<h3>Reading what you keep</h3>
+		<p>Datasets and tokens. How to read a lineage off a name and a model card, and what provenance can and cannot prove. A glossary for the words that keep coming up.</p>
+		<p class="docs-door-links"><a href="/docs/learn/datasets/">Datasets and tokens →</a> <a href="/docs/learn/lineage/">Reading a lineage →</a> <a href="/docs/learn/glossary/">Glossary →</a></p>
+	</div>
+</div>
+
+## How to use the board while you learn
+
+Every board row carries a **field guide**: press `?` on a board, or click any
+chip, fact, or lens. The guide's cards are the short form of these pages,
+and when you open one from a row it applies the lesson to that row's own
+numbers: this model's weights at this precision, the memory it would need,
+the compute that made it. Read a page here, then go find a row that shows
+it. The two are written to be read together.
+
+<div class="docs-note"><strong>The arithmetic you will use most.</strong> Weights take parameters × bytes per parameter. A dense model reads all of its weights once per token, so a single stream's speed is memory bandwidth ÷ weight bytes. The KV cache costs 2 × layers × KV heads × head dimension × bytes for every token of context. Training costs about 6 × parameters × tokens in floating-point operations, and holding the optimizer states costs 16 bytes per parameter. Every page below is an elaboration of one of those four lines.</div>

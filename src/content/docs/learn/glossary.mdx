@@ -1,0 +1,115 @@
+---
+title: "Glossary"
+description: "The words of the field in one place, each in a sentence or two with a pointer to the page that explains it: from activation and adapter through KV cache, MoE and perplexity to tokenizer, upcast and ZeRO."
+slug: docs/learn/glossary
+---
+
+> **In one sentence.** The words that keep coming up, each in a sentence, with the page where it earns a paragraph.
+
+**Abliteration.** Removing a model's refusal direction from its weights with no training; a derived artifact whose bytes depend on the prompts and machine used. [Base to assistant](/docs/learn/post-training/#merges-and-edits-without-data).
+
+**Activation.** The intermediate values inside a forward pass; what the backward pass must keep and what dominates training memory. [How a model is trained](/docs/learn/training/#what-it-costs-in-memory).
+
+**Active parameters.** In a mixture of experts, the parameters one token actually touches; the `A22B` in a name. Speed follows this; size follows the total. [Inside the transformer](/docs/learn/architecture/#mixture-of-experts).
+
+**Adapter.** A small set of trained weights (a LoRA) applied on top of a frozen base; bound to that base's exact revision. [Fine-tuning](/docs/learn/fine-tuning/#lora-the-adapter).
+
+**AdamW.** The optimizer nearly every model is trained with; keeps two running averages per parameter, which is why training needs sixteen bytes per parameter. [How a model is trained](/docs/learn/training/#the-loop).
+
+**AWQ, GPTQ.** Four-bit weight quantization methods for GPU runtimes that use calibration data to decide how to round. [Quantization](/docs/learn/quantization/#the-families-you-will-meet).
+
+**Base model.** The pretrained next-token predictor before post-training; completes text rather than answering. [Base to assistant](/docs/learn/post-training/).
+
+**Batching.** Serving many streams per weight read; the source of a server runtime's throughput. [Running it locally](/docs/learn/inference/#batching-many-users-one-read).
+
+**BF16.** Sixteen-bit float with F32's exponent range; the training and publishing default. [The numbers inside](/docs/learn/numbers/#what-a-floating-point-number-is-made-of).
+
+**Block scale.** The per-block scale factor that lets integers stand in for real weights; every low-bit format has one. [The numbers inside](/docs/learn/numbers/#block-scales-and-why-a-quant-is-not-just-fewer-bits).
+
+**Bytes per parameter.** The measured size of a weight set divided by its parameter count; the board's `B/param`. [The numbers inside](/docs/learn/numbers/#bytes-per-parameter).
+
+**Calibration data.** The text a quantizer runs the model over to learn which weights matter; usually not published with the result. [Quantization](/docs/learn/quantization/#the-importance-matrix).
+
+**Checkpoint.** The state of a training run at a step: weights, optimizer moments, data position. A release is the weights alone. [How a model is trained](/docs/learn/training/#the-loop).
+
+**Chat template.** The exact text that wraps a conversation for a model; part of the post-trained artifact. [Base to assistant](/docs/learn/post-training/#the-chat-template).
+
+**Chinchilla.** The scaling result that about twenty tokens per parameter is compute-optimal; open models are trained far past it. [How a model is trained](/docs/learn/training/#scaling-laws-and-why-models-are-overtrained).
+
+**Context window.** How many tokens a model attends over at once; costs KV cache memory per token. [Inside the transformer](/docs/learn/architecture/#position-rope-and-the-context-window).
+
+**Distillation.** Training a smaller model on a larger one's outputs or distributions. [Base to assistant](/docs/learn/post-training/#distillation).
+
+**DPO, GRPO, PPO.** Preference and reinforcement objectives for post-training; DPO on pairs, GRPO on groups of sampled answers. [Base to assistant](/docs/learn/post-training/#preference-optimization).
+
+**Embedding.** The table mapping each token id to a vector; a model's first layer. [Inside the transformer](/docs/learn/architecture/#tokens-and-the-embedding).
+
+**FLOPs.** Floating-point operations; training costs about six per parameter per token. [How a model is trained](/docs/learn/training/#what-it-costs-in-compute).
+
+**FP8.** Eight-bit float with per-block scales; native on recent NVIDIA hardware; some releases ship in it. [The numbers inside](/docs/learn/numbers/#what-a-floating-point-number-is-made-of).
+
+**FSDP, ZeRO.** Sharding the weights and optimizer states across accelerators in data-parallel training. [How a model is trained](/docs/learn/training/#parallelism).
+
+**GGUF.** llama.cpp's single-file container: tensors plus a metadata table; the format of most local models. [A model, on disk](/docs/learn/anatomy/#what-a-tensor-is).
+
+**GQA, MLA.** Grouped-query attention and multi-head latent attention: ways of shrinking the KV cache by sharing or compressing keys and values. [Inside the transformer](/docs/learn/architecture/#attention-heads-and-the-kv-cache).
+
+**Hydration.** darsay's step from a pinned bundle to a runnable install, built outside the bundle. [Running it locally](/docs/learn/inference/#darsay-run).
+
+**Importance matrix.** llama.cpp's per-column activation statistics from a calibration corpus, used to quantize carefully; recorded in the GGUF header, not shipped with it. [Quantization](/docs/learn/quantization/#the-importance-matrix).
+
+**K-quants, I-quants.** llama.cpp's quantization families: block-scaled integers, and codebook lookups. [Quantization](/docs/learn/quantization/#the-families-you-will-meet).
+
+**KL divergence.** How far a quant's next-token distribution has moved from the original's; the sharpest quality measure. [Quantization](/docs/learn/quantization/#how-quality-is-measured).
+
+**KV cache.** The stored keys and values of every earlier token during generation; 2 × layers × KV heads × head dimension × bytes per token. [Inside the transformer](/docs/learn/architecture/#attention-heads-and-the-kv-cache).
+
+**Loss.** How wrong the next-token prediction was, in nats; the one number training drives down. [How a model is trained](/docs/learn/training/#the-objective).
+
+**Merge.** Combining the weights of several fine-tunes of one base by a recipe. [Base to assistant](/docs/learn/post-training/#merges-and-edits-without-data).
+
+**Mixed precision.** BF16 for the passes, F32 for the master weights and optimizer. [How a model is trained](/docs/learn/training/#precision-during-training).
+
+**MoE.** Mixture of experts: many feed-forward experts per block, a few active per token. [Inside the transformer](/docs/learn/architecture/#mixture-of-experts).
+
+**Negative, print, unknown.** darsay's classifier verdicts: a retained preservation candidate, a hash-proven duplicate, and undecided (kept). [Reading a lineage](/docs/learn/lineage/#negatives-and-prints-said-plainly).
+
+**Offloading.** Keeping part of a model in slower memory when it does not fit the fast kind; runs at the slow tier's speed. [Running it locally](/docs/learn/inference/#offloading-and-why-it-is-slow).
+
+**Parameters.** The count of numbers in all of a model's tensors; times bytes per parameter is the size. [A model, on disk](/docs/learn/anatomy/#what-a-tensor-is).
+
+**Perplexity.** How surprised a model is by held-out text; the standard quality number for a quant. [Quantization](/docs/learn/quantization/#how-quality-is-measured).
+
+**Post-training.** Everything done to a base model to make it an assistant: SFT, preferences, RL, distillation. [Base to assistant](/docs/learn/post-training/).
+
+**Projector.** The small model that turns an encoder's output (an image) into tokens a language model reads; `mmproj` in GGUF repositories. [Inside the transformer](/docs/learn/architecture/#vision-audio-and-the-projector).
+
+**QLoRA.** LoRA over a base quantized to four bits at training time; a 70B on one 48 GiB card. [Fine-tuning](/docs/learn/fine-tuning/#lora-the-adapter).
+
+**Quantization.** Rounding weights to fewer bits per block, choosing the rounding to preserve outputs. [Quantization](/docs/learn/quantization/).
+
+**Rank.** The width of a LoRA's thin matrices; its capacity. [Fine-tuning](/docs/learn/fine-tuning/#choosing-rank-and-targets).
+
+**Reasoning model.** A model post-trained with verifiable rewards to think in text before answering. [Base to assistant](/docs/learn/post-training/#reinforcement-learning-on-verifiable-rewards).
+
+**Recipe.** The record of how an artifact was made: source pin, tool commit, options, inputs, checks, hashes. [The conversion toolchain](/docs/learn/conversions/#recording-a-recipe).
+
+**RoPE.** Rotary position embedding; how a transformer knows token order, and what context extension stretches. [Inside the transformer](/docs/learn/architecture/#position-rope-and-the-context-window).
+
+**Safetensors.** The Hub's weight format: a JSON header of tensor names, dtypes, shapes, and offsets, then raw bytes. [A model, on disk](/docs/learn/anatomy/#what-a-tensor-is).
+
+**Sampling.** Choosing a token from the model's distribution: temperature, top-p, top-k, min-p. [Running it locally](/docs/learn/inference/#sampling).
+
+**SFT.** Supervised fine-tuning on example conversations; the first step of post-training. [Base to assistant](/docs/learn/post-training/#supervised-fine-tuning).
+
+**Shard.** One file of a weight set split into several; `-00003-of-00028`. [A model, on disk](/docs/learn/anatomy/#the-files-and-what-each-one-is-for).
+
+**Speculative decoding.** A small draft proposes tokens, the big model verifies them in one pass; same output, sooner. [Inside the transformer](/docs/learn/architecture/#drafts-and-heads).
+
+**Tensor.** A named block of numbers with a shape; a model is a few hundred of them. [A model, on disk](/docs/learn/anatomy/#what-a-tensor-is).
+
+**Token, tokenizer.** The pieces a model reads, and the frozen procedure that makes them from text. [Datasets and tokens](/docs/learn/datasets/#from-text-to-tokens).
+
+**Upcast, downcast.** Converting to more or fewer bits per number; the first adds no information, the second loses some. [The numbers inside](/docs/learn/numbers/#upcasting-and-what-it-cannot-give-back).
+
+**Vault, workbench.** Where bytes are kept unchanged, and where they are worked on. [The workbench](/docs/learn/workbench/#the-separation).

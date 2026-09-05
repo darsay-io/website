@@ -1,0 +1,91 @@
+---
+title: "A model, on disk"
+description: "What the files in a model repository are, which of them are the model, and how darsay reads them without downloading them: config, tokenizer, safetensors shards and their index, GGUF, projectors, and the model card."
+slug: docs/learn/anatomy
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+> **In one sentence.** A model on disk is one enormous table of numbers, cut into shards, plus a handful of small files that say how to read it and how to talk to it.
+
+Open any model repository on the Hub and you see a dozen files. Two or
+three of them are the model. The rest are instructions for loading it,
+the vocabulary it thinks in, a description someone wrote, and a licence.
+Knowing which is which is the first skill of a collector, because it is
+the difference between a bundle that runs and a folder of numbers.
+
+## The files, and what each one is for
+
+| File | What it is | Size |
+|---|---|---|
+| `config.json` | The architecture: layers, hidden size, heads, vocabulary, the dtype it was saved in. The loader builds an empty model from this, then fills it. | 1 KiB |
+| `model-00001-of-00028.safetensors` … | The weights. Each shard holds a slice of the table; together they are the model. | GiB each |
+| `model.safetensors.index.json` | Which tensor lives in which shard, and the total size. This is the file darsay reads to price a repo without fetching it. | 100 KiB |
+| `tokenizer.json`, `tokenizer_config.json` | The vocabulary and the rules for cutting text into tokens. A model without its tokenizer is a piano without a keyboard. | MiB |
+| `generation_config.json` | Default sampling settings: temperature, top-p, the end-of-turn token. | 1 KiB |
+| `chat_template.jinja` or inside `tokenizer_config.json` | How to lay out a conversation so the model recognizes turns. Wrong template, wrong answers. | KiB |
+| `README.md` | The model card: what it is, how it was made, what it is for, and the `base_model` tags darsay reads for lineage. | KiB |
+| `LICENSE` | The terms. Gated repositories ask you to accept them before the shards are yours. | KiB |
+| `*.gguf` | A different container for the same idea: weights plus metadata in one file, made for llama.cpp. | GiB |
+| `mmproj-*.gguf` | A vision or audio projector: the small model that turns an image into tokens the language model can read. | hundreds of MiB |
+
+The shards and the index are the model. The tokenizer and the config are
+what make it a *loadable* model. The template and the generation config
+are what make it a *usable* one. The card and the licence are what make it
+an *honest* one. darsay keeps all of them, because every layer has been
+lost before.
+
+## What a tensor is
+
+A **tensor** is a named block of numbers with a shape. `model.layers.17.mlp.down_proj.weight`
+with shape `[4096, 14336]` is fifty-eight million numbers arranged as a
+matrix, and it lives at a known offset inside one shard. A 70-billion
+parameter model has a few hundred such tensors; **parameters** is the
+count of all their numbers added together.
+
+The **safetensors** format is nothing more than a JSON header listing each
+tensor's name, dtype, shape, and byte range, followed by the raw bytes in
+that order. That simplicity is the point: it is safe to open (no code
+runs), fast to load (the bytes can be mapped straight into memory), and
+easy to inspect. darsay reads a shard's header, a few dozen kilobytes, to
+learn every tensor's dtype without touching the gigabytes behind it.
+
+**GGUF** packs the same tensors into a single file with a key–value
+metadata table in front: architecture, the quantization type of each
+tensor, the tokenizer itself, and sometimes a note that an importance
+matrix was used. A big GGUF splits into `-00001-of-00014` parts; they are
+one variant, and darsay keeps them together.
+
+## Where the bytes go
+
+Almost all of a model's bytes are in the weight matrices of its layers.
+A dense transformer is a stack of identical blocks; each block has an
+attention part and a feed-forward part, and the feed-forward part is
+usually two thirds of the block. The embedding table, which maps each of
+the vocabulary's hundred-and-fifty-thousand tokens to a vector, is large
+but a small fraction of the whole. Everything else, the norms and biases,
+rounds to nothing.
+
+That is why **parameters × bytes per parameter** predicts a model's size so
+well: the bytes really are just the table. [The numbers inside](/docs/learn/numbers/)
+is about that second factor.
+
+## Try it on a repository
+
+<Stage label="price it, without fetching it" lines={[
+	"darsay estimate zai-org/GLM-5.3-Flash            # the index, the headers, the size",
+	"darsay classify unsloth/GLM-5.3-Flash-GGUF       # every weight set, with a verdict",
+	"darsay estimate unsloth/GLM-5.3-Flash-GGUF --variants   # each GGUF variant, priced",
+]} />
+
+`estimate` reads the index and the headers and reports parameters,
+dominant dtype, the bytes-per-parameter ratio, and the size at each
+scope. It writes nothing. On a board, the same numbers appear on the row
+as chips, and the field guide explains each one.
+
+## Where this bites
+
+- **A repository is not a model.** Multi-variant GGUF repositories hold a dozen complete models side by side. A "repository total" prices all of them; a selection prices one.
+- **The index chooses.** When a repository has both `model.safetensors` shards and an older `pytorch_model.bin`, the index says which set a loader uses. darsay follows the index and keeps the rest unless hashes prove them duplicates.
+- **Projectors are companions, not variants.** A `mmproj` file adds vision to a text model; it belongs with the variant you run, and a selection that leaves it out is a text-only model.
+- **The template matters.** Two repositories can have identical weights and different chat templates. The one that ships the right template is the one that answers correctly.

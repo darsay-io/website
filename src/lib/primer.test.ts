@@ -6,8 +6,8 @@ import { HINT_PRIMER, PRIMER, PRIMER_BY_KEY, primerCard } from "./primer.ts";
 import { DOCS } from "./recipes.ts";
 
 const DOCS_DIR = join(process.cwd(), "src/content/docs/docs");
-/** Site-authored pages (the board, for agents): their URL comes from a `slug:` line. */
-const AUTHORED_DIR = join(process.cwd(), "src/content/docs/board");
+/** Site-authored pages (the board, and the field): their URL comes from a `slug:` line. */
+const AUTHORED_DIRS = [join(process.cwd(), "src/content/docs/board"), join(process.cwd(), "src/content/docs/learn")];
 
 /** github-slugger, as Starlight ids its headings: lowercase, strip punctuation, spaces → dashes. */
 function slug(heading: string): string {
@@ -23,10 +23,12 @@ const pageFiles = new Map<string, string>();
 for (const f of readdirSync(DOCS_DIR)) {
 	if (f.endsWith(".mdx")) pageFiles.set(f.replace(/\.mdx$/, ""), join(DOCS_DIR, f));
 }
-for (const f of readdirSync(AUTHORED_DIR)) {
-	if (!f.endsWith(".mdx")) continue;
-	const m = /^slug:\s*docs\/([a-z/-]+)\s*$/m.exec(readFileSync(join(AUTHORED_DIR, f), "utf8"));
-	if (m) pageFiles.set(m[1], join(AUTHORED_DIR, f));
+for (const dir of AUTHORED_DIRS) {
+	for (const f of readdirSync(dir)) {
+		if (!f.endsWith(".mdx")) continue;
+		const m = /^slug:\s*docs\/([a-z/-]+)\s*$/m.exec(readFileSync(join(dir, f), "utf8"));
+		if (m) pageFiles.set(m[1], join(dir, f));
+	}
 }
 
 function headingIds(page: string): Set<string> {

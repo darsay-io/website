@@ -1,0 +1,121 @@
+---
+title: "The numbers inside"
+description: "Precision, from F32 to one-bit quants: what a floating-point number is made of, how many bytes each format spends per parameter, why BF16 is the default, what block scales are, and what upcasting can and cannot recover. With the Memory Lab."
+slug: docs/learn/numbers
+---
+
+import Ruler from "../../../components/docs/Ruler.astro";
+import MemoryLab from "../../../components/docs/MemoryLab.astro";
+
+> **In one sentence.** Every parameter is a number stored in some number of bits, and the bits per parameter decide the size of the model, the speed it runs, and how much of its training it still remembers.
+
+A weight is a real number, something like 0.0137. A computer stores it in a
+fixed number of bits, and the choice of how many, and how they are spent,
+is what the word **precision** means. Halve the bits and the model halves
+in size and roughly doubles in speed, because inference is mostly the act
+of reading the weights. The question is always what was lost in the halving.
+
+## What a floating-point number is made of
+
+A floating-point format spends its bits three ways: one for the **sign**, a
+few for the **exponent** (how big the number is, in powers of two), and the
+rest for the **mantissa** (the digits, how precisely it is known within that
+range). The exponent buys *range*; the mantissa buys *resolution*.
+
+| Format | Bits | Exponent | Mantissa | Range | Resolution | Used for |
+|---|---|---|---|---|---|---|
+| F32 | 32 | 8 | 23 | ±3 × 10³⁸ | 7 decimal digits | master weights and optimizer states in training |
+| F16 | 16 | 5 | 10 | ±65,504 | 3 digits | older inference; overflows easily |
+| BF16 | 16 | 8 | 7 | same as F32 | 2 digits | training and publishing; the default |
+| FP8 E4M3 | 8 | 4 | 3 | ±448 | 1 digit | inference on Hopper and newer; some releases ship in it |
+| FP8 E5M2 | 8 | 5 | 2 | ±57,344 | under 1 digit | gradients in FP8 training |
+| INT8 | 8 | — | — | −128 … 127 | integer | with a scale factor per block |
+| INT4 / NF4 / Q4 | 4 | — | — | 16 values | integer or lookup | with a scale per block of 32 or 64 |
+
+**BF16** is the format the whole field settled on for training, and the
+reason is in the table: it keeps F32's exponent, so it never overflows
+where F32 would not, and gives up mantissa, which training tolerates well
+because the gradient noise is larger than the rounding. A model published
+in BF16 is published at the precision it was trained in. Nothing was
+rounded away on the way out.
+
+## Bytes per parameter
+
+<Ruler params={70} />
+
+The bar is the whole story of model size. A 70-billion-parameter model is
+140 GiB in BF16, 70 GiB in FP8, and about 40 GiB as a four-bit quant. The
+GGUF figures on the ruler are measured, not nominal: a "4-bit" quant is
+0.58 bytes per parameter, not 0.5, because every block of 32 weights carries
+a scale, some tensors are kept at higher precision, and the embedding is
+usually not quantized at all. darsay reports the measured ratio on a row as
+**B/param**, so you can see at a glance which of these a repository is.
+
+<div class="docs-note"><strong>Rule of thumb.</strong> Parameters × bytes per parameter = the weights. Add ten percent for the runtime, and the KV cache on top, and you have the memory a model needs. The lab below does the sum.</div>
+
+## Block scales, and why a quant is not just fewer bits
+
+You cannot store 0.0137 in four bits. What you can store is an integer from
+0 to 15 and, once per block of 32 weights, a 16-bit **scale** and sometimes
+a **minimum** that map those integers back onto the block's actual range.
+Every low-bit format is a variation on that idea. The differences are how
+big the block is, whether the scale itself is quantized, whether the
+integers are evenly spaced or drawn from a lookup table shaped like the
+distribution of real weights (NF4, the i-quants), and which tensors are
+left at higher precision because they are small and sensitive.
+
+FP8 releases like the GLM and DeepSeek families use the same trick at
+eight bits with a scale per 128 × 128 block. That is why a loader "cannot
+just read" FP8: the first thing it does is multiply every block by its
+scale, which produces BF16 numbers, which is what the runtime computes in.
+
+## Upcasting, and what it cannot give back
+
+Converting a smaller format into a larger one is **upcasting**. An FP8
+weight times its block scale lands in BF16 exactly enough that nothing
+further is lost. But nothing is gained either: the BF16 copy holds
+exactly the information the FP8 held, in twice the bytes. It exists
+because tools want it (a GGUF converter takes float tensors), hardware
+wants it (most machines have no FP8 arithmetic), and training wants it
+(you cannot fine-tune in FP8 weights).
+
+The archival consequence is the one that matters here. A "BF16" file that
+was upcast from an FP8 release is not a higher-fidelity original; it is
+a convenience copy of the same numbers. The bits per parameter of a
+publication tell you its *storage*, not its *provenance*. darsay reads
+the storage from the headers and leaves provenance to the model card,
+which is why the board says **encoding**, not **quality**.
+
+## Downcasting: what is actually lost
+
+Going the other way, BF16 to a four-bit quant, rounds every weight to the
+nearest of sixteen values in its block. The error is small per weight and
+random in direction, so it mostly averages out, which is why a 4-bit model
+of a 70B is usually indistinguishable from the original in conversation.
+It does not average out everywhere: the tensors that matter most (the
+attention outputs, the first and last layers, the embedding) are where
+quantizers spend their extra bits, and the way they decide is the subject
+of [Quantization](/docs/learn/quantization/).
+
+Two consequences for a collector. First, the lower the bits, the more
+the result depends on *how* it was rounded, and the less it can be
+regenerated by anyone without the same recipe. Second, the losses are
+real but uneven: a Q2 model still speaks fluently and fails quietly on
+arithmetic, code, and long reasoning. Keep the encoding you will run and
+the one closest to what was trained.
+
+## The Memory Lab
+
+Set a model's size, precision, and context, and see what it weighs, what
+it fits in, and roughly how fast one stream of tokens can come out. The
+attention shape governs the KV cache, which is the subject of
+[Inside the transformer](/docs/learn/architecture/#the-kv-cache).
+
+<MemoryLab params={32} />
+
+## Where this bites
+
+- **F16 and BF16 are not the same.** Same size, different exponent. Converting BF16 weights to F16 can overflow the largest ones to infinity. Converters that offer both default to BF16 for a reason.
+- **"4-bit" is 0.58 bytes.** Budget disk and memory from the measured ratio, not the name. A darsay row shows it.
+- **Mixed is normal.** A single release can hold FP8 projections, BF16 embeddings, and F32 norms, which is exactly what the upstream GLM-5.3-Flash does. The *dominant* dtype on a row is the one most bytes are in.
+- **Upcasts are not upgrades.** A BF16 conversion of an FP8 release is the FP8 release, twice as large.

@@ -1,0 +1,121 @@
+---
+title: "Reading a lineage"
+description: "How to read what a model is from its name and its card: family, generation, size and active size, variant and format suffixes, the base_model relations a card declares (finetune, adapter, merge, quantized, distilled), what provenance can and cannot prove, and the negatives-and-prints vocabulary explained through one repository."
+slug: docs/learn/lineage
+---
+
+import Stage from "../../../components/docs/Stage.astro";
+
+> **In one sentence.** A name tells you what the publisher chose to say, a card tells you what they declared, and the bytes tell you what you have; a collector reads all three and does not confuse them.
+
+Every model on the Hub is a descendant of something. The pretrained base
+came from a run; the instruct model from the base; the quant from the
+instruct; the merge from two fine-tunes; the distill from a teacher and
+a student. Knowing how to read that ancestry is what turns a list of
+repositories into a collection, and knowing its limits is what keeps
+the collection honest.
+
+## Reading a name
+
+`Qwen3-235B-A22B-Instruct-2507-FP8` says: family **Qwen**, generation
+**3**, **235 billion** parameters of which **22 billion** are active per
+token, the **instruct** variant, the **July 2025** release of it, stored
+in **FP8**. darsay and the board read exactly this, with one rule
+applied everywhere: what is read from a name is *labeled* as read from
+a name, because a name is a claim.
+
+| Part | Examples | Read as |
+|---|---|---|
+| Family | `Qwen`, `Llama`, `GLM`, `gemma`, `DeepSeek` | the lineage; the board's **family** chips and the lineage view group by it |
+| Generation | `3`, `3.1`, `V4`, `5.3` | a number, ordered oldest first in the lineage view |
+| Size | `8B`, `235B`, `0.6B`, `27b` | total parameters; `A22B` active; `8x7B` experts × size |
+| Variant | `-Instruct`, `-Base`, `-Thinking`, `-Chat`, `-Distill-`, `-abliterated` | what post-training claims; the **base** and **abliterated** lenses |
+| Format | `-GGUF`, `-FP8`, `-AWQ`, `-GPTQ`, `-MLX`, `-NVFP4`, `-EXL3` | the storage encoding; the **quant** lens confirms from the files |
+| Date | `-2507`, `-0528` | a release within a generation |
+| Publisher | `unsloth/`, `bartowski/`, `zai-org/` | who made *this* repository, which is often not who made the model |
+
+The publisher is the part people skip. `zai-org/GLM-5.3-Flash` is the
+model's authors' release. `unsloth/GLM-5.3-Flash-GGUF` is a third party's
+conversions of it. Both are legitimate; they are different artifacts with
+different authors, and the second declares the first as its parent.
+
+## What a card declares
+
+The model card's YAML header carries `base_model` and, since 2024,
+`base_model:<relation>:` tags naming what the model was made from and
+how:
+
+| Relation | Meaning | Recovery implication |
+|---|---|---|
+| `finetune` | trained further from the base on new data | the data is usually not published; a distinct artifact |
+| `adapter` | a LoRA or similar, meaningless without the base | keep both, pinned together |
+| `merge` | weights combined from several parents by a recipe | recipe files sometimes published; the merge is still the artifact |
+| `quantized` | rounded from the parent at lower precision | tool, options, and calibration usually missing; see [conversions](/docs/learn/conversions/#why-byte-exact-recovery-is-hard) |
+| `distilled` | trained on a teacher's outputs | the outputs are usually not published |
+| `trained-on` (datasets) | the data a model was trained with | lineage to a dataset row |
+
+darsay reads these into a row's **parents**, and the board's lineage
+view nests a derivative under its declared parent when both are on the
+board. The relation is the publisher's word. It is evidence of ancestry
+and it is not a recipe: knowing that a Q4 is `quantized` from a BF16 does
+not let you remake its bytes, for all the reasons on the conversions page.
+
+## What provenance can prove
+
+Three questions, three different kinds of evidence:
+
+1. **What is this?** The name and the card: a claim, usually true, occasionally wrong, sometimes missing. Read from the name, labeled so.
+2. **Is it what it says it is?** The config and the headers: architecture, parameter count, dtype, imatrix keys. darsay reads these without downloading and they cannot lie about the bytes, only about their origin.
+3. **Can I get it back from something else I have?** Only a hash match settles this: a file whose SHA-256 equals a file you retained. Nothing else, not a parent tag, not a recipe, not a BF16 beside it, is proof.
+
+The vault records all three, and keeps them apart. The manifest has the
+name and the card; the inventory has every file's hash; the
+classification has each weight set's verdict and the evidence it rests on.
+
+## One repository, read all three ways
+
+`unsloth/GLM-5.3-Flash-GGUF` holds a BF16 GGUF and eleven quants of it.
+By name: GLM, generation 5.3, Flash, published as GGUF by Unsloth. By
+card: `base_model: zai-org/GLM-5.3-Flash`, relation `quantized`. By
+bytes: the upstream is **FP8**, so the "BF16" file is an upcast with no
+more information than its source; every quant carries `quantize.imatrix.*`
+keys; and no file's hash matches any other.
+
+<Stage label="the same repository, from the CLI" lines={[
+	"darsay classify unsloth/GLM-5.3-Flash-GGUF     # every set: R7 negative (imatrix), R10 negative (the BF16), nothing skippable",
+	"darsay estimate zai-org/GLM-5.3-Flash          # the declared parent: FP8, the artifact of record",
+]} />
+
+So the classifier says: every quant is a **negative**, retained, under
+rule R7, because its bytes rest on an input nobody published. The BF16
+is a negative under R10, because nothing in this repository could have
+produced it. Nothing is a **print**, because nothing hashes equal to
+anything retained. And the collector's reading is richer than the
+classifier's: the BF16 here is a convenience copy of an FP8 release that
+lives in another repository, the quants are twelve distinct artifacts by
+a named third party, and the artifact of record is the parent.
+
+## Negatives and prints, said plainly
+
+The metaphor: a **negative** is the master from which prints are struck;
+a **print** is what you can always strike again. In darsay's use the
+words are narrower and the second is much narrower:
+
+- **Negative** means *a preservation candidate, retained under a conservative rule*. It does not mean original, or best, or highest precision. The BF16 upcast is a negative.
+- **Print** means *a file whose bytes are proven, by hash, to exist in a retained set of the same bundle*. It does not mean derivative, or regenerable in principle. A quant is never a print of its source.
+- **Unknown** means *the evidence does not settle it*, and unknown is kept.
+
+The metaphor breaks because in a darkroom the negative is unique and the
+process is repeatable, and in model publishing the "negative" may be a
+conversion, the "prints" are made with inputs that were never shipped,
+and the same recipe re-run does not reproduce the bytes. The words are a
+useful shorthand for talking about ancestry. They are not a policy for
+deleting anything, and darsay's only automatic omission, **R15**, does
+not use them at all.
+
+## Where this bites
+
+- **Publisher is provenance.** A conversion by a well-known third party is a well-known conversion, not the authors' release. Collect the parent too.
+- **`base_model` can be wrong or absent.** Community cards forget it or name the wrong revision. The bytes, not the tag, are what you archived.
+- **A date suffix is a different model.** `-2507` and `-2501` share a name and not weights.
+- **The lineage view is a reading, not a fact.** Families and generations come from names; nesting comes from declared parents. Both are labeled so on the board.

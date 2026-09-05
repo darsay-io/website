@@ -12,7 +12,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { AUTHORED_DIR, SYNCED_DIR, buildSidebar } from "./sidebar.mjs";
+import { SYNCED_DIR, authoredDirsOf, buildSidebar } from "./sidebar.mjs";
 
 export const SITE = "https://darsay.io";
 
@@ -85,22 +85,24 @@ export function sentence(desc) {
 }
 
 /** The file that renders a slug: a synced page by its stem, an authored page by its `slug:` line. */
-export function fileFor(slug, { syncedDir = SYNCED_DIR, authoredDir = AUTHORED_DIR } = {}) {
+export function fileFor(slug, { syncedDir = SYNCED_DIR, ...rest } = {}) {
 	if (slug === "docs") return path.join(syncedDir, "index.mdx");
 	if (/^docs\/[a-z0-9-]+$/.test(slug)) {
 		const synced = path.join(syncedDir, slug.slice(5) + ".mdx");
 		if (fs.existsSync(synced)) return synced;
 	}
-	for (const f of fs.readdirSync(authoredDir)) {
-		if (!f.endsWith(".mdx")) continue;
-		const m = /^slug:\s*(\S+)\s*$/m.exec(fs.readFileSync(path.join(authoredDir, f), "utf8"));
-		if (m && m[1] === slug) return path.join(authoredDir, f);
+	for (const dir of authoredDirsOf(rest)) {
+		for (const f of fs.readdirSync(dir)) {
+			if (!f.endsWith(".mdx")) continue;
+			const m = /^slug:\s*(\S+)\s*$/m.exec(fs.readFileSync(path.join(dir, f), "utf8"));
+			if (m && m[1] === slug) return path.join(dir, f);
+		}
 	}
 	return null;
 }
 
 /**
- * @typedef {{ syncedDir?: string, authoredDir?: string }} Dirs
+ * @typedef {{ syncedDir?: string, authoredDir?: string, authoredDirs?: string[] }} Dirs
  *   Where the pages are; defaults to this checkout's `src/content/docs`.
  */
 

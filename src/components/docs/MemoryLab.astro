@@ -1,0 +1,167 @@
+---
+/**
+ * The Memory Lab: weights + KV cache for a model you describe, what it
+ * fits in, and a tokens-per-second guess from memory bandwidth. Every
+ * number is a rule of thumb the page beside it explains; the arithmetic
+ * is in the script below and nowhere else. Authored text only.
+ */
+interface Props {
+	/** Starting parameter count, in billions. */
+	params?: number;
+}
+const { params = 32 } = Astro.props;
+---
+<div class="lab" data-lab="memory" data-params={String(params)}>
+	<p class="lab-kicker"><span aria-hidden="true">✦ </span>Memory Lab</p>
+	<h3 class="lab-title">Will it fit, and how fast will it feel?</h3>
+	<div class="lab-controls">
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Parameters</span>
+			<span class="lab-ctl-v" data-out="params">32B</span>
+			<input type="range" min="0" max="27" step="1" value="0" data-in="params" aria-label="Parameters" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Active per token</span>
+			<span class="lab-ctl-v" data-out="active">all</span>
+			<input type="range" min="0" max="10" step="1" value="10" data-in="active" aria-label="Active parameters per token, for a mixture of experts" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Weights stored as</span>
+			<select data-in="wenc" aria-label="Weight encoding">
+				<option value="4">F32 · 4 B/param</option>
+				<option value="2" selected>BF16 · 2 B/param</option>
+				<option value="1.0">FP8 · 1 B/param</option>
+				<option value="1.06">Q8_0 · 1.06 B/param</option>
+				<option value="0.82">Q6_K · 0.82 B/param</option>
+				<option value="0.71">Q5_K_M · 0.71 B/param</option>
+				<option value="0.58">Q4_K_M · 0.58 B/param</option>
+				<option value="0.55">IQ4_XS · 0.55 B/param</option>
+				<option value="0.49">Q3_K_M · 0.49 B/param</option>
+				<option value="0.38">Q2_K · 0.38 B/param</option>
+				<option value="0.29">IQ2_XXS · 0.29 B/param</option>
+				<option value="0.22">IQ1_M · 0.22 B/param</option>
+			</select>
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Context</span>
+			<span class="lab-ctl-v" data-out="ctx">32k</span>
+			<input type="range" min="0" max="9" step="1" value="4" data-in="ctx" aria-label="Context length in tokens" />
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Attention shape</span>
+			<select data-in="arch" aria-label="Attention shape: layers, KV heads, head dimension">
+				<option value="32,8,128">Dense 8B · 32 layers · 8 KV heads · 128</option>
+				<option value="64,8,128" selected>Dense 32B · 64 · 8 · 128</option>
+				<option value="80,8,128">Dense 70B · 80 · 8 · 128</option>
+				<option value="62,16,256">Dense 27B, wide heads · 62 · 16 · 256</option>
+				<option value="94,4,128">MoE 235B-A22B · 94 · 4 · 128</option>
+				<option value="61,1,576">MLA 671B · 61 · latent 576</option>
+				<option value="32,32,128">Old-style MHA 7B · 32 · 32 · 128</option>
+			</select>
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">KV cache as</span>
+			<select data-in="kenc" aria-label="KV cache encoding">
+				<option value="2" selected>F16 · 2 B</option>
+				<option value="1.06">Q8_0 · 1.06 B</option>
+				<option value="0.56">Q4_0 · 0.56 B</option>
+			</select>
+		</label>
+		<label class="lab-ctl">
+			<span class="lab-ctl-k">Memory bandwidth</span>
+			<select data-in="bw" aria-label="Memory bandwidth of the machine">
+				<option value="90">Desktop DDR5, 2 channels · 90 GB/s</option>
+				<option value="120">Apple M-series base · 120 GB/s</option>
+				<option value="273">Apple M-series Pro · 273 GB/s</option>
+				<option value="546" selected>Apple M-series Max · 546 GB/s</option>
+				<option value="819">Apple M-series Ultra · 819 GB/s</option>
+				<option value="400">Server DDR5, 8 channels · 400 GB/s</option>
+				<option value="1008">RTX 4090 · 1,008 GB/s</option>
+				<option value="1792">RTX 5090 · 1,792 GB/s</option>
+				<option value="3350">H100 SXM · 3,350 GB/s</option>
+				<option value="8000">B200 · 8,000 GB/s</option>
+			</select>
+		</label>
+	</div>
+	<dl class="lab-out">
+		<div><dt>Weights</dt><dd><span data-out="weights">—</span><small>GiB</small></dd></div>
+		<div><dt>KV cache at this context</dt><dd><span data-out="kv">—</span><small>GiB</small></dd></div>
+		<div><dt>Total, with 10% overhead</dt><dd><span data-out="total">—</span><small>GiB</small></dd></div>
+		<div><dt>Single-stream speed</dt><dd><span data-out="tps">—</span><small>tokens/s</small></dd></div>
+	</dl>
+	<p class="lab-formula" data-out="formula"></p>
+	<div class="lab-table-wrap" tabindex="0">
+		<table class="lab-fits">
+			<thead><tr><th scope="col">Memory</th><th scope="col">The weights</th><th scope="col">Context that fits</th></tr></thead>
+			<tbody data-out="fits"></tbody>
+		</table>
+	</div>
+	<p class="lab-note">Rules of thumb, not a benchmark. Weights are parameters × bytes per parameter; the KV cache is 2 × layers × KV heads × head dimension × bytes, per token; a single stream reads every active weight once per token, so its ceiling is bandwidth ÷ bytes read. Real runtimes lose some to overhead and gain some from batching.</p>
+</div>
+
+<script>
+	const PARAMS = [0.5, 1, 2, 3, 4, 7, 8, 9, 12, 14, 20, 24, 27, 32, 35, 40, 48, 56, 70, 72, 110, 120, 235, 400, 480, 671, 1000, 2000];
+	const CTX = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576];
+	const MEMS = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 1024];
+	const GiB = 1024 ** 3;
+
+	function human(n: number): string {
+		if (!Number.isFinite(n)) return "∞";
+		if (n >= 100) return String(Math.round(n));
+		if (n >= 10) return n.toFixed(1);
+		return n.toFixed(2);
+	}
+	function humanCtx(t: number): string {
+		if (t >= 1048576) return `${(t / 1048576).toFixed(t % 1048576 ? 1 : 0)}M`;
+		if (t >= 1024) return `${Math.round(t / 1024)}k`;
+		return String(Math.round(t));
+	}
+
+	for (const lab of document.querySelectorAll<HTMLElement>('.lab[data-lab="memory"]')) {
+		const inp = (k: string) => lab.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-in="${k}"]`)!;
+		const out = (k: string) => lab.querySelector<HTMLElement>(`[data-out="${k}"]`)!;
+		const start = Number(lab.dataset.params ?? "32");
+		const pi = PARAMS.findIndex((p) => p >= start);
+		(inp("params") as HTMLInputElement).value = String(pi < 0 ? PARAMS.length - 1 : pi);
+
+		function paint() {
+			const n = PARAMS[Number(inp("params").value)] * 1e9;
+			const activeStep = Number(inp("active").value);
+			const activeFrac = activeStep === 10 ? 1 : Math.max(0.02, activeStep / 10);
+			const active = n * activeFrac;
+			const wenc = Number(inp("wenc").value);
+			const ctx = CTX[Number(inp("ctx").value)];
+			const [layers, kvHeads, headDim] = inp("arch").value.split(",").map(Number);
+			const kenc = Number(inp("kenc").value);
+			const bw = Number(inp("bw").value) * 1e9;
+
+			const weights = n * wenc;
+			const kvPerToken = 2 * layers * kvHeads * headDim * kenc;
+			const kv = kvPerToken * ctx;
+			const total = (weights + kv) * 1.1;
+			const tps = bw / (active * wenc + kvPerToken * Math.min(ctx, 4096) * 0.25);
+
+			out("params").textContent = `${PARAMS[Number(inp("params").value)]}B`;
+			out("active").textContent = activeStep === 10 ? "all (dense)" : `${Math.round(activeFrac * 100)}% (MoE)`;
+			out("ctx").textContent = humanCtx(ctx);
+			out("weights").textContent = human(weights / GiB);
+			out("kv").textContent = human(kv / GiB);
+			out("total").textContent = human(total / GiB);
+			out("tps").textContent = human(tps);
+			out("formula").textContent = `${(n / 1e9).toFixed(n < 1e10 ? 1 : 0)}B × ${wenc} B = ${human(weights / GiB)} GiB of weights · KV ${(kvPerToken / 1024).toFixed(1)} KiB per token × ${humanCtx(ctx)} tokens = ${human(kv / GiB)} GiB · ${(bw / 1e9).toLocaleString()} GB/s ÷ ${human((active * wenc) / GiB)} GiB read per token ≈ ${human(tps)} tokens/s`;
+
+			const rows: string[] = [];
+			for (const mem of MEMS) {
+				const budget = mem * GiB * 0.9;
+				const fitsWeights = weights <= budget;
+				const ctxFits = fitsWeights ? Math.floor((budget - weights) / kvPerToken) : 0;
+				const verdict = !fitsWeights ? "no" : ctxFits >= ctx ? "yes" : "weights only";
+				const cls = verdict === "yes" ? "lab-yes" : verdict === "no" ? "lab-no" : "lab-part";
+				rows.push(`<tr class="${cls}"><th scope="row">${mem} GiB</th><td>${fitsWeights ? "fits" : "does not fit"}</td><td>${fitsWeights ? (ctxFits >= 1024 ? humanCtx(ctxFits) + " tokens" : ctxFits + " tokens") : "—"}</td></tr>`);
+			}
+			out("fits").innerHTML = rows.join("");
+		}
+		for (const el of lab.querySelectorAll("[data-in]")) el.addEventListener("input", paint);
+		paint();
+	}
+</script>

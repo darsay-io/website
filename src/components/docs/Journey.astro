@@ -1,0 +1,25 @@
+---
+/**
+ * The journey of a model's bytes: the Hub, the vault, the workbench, the
+ * runtime, each a station with what happens there. Static HTML in the
+ * site's palette; every station links to the page that teaches it.
+ */
+const stations = [
+	{ k: "Made", t: "Trained, post-trained, published", href: "/docs/learn/training/", note: "weights are born on a cluster and released as safetensors" },
+	{ k: "Kept", t: "Pinned in a vault", href: "/docs/getting-started/", note: "darsay archive: one revision, hashed, documented, forever" },
+	{ k: "Worked", t: "Converted, tuned, quantized", href: "/docs/learn/workbench/", note: "the workbench: hydrate a bundle, make new artifacts from it" },
+	{ k: "Run", t: "Served on your hardware", href: "/docs/learn/inference/", note: "llama.cpp, vLLM, MLX: weights plus a KV cache, in memory" },
+];
+---
+<ol class="journey" aria-label="The journey of a model, from training to running">
+	{stations.map((s, i) => (
+		<li class="journey-station">
+			<span class="journey-n" aria-hidden="true">{i + 1}</span>
+			<a class="journey-link" href={s.href}>
+				<span class="journey-k">{s.k}</span>
+				<span class="journey-t">{s.t}</span>
+			</a>
+			<span class="journey-note">{s.note}</span>
+		</li>
+	))}
+</ol>
