@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { COLLECTION_GUIDE, bitFamily, choiceInclude, encodingFamily, selectionTotals, startingSelection, toggleVariant, variantSelected, type Publication } from "./collection.ts";
 import { ggufVariants, isProjector } from "../worker/gguf.ts";
 import { selectSubset } from "../worker/subset.ts";
@@ -9,10 +11,23 @@ const variants = ggufVariants(fixture.files);
 const companions = ggufVariants(fixture.files, true).filter((v) => isProjector(v.name));
 const publication: Publication = { ...fixture, variants, companions };
 
+/** The guide as the pinned CLI commit ships it, read from the sibling checkout's history; null when that is not to hand. */
+function pinnedGuide(): string | null {
+	const lock = JSON.parse(readFileSync(new URL("../../docs.lock.json", import.meta.url), "utf8")) as { sha: string };
+	const sibling = fileURLToPath(new URL("../../../darsay", import.meta.url));
+	if (!existsSync(`${sibling}/.git`)) return null;
+	try {
+		return execFileSync("git", ["-C", sibling, "show", `${lock.sha}:src/darsay/collection_guide.json`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+	} catch {
+		return null;
+	}
+}
+
 describe("the collection room", () => {
-	it("keeps board and packaged CLI teaching copy in sync when the sibling checkout is present", () => {
-		const canonical = new URL("../../../darsay/src/darsay/collection_guide.json", import.meta.url);
-		if (existsSync(canonical)) expect(COLLECTION_GUIDE).toEqual(JSON.parse(readFileSync(canonical, "utf8")));
+	it("holds the board's teaching copy to the CLI commit the docs are pinned to", ({ skip }) => {
+		const pinned = pinnedGuide();
+		if (pinned === null) skip("no sibling darsay checkout holds the pinned commit");
+		expect(COLLECTION_GUIDE).toEqual(JSON.parse(pinned!));
 	});
 	it("labels encoding families without treating precision as a quality score", () => {
 		for (const [precision, bits, family] of [["UD-Q4_K_XL", 4, "middle"], ["IQ4_XS", 4, "middle"], ["Q8_0", 8, "wide"], ["Q2_K", 2, "compact"], ["BF16", null, "float"], ["new-format", null, "unknown"]] as const) {
