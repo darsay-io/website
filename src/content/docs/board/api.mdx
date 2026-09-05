@@ -219,10 +219,12 @@ separate projector `companions`. Each group has precision, completeness,
 file count, summed size, and exact include selectors. Unknown sizes are null.
 
 Inspection creates no row, claim, audit event, or board revision. It uses
-the read capability and lookup budget. No model payload is downloaded.
-`400` means an invalid source or revision; `422` an empty inventory or
-more than 10,000 files; `502` an unavailable or unpinnable publication.
-No failed inspection is replaced by a guessed collection size.
+the read capability, the lookup budget, and a daily preview budget of its
+own, because every inspection is a Hub fetch that spends no mutate. No model
+payload is downloaded. `400` means an invalid source or revision; `422` an
+empty inventory or more than 10,000 files; `429 preview_cap` a spent budget;
+`502` an unavailable or unpinnable publication. No failed inspection is
+replaced by a guessed collection size.
 
 Union the chosen groups' selectors, retain recognized support files once,
 and POST that union with the returned source and exact revision to `/entries`
@@ -610,5 +612,5 @@ Every error is `{"error": "<word>"}` with, where useful, a little more.
 | 412 | `stale` | `If-Match` did not match; the body carries `revision`. |
 | 413 / 415 | `body too large`, `json required`, `invalid json`, `multipart rejected` | The body. |
 | 422 | `idempotency_mismatch` | A different request under a used `Idempotency-Key`. |
-| 429 | `lookup_cap`, `mutate_cap`, `create_cap` | A daily cap (50 000 lookups, 10 000 writes, 100 creates across the site). |
+| 429 | `lookup_cap`, `mutate_cap`, `preview_cap`, `create_cap` | A daily cap (50 000 lookups, 10 000 writes, 2 000 previews, 100 creates across the site). |
 | 503 | `quota`, `create_disabled` | The ledger could not be written; or no create password is set. |

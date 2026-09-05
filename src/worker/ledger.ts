@@ -99,7 +99,7 @@ export function auditToApi(row: AuditRow) {
 
 export type ApiAuditEvent = ReturnType<typeof auditToApi>;
 
-async function readCap(db: D1Database, kind: "creates" | "mutates" | "lookups"): Promise<{ n: number; today: string }> {
+async function readCap(db: D1Database, kind: "creates" | "mutates" | "lookups" | "previews"): Promise<{ n: number; today: string }> {
 	const today = utcDay();
 	const utc = await db.prepare("SELECT value FROM meta WHERE key = ?").bind(kind + "_utc").first<{ value: string }>();
 	const nRow = await db.prepare("SELECT value FROM meta WHERE key = ?").bind(kind + "_n").first<{ value: string }>();
@@ -107,7 +107,7 @@ async function readCap(db: D1Database, kind: "creates" | "mutates" | "lookups"):
 	return { n, today };
 }
 
-function capStmts(db: D1Database, kind: "creates" | "mutates" | "lookups", today: string, next: number) {
+function capStmts(db: D1Database, kind: "creates" | "mutates" | "lookups" | "previews", today: string, next: number) {
 	return [
 		db.prepare("UPDATE meta SET value = ? WHERE key = ?").bind(today, kind + "_utc"),
 		db.prepare("UPDATE meta SET value = ? WHERE key = ?").bind(String(next), kind + "_n"),

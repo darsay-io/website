@@ -21,6 +21,8 @@ export const CLAIM_TTL_MS = 24 * 60 * 60 * 1000;
 export const CREATE_CAP = 100;
 export const MUTATE_CAP = 10_000;
 export const LOOKUP_CAP = 50_000;
+// A preview is one or two Hub fetches that spend no mutate; it has its own day.
+export const PREVIEW_CAP = 2_000;
 
 export function foldSlug(spec: string): string {
 	return (spec || "").trim().toLowerCase();

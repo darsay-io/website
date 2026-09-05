@@ -40,7 +40,7 @@ import {
 } from "./catalog.ts";
 import { fetchEstimate } from "./estimate.ts";
 import { ggufVariants, isProjector } from "./gguf.ts";
-import { announce, auditToApi, commit, type Actor, type AuditEvent, type AuditRow } from "./ledger.ts";
+import { announce, auditToApi, capStmts, commit, readCap, type Actor, type AuditEvent, type AuditRow } from "./ledger.ts";
 import { canonicalizeSource, type HfCanonical } from "./sources.ts";
 import {
 	CLAIM_TTL_MS,
@@ -52,6 +52,7 @@ import {
 	MAX_REVISION,
 	MAX_SOURCE,
 	MAX_TITLE,
+	PREVIEW_CAP,
 	clampStr,
 	foldSlug,
 	includeJson,
@@ -467,6 +468,10 @@ export async function opPreview(ctx: OpCtx, query: Record<string, string>): Prom
 	if ((query.revision?.length ?? 0) > MAX_REVISION) return fail(400, "invalid revision");
 	const parsed = canonicalizeSource(query.source);
 	if (parsed.kind !== "hf") return fail(400, "preview requires a Hugging Face source");
+	// Every inspection is a Hub fetch that spends no mutate, so it has a day of its own.
+	const { n, today } = await readCap(ctx.db, "previews");
+	if (n >= PREVIEW_CAP) return fail(429, "preview_cap");
+	await ctx.db.batch(capStmts(ctx.db, "previews", today, n + 1));
 	const hit = await fetchEstimate(parsed, query.revision || null);
 	if (!hit) return fail(502, "publication unavailable; check the source, access, and revision, then retry");
 	if (!hit.digest.revision || !/^[a-f0-9]{40}$/.test(hit.digest.revision)) return fail(502, "publication did not provide an immutable revision");

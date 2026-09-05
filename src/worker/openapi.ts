@@ -361,13 +361,13 @@ const BOARD_ROUTES: Route[] = [
 		path: "/preview",
 		ops: { get: {
 			summary: "Inspect a publication before choosing collection scope",
-			description: "Fetch metadata only. Creates no row, audit event, claim, or board revision. Uses the board's read capability and lookup budget. Pin the returned revision when adding a selection. Unavailable or unpinnable inventory is an error, never a guessed size.",
+			description: "Fetch metadata only. Creates no row, audit event, claim, or board revision. Uses the board's read capability, the lookup budget, and a daily preview budget of its own, because every inspection is a Hub fetch. Pin the returned revision when adding a selection. Unavailable or unpinnable inventory is an error, never a guessed size.",
 			scope: "read",
 			parameters: [
 				{ name: "source", in: "query", required: true, schema: { type: "string", maxLength: MAX_SOURCE }, description: "A Hugging Face model or dataset address." },
 				{ name: "revision", in: "query", schema: { type: "string", maxLength: MAX_REVISION }, description: "Branch, tag, or commit to inspect; defaults to main." },
 			],
-			responses: { "200": json(ref("PublicationPreview")), "400": err("Invalid source or revision."), "422": err("Empty or oversized inventory."), "502": err("Publication unavailable or no immutable revision provided.") },
+			responses: { "200": json(ref("PublicationPreview")), "400": err("Invalid source or revision."), "422": err("Empty or oversized inventory."), "429": err("preview_cap: the day's preview budget is spent."), "502": err("Publication unavailable or no immutable revision provided.") },
 		} },
 	},
 	{

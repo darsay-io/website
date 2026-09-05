@@ -3,15 +3,17 @@ import { app, type Env } from "./index.ts";
 import { TestD1 } from "./testdb.ts";
 import fixture from "./glm-5.3-flash-gguf.json";
 import { selectionTotals, type Publication } from "../lib/collection.ts";
+import { PREVIEW_CAP, utcDay } from "./validate.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
 async function harness() {
-	const e = { DB: new TestD1(), CREATE_PASSWORD: "test-preview" } as unknown as Env;
+	const db = new TestD1();
+	const e = { DB: db, CREATE_PASSWORD: "test-preview" } as unknown as Env;
 	const call = (path: string, init?: RequestInit) => app.request(path, init, e);
 	const created = await call("/api/boards", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Collection", password: "test-preview" }) });
 	const { id } = await created.json() as { id: string };
-	return { call, id };
+	return { call, id, db };
 }
 
 const upstream = (over: object = {}) => ({ sha: fixture.revision, gguf: { total: fixture.parameters }, siblings: fixture.files.map((f) => ({ rfilename: f.path, size: f.size })), ...over });
@@ -73,6 +75,21 @@ describe("publication inspection", () => {
 		vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(upstream(over)))));
 		const { call, id } = await harness();
 		expect((await call(`/api/boards/${id}/preview?source=${fixture.source}`)).status).toBe(over.sha ? 502 : 422);
+	});
+	it("spends a daily preview budget of its own, because every inspection is a Hub fetch", async () => {
+		const fetcher = vi.fn(async () => new Response(JSON.stringify(upstream())));
+		vi.stubGlobal("fetch", fetcher);
+		const { call, id, db } = await harness();
+		expect((await call(`/api/boards/${id}/preview?source=${fixture.source}`)).status).toBe(200);
+		const spent = await db.prepare("SELECT value FROM meta WHERE key = ?").bind("previews_n").first<{ value: string }>();
+		expect(spent?.value).toBe("1");
+		const calls = fetcher.mock.calls.length;
+		await db.prepare("UPDATE meta SET value = ? WHERE key = ?").bind(String(PREVIEW_CAP), "previews_n").run();
+		await db.prepare("UPDATE meta SET value = ? WHERE key = ?").bind(utcDay(), "previews_utc").run();
+		const refused = await call(`/api/boards/${id}/preview?source=${fixture.source}`);
+		expect(refused.status).toBe(429);
+		expect(await refused.json()).toEqual({ error: "preview_cap" });
+		expect(fetcher.mock.calls.length).toBe(calls);
 	});
 	it("reports unavailable publications without inventing a selection", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => new Response("offline", { status: 503 })));
