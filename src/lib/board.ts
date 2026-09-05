@@ -30,7 +30,7 @@ import {
 import { plural, prettyDate, relativeTime } from "./format.ts";
 import { createAgents, type Agents } from "./agents.ts";
 import { createGuide, type Guide } from "./guide.ts";
-import { chooseCollection } from "./collection-dialog.ts";
+import { chooseCollection, SaveRefused } from "./collection-dialog.ts";
 import type { Publication } from "./collection.ts";
 import {
 	LENSES,
@@ -1724,15 +1724,20 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			el("div", { class: "add-advanced-row" }, inc, incWhy),
 		);
 		const addBtn = el("button", { type: "submit", class: "btn" }, "Explore collection →");
+		// A Hub source opens the room; a closed work or an explicit include set is added as it is.
+		const explores = () => canonicalizeSource(source.value).kind !== "home" && !inc.value.trim();
+		const relabel = () => { addBtn.textContent = explores() ? "Explore collection →" : "Add to the board"; };
+		source.addEventListener("input", relabel);
+		inc.addEventListener("input", relabel);
 		const addErr = el("p", { class: "add-err", role: "alert" });
 		const help = el("p", { class: "add-help muted" });
-		help.append("Inspect a Hub publication, choose the variants worth keeping, and review their actual storage before adding one collection. A non-Hub home page holds a place for a closed work. Rate it 1–9; ");
+		help.append("Inspect a Hub publication, choose the variants worth keeping, and review their storage before adding one collection. A home page on another site holds a place for a closed work and is added as it is. Rate it 1–9; ");
 		const fg = el("button", { type: "button", class: "linkish" }, "✦ what desire does");
 		fg.addEventListener("click", () => openGuide("desire", fg));
-		help.append(fg, ".");
-		const collectionHelp = el("button", { type: "button", class: "linkish" }, "✦ Choosing variants");
+		help.append(fg, ". ");
+		const collectionHelp = el("button", { type: "button", class: "linkish" }, "✦ Choosing a collection");
 		collectionHelp.addEventListener("click", () => openGuide("subset", collectionHelp));
-		help.append(" ", collectionHelp);
+		help.append(collectionHelp, ".");
 
 		add.append(
 			el("h2", { class: "add-title", id: "add-title" }, "Add a source"),
@@ -1756,7 +1761,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				.filter(Boolean);
 			const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : addBtn;
 			addBtn.disabled = true;
-			addBtn.textContent = "Opening publication…";
+			addBtn.textContent = explores() ? "Opening publication…" : "Adding…";
 			try {
 				const desire = d.value === "" ? null : Number(d.value);
 				const parsed = canonicalizeSource(source.value);
@@ -1764,7 +1769,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				const saveCollection = async (choice: RowIdentity) => {
 					// Re-check after inspection; another curator may have added it.
 					const current = await api(`/api/boards/${id}`) as Board;
-					if (current.entries.some((row) => !row.dropped && sameRowIdentity(row, choice))) throw new Error("This collection is already on the board; its curation is unchanged.");
+					if (current.entries.some((row) => !row.dropped && sameRowIdentity(row, choice))) throw new SaveRefused("This collection is already on the board; its curation is unchanged.");
 					try {
 						await api(`/api/boards/${id}/entries`, { method: "POST", headers: { "If-Match": `"${current.revision}"` }, body: JSON.stringify({ ...choice, ...(desire === null ? {} : { desire }) }) });
 					} catch (err) {
@@ -1794,17 +1799,18 @@ export async function mountBoard(root: HTMLElement, id: string) {
 						body: JSON.stringify({ source: source.value, desire, revision: rev.value.trim() || null, include: include.length ? include : null }),
 					});
 				}
+				const added = parsed.kind === "hf" && !include.length ? "Collection added to the board" : parsed.kind === "home" ? "Added to the board" : "Added and priced";
 				source.value = "";
 				rev.value = "";
 				inc.value = "";
 				d.value = "";
-				toast("Collection added to the board");
+				toast(added);
 				await reload();
 			} catch (err) {
 				addErr.textContent = humanError(err instanceof Error ? err.message : "failed");
 			} finally {
 				addBtn.disabled = false;
-				addBtn.textContent = "Explore collection →";
+				relabel();
 			}
 		});
 		return add;

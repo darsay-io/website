@@ -24,8 +24,9 @@ Run `COLLECTION_TEST_PASSWORD=<local-value> node scripts/check-collection-ui.mjs
 It refuses non-local hosts, creates disposable local boards, and writes screenshots
 to a new temporary directory. It checks live Hub inventory on desktop and phone
 viewports, keyboard focus, cancel/review/save, duplicate identity, and explicit
-uninspected scope. Controlled browser transport failures exercise retry and late
-response handling; these are not claims of live upstream outage coverage.
+uninspected scope. Controlled browser transport failures exercise retry, late
+response handling, a save the browser closes over, and a duplicate refused at
+save time; these are not claims of live upstream outage coverage.
 
 Board URLs look like `https://darsay.io/b/<32-hex>`. The URL is the password. Anyone with it can edit. Creating a board currently also needs a shared `CREATE_PASSWORD` Wrangler secret (not in this repo).
 

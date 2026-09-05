@@ -18,6 +18,9 @@ type Options = {
 	saveUninspected: () => Promise<void>;
 };
 
+/** A save the board declines for good: the identity is already there. Retrying cannot help. */
+export class SaveRefused extends Error {}
+
 /** A read-only inspection until the final Add. Closing aborts pending inspection. */
 export function chooseCollection(options: Options): Promise<boolean> {
 	return new Promise((resolve) => {
@@ -33,6 +36,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		let publication: Publication;
 		let include: string[] = [];
 		let saving = false;
+		let pendingSave: Promise<void> | null = null;
 		let finished = false;
 		let intent: Intent | null = null;
 		let focused: GgufVariant | null = null;
@@ -54,7 +58,19 @@ export function chooseCollection(options: Options): Promise<boolean> {
 			announcement = window.setTimeout(() => { live.textContent = message; }, 180);
 		};
 		close.addEventListener("click", () => { if (!saving) finish(false); });
-		dialog.addEventListener("cancel", (event) => { event.preventDefault(); if (!saving) finish(false); });
+		dialog.addEventListener("cancel", (event) => {
+			event.preventDefault();
+			if (saving) { announce("Saving. The room closes when the save completes."); return; }
+			finish(false);
+		});
+		// The browser can close a modal on its own: a second Escape without fresh
+		// activation is not cancelable. A closed room never lingers in the page,
+		// and a save already in flight still lands, with the board reloaded for it.
+		dialog.addEventListener("close", () => {
+			if (finished) return;
+			if (pendingSave) pendingSave.then(() => finish(true), () => finish(false));
+			else finish(false);
+		});
 		dialog.addEventListener("keydown", (event) => {
 			if (event.key !== "Tab") return;
 			const stops = [...dialog.querySelectorAll<HTMLElement>("button, input, a[href], summary, [tabindex]")]
@@ -235,11 +251,21 @@ export function chooseCollection(options: Options): Promise<boolean> {
 				add.disabled = back.disabled = close.disabled = true;
 				add.textContent = "Adding collection…";
 				error.textContent = "";
-				try { await save(); finish(true); }
+				pendingSave = save();
+				try { await pendingSave; finish(true); }
 				catch (err) {
-					error.textContent = `${err instanceof Error ? err.message : "Could not add the collection."} Your selection is still here; retry when ready.`;
+					pendingSave = null;
 					saving = false;
-					add.disabled = back.disabled = close.disabled = false;
+					if (finished) return;
+					back.disabled = close.disabled = false;
+					if (err instanceof SaveRefused) {
+						// Nothing a retry could change; the way out is back or close.
+						error.textContent = err.message;
+						add.textContent = "Already on this board";
+						return;
+					}
+					error.textContent = `${err instanceof Error ? err.message : "Could not add the collection."} Your selection is still here; retry when ready.`;
+					add.disabled = false;
 					add.textContent = "Retry save";
 				}
 			});

@@ -77,7 +77,10 @@ commit prevents a moving branch from changing what you reviewed.
 the row. The board stores no model payload; the CLI archives it later.
 Closing or pressing Escape before saving leaves the add form intact.
 An inspection or save error keeps the draft and offers retry rather than
-guessing a size or silently widening the selection.
+guessing a size or silently widening the selection. If the browser closes
+the room while a save is in flight, the save still lands and the board
+reloads for it. A collection someone else added while yours was under
+review is refused outright; there is no retry to press, only back or close.
 
 If the publication cannot be inspected, **Keep an uninspected publication**
 opens a separate confirmation. It says **Size unknown**, requests the whole

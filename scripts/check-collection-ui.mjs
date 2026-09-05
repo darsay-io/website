@@ -145,9 +145,39 @@ for (const [name,width,height,mobile] of [['desktop',1440,1050,false],['mobile',
   assert.equal(await evaluate('!!document.querySelector(".collection-dialog")'),false);
   assert.equal(await evaluate('document.activeElement === document.querySelector(".add-card [type=submit]")'),true);
   await evaluate('window.fetch=window.collectionOriginalFetch');
+
+  // A save the browser closes over (a second Escape is not cancelable): the page stays usable and the row still lands.
+  await evaluate(`window.fetch=(url,init)=>String(url).endsWith('/entries') && init?.method==='POST' ? new Promise(resolve=>setTimeout(()=>resolve(window.collectionOriginalFetch(url,init)),900)) : window.collectionOriginalFetch(url,init); document.querySelector('#add-source').value=${JSON.stringify(source)}; document.querySelector('#add-rev').value=${JSON.stringify(revision)}; document.querySelector('.add-card').requestSubmit();`);
+  await until('document.querySelectorAll(".collection-variant").length === 14');
+  await click('.collection-intent:nth-child(1)');
+  await click('.collection-primary'); await until('document.querySelector(".collection-review")');
+  const cardsBefore=await evaluate('document.querySelectorAll(".work-card").length');
+  await click('.collection-review-actions .collection-primary'); await delay(150);
+  await key('Escape'); await delay(150); await key('Escape');
+  await until(`!document.querySelector(".collection-dialog") && document.querySelectorAll(".work-card").length === ${cardsBefore+1}`);
+  assert.equal(await evaluate('document.body.classList.contains("collection-open")'),false,'A room the browser closed must unlock the page');
+  assert.equal(await evaluate('document.querySelector(".add-card [type=submit]").textContent'),'Explore collection →');
+  await evaluate('window.fetch=window.collectionOriginalFetch');
+
+  // A collection another curator added while this one was under review is refused, not offered a retry.
+  await evaluate(`document.querySelector('#add-source').value=${JSON.stringify(source)}; document.querySelector('#add-rev').value=${JSON.stringify(revision)}; document.querySelector('.add-card').requestSubmit();`);
+  await until('document.querySelectorAll(".collection-variant").length === 14');
+  await click('.collection-intent:nth-child(2)');
+  await click('.collection-primary'); await until('document.querySelector(".collection-review")');
+  const pair=(await evaluate('document.querySelector(".collection-selectors code").textContent')).split('\n');
+  await fetch(`${base}/api/boards/${id}/entries`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,revision,include:pair})});
+  await click('.collection-review-actions .collection-primary');
+  await until('document.querySelector(".collection-review-actions .collection-primary").textContent === "Already on this board"');
+  assert.equal(await evaluate('document.querySelector(".collection-review-actions .collection-primary").disabled'),true);
+  await key('Escape'); await until('!document.querySelector(".collection-dialog")');
+
+  // The add button says what it will do: a closed work is added as it is, not explored.
+  await evaluate(`document.querySelector('#add-source').value='https://example.com/models/closed-work'; document.querySelector('#add-source').dispatchEvent(new Event('input'))`);
+  assert.equal(await evaluate('document.querySelector(".add-card [type=submit]").textContent'),'Add to the board');
+  await evaluate(`document.querySelector('#add-source').value=''; document.querySelector('#add-source').dispatchEvent(new Event('input'))`);
   console.log(JSON.stringify({viewport:name,board:id,include:board.entries[0].include,bytes:board.entries[0].payload_bytes,overflow:false}));
 }
 assert.deepEqual(exceptions,[]);
 console.log('Collection picker: live Hub inventory, desktop/mobile, cancel, review, combined save; no JS exceptions.');
-console.log(`Browser lifecycle checks also passed: focus, duplicate identity, uninspected fallback, failed-save retry, late-response cancellation. Artifacts: ${artifacts}`);
+console.log(`Browser lifecycle checks also passed: focus, duplicate identity, uninspected fallback, failed-save retry, late-response cancellation, a browser-closed save, a refused duplicate, the add button's label. Artifacts: ${artifacts}`);
 ws.close();
