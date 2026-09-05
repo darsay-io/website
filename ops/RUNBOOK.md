@@ -357,11 +357,13 @@ fourth check upstream of all of them:
    straight to `main`; no PR. The push uses the `DOCS_PUSH_TOKEN` secret —
    the same fine-grained PAT as the dispatch token — because a push by the
    default `github.token` triggers no workflows, so Deploy would not fire.
-3. `Deploy` runs on `main` pushes touching the lock, `src/content/docs/**`,
-   or the logo (and on `workflow_dispatch` for anything else): test,
-   `check:docs`, build, `d1 migrations apply darsay-io --remote`, then
-   `wrangler deploy` (secrets `CLOUDFLARE_API_TOKEN` with Workers edit and
-   D1 edit, `CLOUDFLARE_ACCOUNT_ID`).
+3. `Deploy` runs on every push to `main` — the docs pin's push is one
+   more push — and on `workflow_dispatch` for a redeploy with nothing new
+   to push: test, `check:docs`, build, `d1 migrations apply darsay-io
+   --remote`, then `wrangler deploy` (secrets `CLOUDFLARE_API_TOKEN` with
+   Workers edit and D1 edit, `CLOUDFLARE_ACCOUNT_ID`). A push by the
+   default `github.token` triggers no workflow, which is why the sync
+   pushes with the PAT.
 
 ### When a sync fails
 

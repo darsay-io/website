@@ -1,9 +1,11 @@
 name: Deploy
 
-# Ships main to darsay.io. Runs automatically when a docs pin lands on main
-# (the tail of release -> Sync CLI docs -> auto-merge) and on demand for
-# anything else via workflow_dispatch. App changes outside these paths keep
-# the deliberate manual deploy from ops/RUNBOOK.md.
+# Ships main to darsay.io on every push. main is the deployed branch and
+# every commit lands there through CI, so there is nothing to hold back:
+# the job runs the tests, the docs check, and the build before a byte
+# moves, applies pending D1 migrations, then deploys the worker. The docs
+# pin's push is one more push. workflow_dispatch remains for a redeploy
+# with nothing new to push (a rotated secret, a Cloudflare-side change).
 #
 # Needs repo secrets: CLOUDFLARE_API_TOKEN (Workers edit + D1 edit: the
 # job applies pending migrations to the production database before the
@@ -12,11 +14,6 @@ name: Deploy
 on:
   push:
     branches: [main]
-    paths:
-      - docs.lock.json
-      - src/content/docs/**
-      - public/darsay-logo.png
-      - src/assets/darsay-logo.png
   workflow_dispatch:
 
 concurrency:
