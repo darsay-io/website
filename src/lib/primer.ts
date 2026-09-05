@@ -305,12 +305,9 @@ export const PRIMER: PrimerCard[] = [
 		title: "Choose a collection",
 		lede: "A publication can contain many encodings. Choose the scope that matters to you, then review its actual files and disk bytes.",
 		body: [
-			"Enter a Hub source and choose **Explore collection**. Nothing is selected until you act. **One considered copy** starts with the smallest complete, known-size 4-bit variant; **A comparison pair** chooses that and an 8-bit counterpart; **The whole publication** selects every file. These are editable storage-oriented starting points, not publisher recommendations, quality rankings, or hardware-fit claims. A missing family has no guessed substitute.",
-			"A repository may publish many GGUF alternatives. You can collect that complete publication or choose one for a particular use. `--include` is a repeatable glob; a leading `/` anchors it to the repo root. The board supplies selectors checked against the inventory and groups all shards of a variant. Recognized support files accompany the match; optional projectors require a separate explicit selection.",
-			"**Review collection** names the exact commit, combined selectors, companions, and file total before **Add this collection** saves one row. Shared support files count once. The whole publication is the repository itself, a row with no selectors; toggling a group afterwards changes it to selected-group scope. Closing the dialog creates no row and downloads no model payload. Field notes explain encodings and recovery evidence; on a phone they open beneath each variant.",
-			"If inspection fails, retry or explicitly keep an **uninspected publication**. That separate review says **Size unknown** and requests the whole repository at the supplied revision, resolved when archiving starts. No fallback or variant choice is automatic. One source/revision has one collection per vault; combine variants you intend to keep together. A conflicting explicit scope is refused rather than silently changed.",
-			"**Exact recovery unverified** means the inventory cannot establish how hard these bytes are to recreate. That needs pinned source weights, tools, settings, calibration inputs where used, and matching output hashes. No recreation cost is invented. A collection with several encodings is not one runnable model; choose the runtime's encoding and compatible companions separately.",
-			"A fresh interactive `darsay archive` opens the terminal collection room for multi-variant GGUF models. `1/2/3` chooses a starting point, Space toggles a group, `?` opens field notes, and Enter reviews before confirming. Explicit includes, `--full`, board/catalog jobs, and non-interactive runs bypass it. `--yes` uses the default archive policy, not a default quant. A direct-source rerun resumes the pin's scope; a board job must still match its row's identity.",
+			"Enter a Hub source and choose **Explore collection**. Nothing is selected until you act. **One considered copy** starts with the smallest complete, known-size 4-bit variant; **A comparison pair** adds its 8-bit counterpart; **The whole publication** is the repository itself, a row with no selectors. These are editable, storage-oriented starting points, not recommendations, quality rankings, or hardware-fit claims, and a missing family has no guessed substitute.",
+			"**Review collection** names the exact commit, the selectors, the companions, and the file total before **Add this collection** saves one row. Shared support files count once, projectors need an explicit choice, and closing the room creates nothing. If inspection fails you can keep an **uninspected publication**: it says **Size unknown** and resolves its revision when archiving starts.",
+			"A fresh `darsay archive` of a multi-variant GGUF model opens the same room in the terminal: `1/2/3` for a starting point, Space to toggle a group, `?` for the field notes, Enter to review. Explicit includes, `--full`, board jobs, and unattended runs bypass it. **Exact recovery unverified** means an inventory cannot say how hard these bytes are to recreate; that needs pinned inputs, tools, settings, and matching hashes.",
 		],
 		collect:
 			"Collect deliberately. Combine variants in one new collection, or use an existing row's Add variant action for a separate row. Unselected files are outside the scope, not proven recoverable or disposable.",
@@ -322,8 +319,8 @@ export const PRIMER: PrimerCard[] = [
 			],
 		},
 		doc: {
-			href: "/docs/quantization/#implemented-subset-archiving-archive---include",
-			label: "Quantization → subset archiving",
+			href: "/docs/collections/",
+			label: "Choose your collection",
 		},
 		related: ["formats", "quant", "pin"],
 		lens: "subset",
