@@ -143,7 +143,7 @@ body.collection-open { overflow: hidden; }
 	.collection-variant-size small { font-size: 10px; }
 	.collection-footer { padding: 10px 18px max(12px, env(safe-area-inset-bottom)); }
 	.collection-footer-row { gap: 12px; align-items: center; }
-	.collection-footer .collection-eyebrow { font-size: 9px; letter-spacing: .07em; }
+	.collection-footer .collection-eyebrow { font-size: 10px; letter-spacing: .07em; }
 	.collection-amount { font-size: 23px; }
 	.collection-primary.btn { font-size: 11px; padding: 10px 13px; max-width: 49%; }
 	.collection-total-note { font-size: 10px; }
