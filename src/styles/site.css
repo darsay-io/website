@@ -3505,6 +3505,81 @@ dialog.guide {
 	color: var(--d-gold-hi);
 }
 
+/* The dropped rows dialog: what that word opens */
+
+dialog.guide.dropped {
+	width: min(40rem, calc(100vw - 2rem));
+}
+
+.dropped-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.dropped-empty {
+	margin: 0;
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.95rem;
+	color: var(--d-muted);
+}
+
+.dropped-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.3rem 0.8rem;
+	padding: 0.55rem 0.75rem;
+	border: 1px solid var(--d-border);
+	border-radius: 10px;
+}
+
+.dropped-src {
+	font-family: var(--d-mono);
+	font-size: 0.85rem;
+	color: var(--d-fg);
+	word-break: break-all;
+}
+
+.dropped-when {
+	margin-left: auto;
+	font-size: 0.8rem;
+	white-space: nowrap;
+}
+
+.dropped-row .btn {
+	flex-shrink: 0;
+}
+
+.dropped-note {
+	flex-basis: 100%;
+	margin: 0;
+	font-family: var(--d-serif);
+	font-style: italic;
+	font-size: 0.92rem;
+	line-height: 1.4;
+	color: var(--d-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+	/* The source takes its own line; when and Restore share the next. */
+	.dropped-src {
+		flex-basis: 100%;
+	}
+
+	.dropped-when {
+		margin-left: 0;
+	}
+
+	.dropped-row .btn {
+		margin-left: auto;
+	}
+}
+
 .toast-action {
 	appearance: none;
 	margin-left: 0.85rem;

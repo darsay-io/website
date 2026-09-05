@@ -29,6 +29,7 @@ import {
 } from "./dom.ts";
 import { plural, prettyDate, relativeTime } from "./format.ts";
 import { createAgents, type Agents } from "./agents.ts";
+import { createDropped, type Dropped } from "./dropped.ts";
 import { createGuide, type Guide } from "./guide.ts";
 import { chooseCollection, SaveRefused } from "./collection-dialog.ts";
 import type { Publication } from "./collection.ts";
@@ -478,6 +479,19 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		api,
 		onChange: reload,
 		humanError,
+	});
+
+	// What the toolbar's "N dropped" opens: the rows off the ledger, each with Restore.
+	const dropped: Dropped = createDropped({
+		boardId: id,
+		api,
+		onChange: reload,
+		humanError,
+		reveal: (rowId) => {
+			const row = board.entries.find((e) => e.id === rowId);
+			if (row) showRow(row);
+		},
+		fallbackFocus: () => shells.toolbar.querySelector<HTMLElement>(".ledger-dropped"),
 	});
 
 	/** A chip that opens a field-guide card, applied to its row. */
@@ -1253,7 +1267,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		ctl.append(more);
 
 		// Dropping is undoable, so it asks nothing: the row leaves the list
-		// and the catalog, and the toast (or the Agents panel) brings it back.
+		// and the catalog, and the toast (or the toolbar's "N dropped") brings it back.
 		const rm = el("button", { type: "button", class: "btn compact secondary work-drop", title: "Drop this row — undoable; the catalog stops asking for it, vaults are untouched" }, "Drop");
 		rm.addEventListener("click", async () => {
 			rm.disabled = true;
@@ -1507,8 +1521,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (droppedN > 0) {
 			// Dropped rows are off the ledger, not off the board: one quiet word leads to them.
 			if (parts.length) tallyEl.append(el("span", { class: "ledger-sep", "aria-hidden": "true" }, "·"));
-			const back = el("button", { type: "button", class: "linkish ledger-dropped", title: "Dropped rows can be restored from the Agents panel" }, `${droppedN} dropped`);
-			back.addEventListener("click", () => agents.open(back));
+			const back = el("button", { type: "button", class: "linkish ledger-dropped", title: "Rows off the ledger, not off the board — see them and restore any" }, `${droppedN} dropped`);
+			back.addEventListener("click", () => dropped.open(back));
 			tallyEl.append(back);
 		}
 
@@ -1812,7 +1826,8 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		if (!linked) return;
 		const rows = resolveRowLink(board.entries, linked);
 		if (!rows.length) {
-			toast(`No row here for ${linked} — a dropped row waits under ✦ Agents.`, "error");
+			if (board.counts?.dropped) toast(`No row here for ${linked} — it may be among the dropped rows.`, "error", { label: "Dropped rows", run: () => dropped.open() });
+			else toast(`No row here for ${linked}.`, "error");
 			return;
 		}
 		if (view !== "ledger" || !rows.some((r) => document.getElementById(`row-${r.id}`))) {

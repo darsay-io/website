@@ -1,8 +1,8 @@
 /**
  * The "For agents" dialog: this board, for programs. The addresses a
  * program reads (JSON, OpenAPI, MCP), the keys the URL can mint and
- * narrow, the webhooks it can register, the rows it dropped, and the
- * recent activity — who did what. Authored copy through `inline()`;
+ * narrow, the webhooks it can register, and the recent activity — who did
+ * what. Authored copy through `inline()`;
  * everything from the API is rendered with textContent.
  */
 import { SCOPES, SCOPE_HELP, type Scope } from "../worker/access.ts";
@@ -31,7 +31,6 @@ type AuditEvent = {
 	before: Record<string, unknown> | null;
 	after: Record<string, unknown> | null;
 };
-type DroppedRow = { id: number; source: string; dropped: string | null; desire: number | null };
 
 const ACTION_WORDS: Record<string, string> = {
 	"board.updated": "edited the board",
@@ -85,7 +84,6 @@ export function createAgents(ctx: AgentsContext): Agents {
 	let opener: HTMLElement | null = null;
 	let keysHost: HTMLElement | null = null;
 	let hooksHost: HTMLElement | null = null;
-	let droppedHost: HTMLElement | null = null;
 	let activityHost: HTMLElement | null = null;
 	let reveal: HTMLElement | null = null;
 
@@ -99,7 +97,7 @@ export function createAgents(ctx: AgentsContext): Agents {
 	}
 
 	async function refresh() {
-		await Promise.all([paintKeys(), paintHooks(), paintDropped(), paintActivity()]);
+		await Promise.all([paintKeys(), paintHooks(), paintActivity()]);
 	}
 
 	async function paintKeys() {
@@ -277,47 +275,6 @@ export function createAgents(ctx: AgentsContext): Agents {
 		return form;
 	}
 
-	async function paintDropped() {
-		if (!droppedHost) return;
-		try {
-			const res = (await ctx.api(`${base}/entries?dropped=only`)) as { entries: DroppedRow[] };
-			droppedHost.replaceChildren();
-			const wrap = droppedHost.closest<HTMLElement>(".agents-section");
-			if (!res.entries.length) {
-				if (wrap) wrap.hidden = true;
-				return;
-			}
-			if (wrap) wrap.hidden = false;
-			for (const r of res.entries) {
-				const restore = el("button", { type: "button", class: "btn compact secondary" }, "Restore");
-				restore.addEventListener("click", async () => {
-					restore.disabled = true;
-					try {
-						await ctx.api(`${base}/entries/${r.id}/restore`, { method: "POST" });
-						toast("Restored");
-						await paintDropped();
-						await paintActivity();
-						await ctx.onChange();
-					} catch (err) {
-						fail(err);
-						restore.disabled = false;
-					}
-				});
-				droppedHost.append(
-					el(
-						"div",
-						{ class: "agents-key" },
-						el("code", { class: "agents-key-label" }, shortSource(r.source)),
-						el("span", { class: "agents-key-when muted" }, r.dropped ? `dropped ${relativeTime(r.dropped)}` : "dropped"),
-						restore,
-					),
-				);
-			}
-		} catch (err) {
-			fail(err);
-		}
-	}
-
 	async function paintActivity() {
 		if (!activityHost) return;
 		try {
@@ -402,11 +359,6 @@ export function createAgents(ctx: AgentsContext): Agents {
 		hooksHost = el("div", { class: "agents-list" });
 		hooks.body.append(hooksHost, renderHookForm());
 
-		const dropped = section("Dropped rows", "Dropped is not gone. A dropped row leaves the ledger and the catalog, and comes back exactly as it was.");
-		droppedHost = el("div", { class: "agents-list" });
-		dropped.body.append(droppedHost);
-		dropped.root.hidden = true;
-
 		const activity = section("Recent activity", "Who did what — a person with the URL, the CLI, or a key by its label — with the columns before and after. The last thousand events are kept.");
 		activityHost = el("div", { class: "agents-list" });
 		activity.body.append(activityHost);
@@ -415,7 +367,6 @@ export function createAgents(ctx: AgentsContext): Agents {
 			addr.root,
 			keys.root,
 			hooks.root,
-			dropped.root,
 			activity.root,
 			el(
 				"p",
