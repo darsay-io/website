@@ -1971,6 +1971,13 @@ a.src-link:hover .src-name {
 	background: var(--d-gold-dim);
 }
 
+/* A repository at a commit: the third kind, ruled in gold, unfilled. */
+.chip-type-code {
+	color: var(--d-fg);
+	border-color: var(--d-gold);
+	background: transparent;
+}
+
 .chip-stat {
 	font-variant-numeric: tabular-nums;
 	color: var(--d-fg);
@@ -5009,6 +5016,11 @@ code.agents-key-label {
 /* The Hub scheme on every line of a long page is noise; the chip says what it is. */
 .src-scheme-hf {
 	display: none;
+}
+
+/* A GitHub address keeps its scheme: it says the row is not a Hub work. */
+.src-scheme-gh {
+	color: var(--d-muted);
 }
 
 .work-sub {

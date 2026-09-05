@@ -56,6 +56,7 @@ function sourceOf(ev: AuditEvent): string | null {
 /** `huggingface:Qwen/Qwen3-0.6B` → `Qwen/Qwen3-0.6B`; a home URL keeps its host and tail. */
 function shortSource(source: string): string {
 	if (source.startsWith("huggingface:")) return source.slice("huggingface:".length).replace(/^datasets\//, "datasets/");
+	if (source.startsWith("github:")) return source;
 	try {
 		const u = new URL(source);
 		return u.hostname.replace(/^www\./, "") + u.pathname.replace(/\/+$/, "");

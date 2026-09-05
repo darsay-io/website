@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { fetchEstimate } from "./estimate.ts";
-import type { HfCanonical } from "./sources.ts";
+import { fetchEstimate, fetchGitHubEstimate, lfsPatterns, matchesLfsPattern } from "./estimate.ts";
+import type { GitHubCanonical, HfCanonical } from "./sources.ts";
 import fixture from "./glm-5.3-flash-gguf.json";
 
 const hf: HfCanonical = {
@@ -181,5 +181,79 @@ describe("fetchEstimate", () => {
 		});
 		expect(urls).toHaveLength(1);
 		expect(urls[0]).toContain("/models/");
+	});
+});
+
+describe("fetchGitHubEstimate", () => {
+	const gh: GitHubCanonical = { kind: "github", canonical: "github:MiaAI-Lab/Recipe", url: "https://github.com/MiaAI-Lab/Recipe", artifactType: "code", locator: "MiaAI-Lab/Recipe" };
+	const sha = "203834ca88000c8192112e396b80d886b522caa0";
+	const tree = [
+		{ path: "README.md", type: "blob", size: 100 },
+		{ path: ".gitattributes", type: "blob", size: 40 },
+		{ path: "weights.bin", type: "blob", size: 130 },
+		{ path: "files/patch.py", type: "blob", size: 2000 },
+		{ path: "vendor/x", type: "commit" },
+	];
+	function fake(repo: Record<string, unknown> = {}, truncated = false) {
+		const auth: Array<string | null> = [];
+		const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			auth.push(new Headers(init?.headers).get("Authorization"));
+			if (url === "https://api.github.com/repos/MiaAI-Lab/Recipe") return new Response(JSON.stringify({ license: { key: "agpl-3.0" }, fork: true, parent: { full_name: "lancelind/qwen3.8-Flash-DGX" }, private: false, ...repo }));
+			if (url === "https://api.github.com/repos/MiaAI-Lab/Recipe/commits/HEAD") return new Response(JSON.stringify({ sha }));
+			if (url === "https://api.github.com/repos/MiaAI-Lab/Recipe/commits/v1") return new Response(JSON.stringify({ sha: "1".repeat(40) }));
+			if (url.startsWith("https://api.github.com/repos/MiaAI-Lab/Recipe/git/trees/")) return new Response(JSON.stringify({ tree, truncated }));
+			if (url.startsWith("https://raw.githubusercontent.com/MiaAI-Lab/Recipe/")) return new Response("*.bin filter=lfs diff=lfs merge=lfs -text\n");
+			return new Response("no", { status: 404 });
+		};
+		return { fetcher, auth };
+	}
+
+	it("prices the tree at HEAD, leaves LFS pointers unknown, and records the fork edge", async () => {
+		const hit = (await fetchGitHubEstimate(gh, null, null, fake().fetcher))!;
+		expect(hit.digest).toMatchObject({
+			artifact_type: "code",
+			revision: sha,
+			revision_ref: "HEAD",
+			payload_bytes: 2140,
+			file_count: 4,
+			unknown_size_count: 1,
+			repository_bytes: null,
+			size_basis: "repository",
+			license: "agpl-3.0",
+			gated: false,
+			parameters: null,
+			precision: null,
+			gguf_variants: [],
+			parents: [{ source: "github:lancelind/qwen3.8-Flash-DGX", relation: "fork" }],
+		});
+		expect(hit.files.find((f) => f.path === "weights.bin")!.size).toBeNull();
+		expect(hit.files.some((f) => f.path === "vendor/x")).toBe(false);
+		expect(hit.parsed).toBe(gh);
+	});
+
+	it("pins a named revision, carries the token, and prices a selection", async () => {
+		const f = fake({ fork: false });
+		const hit = (await fetchGitHubEstimate(gh, "v1", ["*.py"], f.fetcher, "ghp_x"))!;
+		expect(hit.digest.revision).toBe("1".repeat(40));
+		expect(hit.digest.revision_ref).toBe("v1");
+		expect(hit.digest.parents).toBeNull();
+		expect(hit.digest).toMatchObject({ size_basis: "selection", payload_bytes: 2100, file_count: 2, unknown_size_count: 0 });
+		expect(hit.digest.hints).toContain("subset");
+		expect(f.auth.every((a) => a === "Bearer ghp_x")).toBe(true);
+	});
+
+	it("leaves a truncated tree and a missing repository unpriced", async () => {
+		expect(await fetchGitHubEstimate(gh, null, null, fake({}, true).fetcher)).toBeNull();
+		expect(await fetchGitHubEstimate(gh, null, null, async () => new Response("no", { status: 404 }))).toBeNull();
+	});
+
+	it("reads gitattributes the way the CLI does", () => {
+		expect(lfsPatterns("# c\n*.bin filter=lfs diff=lfs merge=lfs -text\n*.md text\nmodels/*.pt filter=lfs\n")).toEqual(["*.bin", "models/*.pt"]);
+		expect(matchesLfsPattern("deep/dir/w.bin", "*.bin")).toBe(true);
+		expect(matchesLfsPattern("models/w.pt", "models/*.pt")).toBe(true);
+		expect(matchesLfsPattern("other/w.pt", "models/*.pt")).toBe(false);
+		expect(matchesLfsPattern("w.pt", "/w.pt")).toBe(true);
+		expect(matchesLfsPattern("sub/w.pt", "/w.pt")).toBe(false);
 	});
 });

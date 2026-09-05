@@ -24,6 +24,7 @@ export type PrimerKey =
 	| "moe"
 	| "spec"
 	| "dataset"
+	| "code"
 	| "family"
 	| "closed"
 	| "desire"
@@ -421,6 +422,29 @@ export const PRIMER: PrimerCard[] = [
 		doc: { href: "/docs/datasets/", label: "Datasets" },
 		related: ["bundle", "base"],
 		lens: "dataset",
+	},
+	{
+		key: "code",
+		group: "Anatomy",
+		title: "Code bundles",
+		lede: "The third artifact type. A repository at one commit — github:owner/repo — payload under code/, same verbs.",
+		body: [
+			"A code bundle is the tree at a pinned commit, kept the way a model bundle keeps a snapshot: a frozen `code/` payload with every file's git SHA-1 as its upstream expectation, a manifest of recorded facts, generated views, and your `curation.md`. It has no engine — `hydrate` and `run` do not apply; copy the tree out and follow its README. `HEAD` is the default revision, whatever the default branch is called.",
+			"The manifest records what the tree carries — a Dockerfile, a compose file, a launcher, an env template — and what it names that lives elsewhere: the checkpoint a serving recipe serves, the image it runs in, a repository it credits. Those are strings found in files, recorded with their provenance, never a claim about what the code loads at run time. Exactly one model named in code that resolves upstream becomes the row's `references` edge.",
+		],
+		collect: "Keep the recipe that ran a model beside the model. The launcher, the patches, and the image tag are the most perishable part of standing it up — and the tree pins no revision of the checkpoint, so the model bundle in your vault is the pinned instance.",
+		cmd: {
+			label: "same verbs",
+			lines: [
+				"darsay estimate github:owner/repo",
+				"darsay archive  github:owner/repo",
+				"darsay info     github--owner--repo",
+			],
+		},
+		// Moves to /docs/code/ when the docs lock reaches the release that carries CODE.md.
+		doc: { href: "/docs/concepts/", label: "Concepts" },
+		related: ["bundle", "dataset", "workbench"],
+		lens: "code",
 	},
 	{
 		key: "family",

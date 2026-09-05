@@ -3,7 +3,7 @@ import { dominantFormat, hintsFrom, isWeightFile, type SizedFile } from "./hints
 import { bytesPerParam, precisionFacts } from "./precision.ts";
 import { ggufVariants, isProjector, modelWeightBytes } from "./gguf.ts";
 import { selectSubset } from "./subset.ts";
-import type { HfCanonical } from "./sources.ts";
+import type { GitHubCanonical, HfCanonical } from "./sources.ts";
 import { asDatasetCanonical } from "./sources.ts";
 import { utcNow } from "./validate.ts";
 
@@ -223,4 +223,153 @@ export async function fetchEstimate(
 	const retargeted = asDatasetCanonical(parsed);
 	const digest = digestFrom(retargeted, dataset.info, rev, null, include);
 	return digest ? { parsed: retargeted, digest, files: inventoryFrom(dataset.info) } : null;
+}
+
+/* ── GitHub: a repository at one commit, priced from its tree ─────────────── */
+
+const GITHUB_API = "https://api.github.com";
+const GITHUB_RAW = "https://raw.githubusercontent.com";
+/** A Git LFS pointer is a few lines; a routed blob this small has an unknown true size. */
+const LFS_POINTER_MAX_BYTES = 1024;
+
+export type GitHubEstimateHit = { parsed: GitHubCanonical; digest: EstimateDigest; files: SizedFile[] };
+
+type TreeEntry = { path?: string; type?: string; size?: number | null };
+
+async function githubGet(
+	url: string,
+	fetchImpl: typeof fetch,
+	token: string | undefined,
+	accept: string,
+): Promise<{ ok: true; res: Response } | { ok: false; status: number }> {
+	const ac = new AbortController();
+	const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+	try {
+		const headers: Record<string, string> = { Accept: accept, "User-Agent": "darsay.io", "X-GitHub-Api-Version": "2022-11-28" };
+		if (token) headers.Authorization = `Bearer ${token}`;
+		const res = await fetchImpl(url, { signal: ac.signal, headers });
+		if (!res.ok) return { ok: false, status: res.status };
+		return { ok: true, res };
+	} catch {
+		return { ok: false, status: 0 };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function githubJson(path: string, fetchImpl: typeof fetch, token?: string): Promise<Record<string, unknown> | null> {
+	const got = await githubGet(`${GITHUB_API}${path}`, fetchImpl, token, "application/vnd.github+json");
+	if (!got.ok) return null;
+	try {
+		const json = (await got.res.json()) as unknown;
+		return json !== null && typeof json === "object" && !Array.isArray(json) ? (json as Record<string, unknown>) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** The patterns a `.gitattributes` routes through Git LFS — the CLI's `lfs_patterns`. */
+export function lfsPatterns(text: string): string[] {
+	const out: string[] = [];
+	for (const raw of text.split("\n")) {
+		const line = raw.trim();
+		if (!line || line.startsWith("#")) continue;
+		const parts = line.split(/\s+/);
+		if (parts.length >= 2 && parts.slice(1).includes("filter=lfs")) out.push(parts[0]);
+	}
+	return out;
+}
+
+function globToRe(pattern: string): RegExp {
+	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+	return new RegExp(`^${escaped}$`);
+}
+
+/** gitattributes matching: a pattern with a slash is anchored at the root; one without matches the file name at any depth. */
+export function matchesLfsPattern(path: string, pattern: string): boolean {
+	const p = pattern.trim();
+	if (p.startsWith("/")) return globToRe(p.slice(1)).test(path);
+	if (p.includes("/")) return globToRe(p).test(path);
+	return globToRe(p).test(path.slice(path.lastIndexOf("/") + 1));
+}
+
+/**
+ * Price a GitHub repository: the repository, the commit `revision` (or
+ * `HEAD`, the default branch) resolves to, and its tree — the three calls
+ * the CLI's pin makes. Blobs `.gitattributes` routes through LFS are
+ * pointers, so their true size is unknown and the total is a lower bound;
+ * a tree GitHub cannot list in one call is left unpriced rather than
+ * priced partially. Nothing is guessed: no parameters, no precision.
+ */
+export async function fetchGitHubEstimate(
+	parsed: GitHubCanonical,
+	revision: string | null,
+	include: string[] | null = null,
+	fetchImpl: typeof fetch = fetch,
+	token?: string,
+): Promise<GitHubEstimateHit | null> {
+	const ref = revision && revision.length > 0 ? revision : "HEAD";
+	const repo = await githubJson(`/repos/${parsed.locator}`, fetchImpl, token);
+	if (!repo) return null;
+	const commit = await githubJson(`/repos/${parsed.locator}/commits/${encodeURIComponent(ref)}`, fetchImpl, token);
+	const sha = commit && typeof commit.sha === "string" ? commit.sha : null;
+	if (!sha) return null;
+	const tree = await githubJson(`/repos/${parsed.locator}/git/trees/${sha}?recursive=1`, fetchImpl, token);
+	if (!tree || tree.truncated === true || !Array.isArray(tree.tree)) return null;
+	const validSize = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+	const blobs = (tree.tree as TreeEntry[]).filter((e) => e.type === "blob" && typeof e.path === "string");
+	let patterns: string[] = [];
+	if (blobs.some((e) => e.path === ".gitattributes")) {
+		const got = await githubGet(`${GITHUB_RAW}/${parsed.locator}/${sha}/.gitattributes`, fetchImpl, token, "text/plain");
+		if (got.ok) {
+			try {
+				patterns = lfsPatterns(await got.res.text());
+			} catch {
+				patterns = [];
+			}
+		}
+	}
+	const files: SizedFile[] = blobs.map((e) => {
+		const path = e.path as string;
+		const size = validSize(e.size) ? e.size : null;
+		const pointer = size !== null && size <= LFS_POINTER_MAX_BYTES && patterns.some((p) => matchesLfsPattern(path, p));
+		return { path, size: pointer ? null : size };
+	});
+	const selected = include?.length ? selectSubset(files, include) : files;
+	if (!selected) return null;
+	let payload = 0;
+	let unknown = 0;
+	for (const f of selected) {
+		if (f.size !== null) payload += f.size;
+		else unknown += 1;
+	}
+	const payloadBytes = selected.length ? payload : null;
+	const licenseObj = repo.license;
+	const license = licenseObj !== null && typeof licenseObj === "object" && typeof (licenseObj as { key?: unknown }).key === "string" ? (licenseObj as { key: string }).key : null;
+	const parentObj = repo.parent;
+	const parent = repo.fork === true && parentObj !== null && typeof parentObj === "object" && typeof (parentObj as { full_name?: unknown }).full_name === "string" ? (parentObj as { full_name: string }).full_name : null;
+	const digest: EstimateDigest = {
+		as_of: utcNow(),
+		artifact_type: "code",
+		revision: sha,
+		revision_ref: ref,
+		payload_bytes: payloadBytes,
+		size_basis: include?.length ? "selection" : "repository",
+		repository_bytes: files.length && files.every((f) => f.size !== null) ? files.reduce((n, f) => n + f.size!, 0) : null,
+		file_count: selected.length || null,
+		license,
+		gated: repo.private === true,
+		parameters: null,
+		parameters_source: null,
+		dominant_dtype: null,
+		unknown_size_count: unknown,
+		hints: hintsFrom({ payloadBytes, gated: false, subset: !!include?.length, dominantDtype: null, dominantFormat: null, weightsBytes: null, paramsByDtype: null }),
+		classification: null,
+		gguf_variants: [],
+		precision: null,
+		bytes_per_param: null,
+		architecture: null,
+		parents: parent ? [{ source: `github:${parent}`, relation: "fork" }] : null,
+	};
+	return { parsed, digest, files };
 }

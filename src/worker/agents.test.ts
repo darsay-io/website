@@ -803,3 +803,41 @@ describe("the board page, for a program", () => {
 		expect(doc.links).toMatchObject({ mcp: "http://localhost/mcp", card: "http://localhost/.well-known/mcp-server-card", openapi: "http://localhost/openapi.json" });
 	});
 });
+
+describe("code rows", () => {
+	it("adds a GitHub repository as a code row, prices it from its tree, filters by type, and refuses a buried revision", async () => {
+		const h = env(new TestD1(), { GITHUB_TOKEN: "ghp_test" });
+		const id = await mkBoard(h);
+		const sha = "203834ca88000c8192112e396b80d886b522caa0";
+		const auth: Array<string | null> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				if (url.startsWith("https://api.github.com/")) auth.push(new Headers(init?.headers).get("Authorization"));
+				if (url === "https://api.github.com/repos/MiaAI-Lab/Recipe") return new Response(JSON.stringify({ license: { key: "agpl-3.0" }, fork: false }));
+				if (url.startsWith("https://api.github.com/repos/MiaAI-Lab/Recipe/commits/")) return new Response(JSON.stringify({ sha }));
+				if (url.startsWith("https://api.github.com/repos/MiaAI-Lab/Recipe/git/trees/")) {
+					return new Response(JSON.stringify({ tree: [{ path: "README.md", type: "blob", size: 100 }, { path: "start.sh", type: "blob", size: 900 }], truncated: false }));
+				}
+				return new Response("no", { status: 404 });
+			}),
+		);
+		const a = await addRow(h, id, { source: "https://github.com/MiaAI-Lab/Recipe", desire: 7 });
+		expect(a.status).toBe(201);
+		expect(a.row.source).toBe("github:MiaAI-Lab/Recipe");
+		expect(a.row.address).toEqual({ kind: "code", provider: "github", locator: "MiaAI-Lab/Recipe", url: "https://github.com/MiaAI-Lab/Recipe" });
+		expect(a.row.artifact_type).toBe("code");
+		expect(a.row.payload_bytes).toBe(1000);
+		expect(a.row.closed).toBe(false);
+		expect(auth.length).toBeGreaterThan(0);
+		expect(auth.every((v) => v === "Bearer ghp_test")).toBe(true);
+		const rows = (await (await call(h, `/api/boards/${id}/entries?type=code`)).json()) as { entries: Array<{ source: string }> };
+		expect(rows.entries.map((r) => r.source)).toEqual(["github:MiaAI-Lab/Recipe"]);
+		const none = (await (await call(h, `/api/boards/${id}/entries?type=model`)).json()) as { entries: unknown[] };
+		expect(none.entries).toEqual([]);
+		const buried = await addRow(h, id, { source: "https://github.com/MiaAI-Lab/Recipe/tree/v1" });
+		expect(buried.status).toBe(400);
+		expect(JSON.stringify(buried.row)).toContain("revision v1");
+	});
+});

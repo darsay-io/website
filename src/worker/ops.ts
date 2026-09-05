@@ -38,10 +38,10 @@ import {
 	type BoardRow,
 	type EntryRow,
 } from "./catalog.ts";
-import { fetchEstimate } from "./estimate.ts";
+import { fetchEstimate, fetchGitHubEstimate } from "./estimate.ts";
 import { ggufVariants, isProjector } from "./gguf.ts";
 import { announce, auditToApi, capStmts, commit, readCap, type Actor, type AuditEvent, type AuditRow } from "./ledger.ts";
-import { canonicalizeSource, type HfCanonical } from "./sources.ts";
+import { canonicalizeSource, type HfCanonical, type GitHubCanonical } from "./sources.ts";
 import {
 	CLAIM_TTL_MS,
 	MAX_BOARD_NOTE,
@@ -71,6 +71,8 @@ export type OpCtx = {
 	/** The revision the caller believes the board is at (If-Match), or null. */
 	expectRevision: number | null;
 	origin: string;
+	/** A GitHub token from the environment, so pricing a repository is not bound by the unauthenticated allowance. */
+	githubToken?: string;
 	waitUntil: (p: Promise<unknown>) => void;
 };
 
@@ -275,7 +277,7 @@ export async function opRows(ctx: OpCtx, q: RowQuery = {}): Promise<OpResult> {
 		rows = rows.filter((r) => r.status === q.status);
 	}
 	if (q.type !== undefined && q.type !== "") {
-		if (!["model", "dataset", "closed", "opaque"].includes(String(q.type))) return fail(400, "invalid type");
+		if (!["model", "dataset", "code", "closed", "opaque"].includes(String(q.type))) return fail(400, "invalid type");
 		rows = rows.filter((r) => r.address.kind === q.type);
 	}
 	const lensKeys: LensKey[] = [];
@@ -323,10 +325,21 @@ export async function opRow(ctx: OpCtx, id: number): Promise<OpResult> {
 
 type Priced = { canonical: string; estimateJson: string | null; payloadBytes: number | null; priced: boolean };
 
-async function price(identity: Identity): Promise<Priced> {
-	if (identity.kind !== "hf") return { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false };
+/** A source the board can price — a Hub or GitHub address. A closed work or an opaque scheme has no price. */
+function priceable(kind: Identity["kind"]): boolean {
+	return kind === "hf" || kind === "github";
+}
+
+async function price(identity: Identity, githubToken?: string): Promise<Priced> {
+	const unpriced: Priced = { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false };
+	if (identity.kind === "github") {
+		const hit = await fetchGitHubEstimate(identity.parsed as GitHubCanonical, identity.revision || null, identity.include, fetch, githubToken);
+		if (!hit) return unpriced;
+		return { canonical: hit.parsed.canonical, estimateJson: JSON.stringify(hit.digest), payloadBytes: hit.digest.payload_bytes, priced: true };
+	}
+	if (identity.kind !== "hf") return unpriced;
 	const hit = await fetchEstimate(identity.parsed as HfCanonical, identity.revision || null, identity.include);
-	if (!hit) return { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false };
+	if (!hit) return unpriced;
 	return {
 		canonical: hit.parsed.canonical,
 		estimateJson: JSON.stringify(hit.digest),
@@ -418,7 +431,7 @@ export async function opRowAdd(ctx: OpCtx, body: Record<string, unknown>): Promi
 		return { status: 200, headers: { ETag: etag(ctx.board.revision) }, body: entryToApi(existing!) };
 	}
 	const now = utcNow();
-	const priced = settled ? { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false } : await price(identity);
+	const priced = settled ? { canonical: identity.canonical, estimateJson: null, payloadBytes: null, priced: false } : await price(identity, ctx.githubToken);
 	if (body.refresh === true && !priced.priced) return fail(502, "estimate_unavailable");
 	if (!existing && priced.canonical !== identity.canonical) {
 		existing = findByIdentity(rows, priced.canonical, identity.revision, identity.includeKey);
@@ -526,8 +539,11 @@ export async function opRowPatch(ctx: OpCtx, id: number, body: Record<string, un
 	let estimateJson = existing.estimate_json;
 	let payloadBytes = existing.payload_bytes;
 	if (identityChanged) {
-		if (parsedSrc.kind === "hf") {
-			const hit = await fetchEstimate(parsedSrc, rev || null, include);
+		if (parsedSrc.kind === "hf" || parsedSrc.kind === "github") {
+			const hit =
+				parsedSrc.kind === "hf"
+					? await fetchEstimate(parsedSrc, rev || null, include)
+					: await fetchGitHubEstimate(parsedSrc, rev || null, include, fetch, ctx.githubToken);
 			if (hit) {
 				canonical = hit.parsed.canonical;
 				estimateJson = JSON.stringify(hit.digest);
@@ -662,9 +678,9 @@ async function executePlan(ctx: OpCtx, rows: EntryRow[], steps: PlanStep[], idOp
 	for (const step of steps) {
 		if (step.kind === "add") {
 			let priced: Priced = { canonical: step.identity.canonical, estimateJson: null, payloadBytes: null, priced: false };
-			if (step.identity.kind === "hf" && budget > 0) {
+			if (priceable(step.identity.kind) && budget > 0) {
 				budget -= 1;
-				priced = await price(step.identity);
+				priced = await price(step.identity, ctx.githubToken);
 			}
 			const retarget = priced.canonical !== step.identity.canonical ? byIdentity.get(identityKey(priced.canonical, step.identity.revision, step.identity.includeKey)) : undefined;
 			if (retarget) {

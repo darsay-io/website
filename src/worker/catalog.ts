@@ -122,12 +122,14 @@ export type EntryRow = {
 /** A row's address, structured: where the work lives and how it is named there. */
 export type Address =
 	| { kind: "model" | "dataset"; provider: "huggingface"; locator: string; url: string }
+	| { kind: "code"; provider: "github"; locator: string; url: string }
 	| { kind: "closed"; provider: null; locator: string; url: string }
 	| { kind: "opaque"; provider: string; locator: string; url: null };
 
 export function addressOf(source: string): Address {
 	const p = canonicalizeSource(source);
 	if (p.kind === "hf") return { kind: p.artifactType, provider: "huggingface", locator: p.locator, url: p.url };
+	if (p.kind === "github") return { kind: "code", provider: "github", locator: p.locator, url: p.url };
 	if (p.kind === "home") return { kind: "closed", provider: null, locator: p.canonical, url: p.canonical };
 	const i = source.indexOf(":");
 	return {

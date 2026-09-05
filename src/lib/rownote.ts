@@ -150,7 +150,7 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 		case "bundle": {
 			const dir = bundleName(row.source);
 			if (!dir) return null;
-			return `Lands as \`~/darsay/${dir}/${revision12(row.revision)}/\` — \`${row.artifact_type === "dataset" ? "data" : "model"}/\` frozen, \`manifest.json\` beside it.`;
+			return `Lands as \`~/darsay/${dir}/${revision12(row.revision)}/\` — \`${row.artifact_type === "dataset" ? "data" : row.artifact_type === "code" ? "code" : "model"}/\` frozen, \`manifest.json\` beside it.`;
 		}
 		case "moe": {
 			const moe = moeFromName(row.source);
@@ -168,7 +168,11 @@ export function rowNote(key: PrimerKey, row: RowFacts): string | null {
 			return "Read from the name. Only useful beside the exact target it was made for — add that row too, at the same desire.";
 		case "dataset":
 			if (row.artifact_type === "dataset") return `A dataset row: payload lands under \`data/\`${bytes !== null ? `, **${scopedSize(row)}**` : ""}. No engine — open the files.`;
+			if (row.artifact_type === "code") return "A code row: a repository at one commit lands under `code/`. No engine — copy the tree out and follow its README.";
 			return "A model row. Datasets are addressed as `datasets/owner/name`.";
+		case "code":
+			if (row.artifact_type === "code") return `A code row: the tree at one commit lands under \`code/\`${bytes !== null ? `, **${scopedSize(row)}**` : ""}. What it declares and references is read from the files, never guessed. No engine — copy it out and follow its README.`;
+			return "A model row. Repositories are addressed as `github:owner/repo`.";
 		case "desire": {
 			const d = row.desire
 				? `Desire **${row.desire}**`
@@ -233,6 +237,7 @@ function weightBytes(row: RowFacts): number | null {
 function trainingNote(row: RowFacts): string | null {
 	if (isClosed(row)) return "A closed work: whatever made it, the weights are not published.";
 	if (row.artifact_type === "dataset") return "A dataset is the other half of a run: the tokens, not the weights. Six FLOPs per parameter per token of it.";
+	if (row.artifact_type === "code") return "A code row: the harness, not the weights — the launcher and the patches that stood a model up on one machine.";
 	const p = row.parameters;
 	if (!p) return "No parameter count on record — `darsay estimate` reads it from the headers, and then this card can price the run.";
 	const tokens = 20 * p;
@@ -245,6 +250,7 @@ function trainingNote(row: RowFacts): string | null {
 function postTrainNote(row: RowFacts): string | null {
 	if (isClosed(row)) return null;
 	if (row.artifact_type === "dataset") return "A dataset row. If it is conversations, it is post-training data; if it is prompts with answers, it is what a verifiable reward checks.";
+	if (row.artifact_type === "code") return null;
 	const variants = lineageOf(row.source).variants;
 	const parts: string[] = [];
 	if (variants.includes("base")) parts.push("**base** — the pretrained predictor; it completes text and does not answer");
@@ -259,6 +265,7 @@ function postTrainNote(row: RowFacts): string | null {
 function fineTuneNote(row: RowFacts): string | null {
 	if (isClosed(row)) return null;
 	if (row.artifact_type === "dataset") return "A dataset row: fine-tuning data is one JSON object per line in the model's chat format. Hold a tenth out before you start.";
+	if (row.artifact_type === "code") return "A code row: if this is training code, the recipe is here and the weights it needs are on another row.";
 	const p = row.parameters;
 	if (!p) return "No parameter count on record yet, so no adapter arithmetic — `darsay estimate` reads it from the headers.";
 	return `**${humanParams(p)}** parameters: a LoRA on the BF16 base needs about ${humanSize(2 * p)} for the frozen weights plus a gigabyte or two for the adapter and its states; QLoRA at four bits, about ${humanSize(0.58 * p)} plus the same; a full fine-tune, ${humanSize(16 * p)} before activations. Activations are the knob when it does not fit.`;
@@ -267,6 +274,7 @@ function fineTuneNote(row: RowFacts): string | null {
 function memoryNote(row: RowFacts): string | null {
 	if (isClosed(row)) return "A closed work: nothing to load.";
 	if (row.artifact_type === "dataset") return "A dataset does not load into memory as a model does; readers stream its rows.";
+	if (row.artifact_type === "code") return "A code row does not load into memory; its README says what the model it runs needs.";
 	const w = weightBytes(row);
 	if (w === null) {
 		if (row.payload_bytes !== null && (row.gguf_variants?.length ?? 0) > 1) return `**${scopedSize(row)}** prices ${row.gguf_variants!.length} alternative variants together. Choose one — Add variant on the recipe card — and this note sizes it.`;
@@ -286,6 +294,7 @@ function memoryNote(row: RowFacts): string | null {
 function runtimeNote(row: RowFacts): string | null {
 	if (isClosed(row)) return "A closed work: an API, not a runtime.";
 	if (row.artifact_type === "dataset") return "A dataset matches no engine: `darsay run` has nothing to run, and any Parquet or JSON Lines reader opens the files under `data/`.";
+	if (row.artifact_type === "code") return "A code row is a runtime of its own — a launcher, an image, the patches between them. `darsay run` has nothing to run; copy `code/` out and follow its README.";
 	const n = row.gguf_variants?.length ?? 0;
 	const gguf = n > 0 || /gguf/i.test(row.source);
 	if (gguf) {
@@ -299,6 +308,7 @@ function runtimeNote(row: RowFacts): string | null {
 function convertNote(row: RowFacts): string | null {
 	if (isClosed(row)) return null;
 	if (row.artifact_type === "dataset") return "Datasets convert between Parquet, JSON Lines, and Arrow losslessly; the tokenizer that reads them belongs to the model.";
+	if (row.artifact_type === "code") return null;
 	const c = row.classification;
 	const n = row.gguf_variants?.length ?? 0;
 	const variants = n > 1 ? `${n} GGUF variants are published here, each a distinct artifact of one toolchain run. ` : "";
@@ -314,5 +324,6 @@ function workbenchNote(row: RowFacts): string | null {
 	const dir = bundleName(row.source);
 	if (!dir) return null;
 	if (row.artifact_type === "dataset") return `Lands as \`~/darsay/${dir}/${revision12(row.revision)}/data/\`; no engine to hydrate — open the files with any reader, and write anything you make elsewhere.`;
+	if (row.artifact_type === "code") return `Lands as \`~/darsay/${dir}/${revision12(row.revision)}/code/\`; no engine to hydrate — copy the tree to a working directory and run it there, never in place.`;
 	return `\`darsay hydrate ${dir}\` builds an environment under the vault's \`.runtime/\` and leaves \`~/darsay/${dir}/${revision12(row.revision)}/model/\` to be read in place; point a converter or trainer at that directory and write the output beside a recipe that names this pin.`;
 }

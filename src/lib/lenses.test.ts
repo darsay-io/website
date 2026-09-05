@@ -248,3 +248,20 @@ describe("view state in the hash", () => {
 		expect(parseView(link).row).toBe("https://example.com/a?b=1&c=2");
 	});
 });
+
+describe("code rows", () => {
+	it("pass the code lens, never the dataset or name lenses, and read their repo name", () => {
+		const code = row({ source: "github:MiaAI-Lab/Qwen3-8B-Base-Recipe", artifact_type: "code", dominant_dtype: null });
+		const seen = lensesFor(code);
+		expect(seen.has("code")).toBe(true);
+		expect(seen.has("dataset")).toBe(false);
+		expect(seen.has("base")).toBe(false);
+		expect(seen.has("closed")).toBe(false);
+		expect(repoName("github:MiaAI-Lab/Recipe")).toBe("Recipe");
+		expect(isBaseModel("github:o/Qwen3-8B-Base")).toBe(false);
+		expect(isSpeculator("github:o/eagle-llama-draft")).toBe(false);
+		// The address alone says code when the digest has not arrived.
+		expect(lensesFor(row({ source: "github:o/r", artifact_type: null, payload_bytes: null })).has("code")).toBe(true);
+		expect(applyLenses([code, row()], ["code"])).toEqual([code]);
+	});
+});

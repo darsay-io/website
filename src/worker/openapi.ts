@@ -19,7 +19,7 @@ const json = (schema: Json, description = ""): Json => ({ description, content: 
 const err = (description: string): Json => json(ref("Error"), description);
 
 const SOURCE_DESC =
-	"An address in any accepted spelling: owner/name, huggingface:owner/name, datasets/owner/name, a Hub URL, or an https home page (a closed work). Stored canonical: huggingface:owner/name, huggingface:datasets/owner/name, or the page URL.";
+	"An address in any accepted spelling: owner/name, huggingface:owner/name, datasets/owner/name, a Hub URL, github:owner/repo or a GitHub repository URL (a code bundle), or an https home page (a closed work). Stored canonical: huggingface:owner/name, huggingface:datasets/owner/name, github:owner/repo, or the page URL.";
 
 const schemas: Record<string, Json> = {
 	Error: {
@@ -33,7 +33,7 @@ const schemas: Record<string, Json> = {
 		description: "The row's address, structured.",
 		required: ["kind", "provider", "locator", "url"],
 		properties: {
-			kind: { type: "string", enum: ["model", "dataset", "closed", "opaque"] },
+			kind: { type: "string", enum: ["model", "dataset", "code", "closed", "opaque"] },
 			provider: { type: ["string", "null"], description: "huggingface for Hub rows; null for a closed work's home page." },
 			locator: { type: "string", description: "owner/name on the provider, or the page URL." },
 			url: { type: ["string", "null"] },
@@ -86,7 +86,7 @@ const schemas: Record<string, Json> = {
 			size_basis: { type: ["string", "null"], enum: ["repository", "selection", "archive", null], description: "repository: whole upstream inventory; selection: include patterns plus sidecars; archive: the CLI's classified default, including unresolved files." },
 			repository_bytes: { type: ["integer", "null"], description: "Whole repository total; null when any upstream size is unknown." },
 			unknown_size_count: { type: ["integer", "null"], minimum: 0 },
-			artifact_type: { type: ["string", "null"], enum: ["model", "dataset", null] },
+			artifact_type: { type: ["string", "null"], enum: ["model", "dataset", "code", null] },
 			gated: { type: ["boolean", "null"] },
 			parameters: { type: ["integer", "null"] },
 			parameters_source: { type: ["string", "null"], enum: ["safetensors", "gguf", null], description: "The Hub metadata field establishing the parameter count." },
@@ -373,7 +373,7 @@ const BOARD_ROUTES: Route[] = [
 	{
 		path: "/entries",
 		ops: {
-			get: { summary: "Find rows", description: "Filter by address, status, type, the board's own lenses, family, desire range, or free text. Pass source to ask whether a work is already on the board.", scope: "read", parameters: [IF_NONE_MATCH, { name: "q", in: "query", schema: { type: "string" } }, { name: "source", in: "query", schema: { type: "string" }, description: SOURCE_DESC }, { name: "status", in: "query", schema: { type: "string", enum: ["want", "have"] } }, { name: "type", in: "query", schema: { type: "string", enum: ["model", "dataset", "closed", "opaque"] } }, { name: "lens", in: "query", schema: { type: "string" }, description: "Comma-separated, AND-combined: " + LENSES.map((l) => l.key).join(", ") }, { name: "family", in: "query", schema: { type: "string" } }, { name: "desire_min", in: "query", schema: { type: "integer" } }, { name: "desire_max", in: "query", schema: { type: "integer" } }, { name: "dropped", in: "query", schema: { type: "string", enum: ["none", "all", "only"] } }, { name: "limit", in: "query", schema: { type: "integer" } }], responses: { "200": json(ref("Rows")), "400": err("An unknown lens, status, or type.") } },
+			get: { summary: "Find rows", description: "Filter by address, status, type, the board's own lenses, family, desire range, or free text. Pass source to ask whether a work is already on the board.", scope: "read", parameters: [IF_NONE_MATCH, { name: "q", in: "query", schema: { type: "string" } }, { name: "source", in: "query", schema: { type: "string" }, description: SOURCE_DESC }, { name: "status", in: "query", schema: { type: "string", enum: ["want", "have"] } }, { name: "type", in: "query", schema: { type: "string", enum: ["model", "dataset", "code", "closed", "opaque"] } }, { name: "lens", in: "query", schema: { type: "string" }, description: "Comma-separated, AND-combined: " + LENSES.map((l) => l.key).join(", ") }, { name: "family", in: "query", schema: { type: "string" } }, { name: "desire_min", in: "query", schema: { type: "integer" } }, { name: "desire_max", in: "query", schema: { type: "integer" } }, { name: "dropped", in: "query", schema: { type: "string", enum: ["none", "all", "only"] } }, { name: "limit", in: "query", schema: { type: "integer" } }], responses: { "200": json(ref("Rows")), "400": err("An unknown lens, status, or type.") } },
 			post: { summary: "Add a row (upsert by address)", description: "A new address is priced from the Hub and added (201). An address already on the board is updated with the fields sent, or restored if it was dropped, or left untouched when identical (200, no revision bump). refresh: true reads a fresh Hub inventory while preserving decided columns.", scope: "write", parameters: [IF_MATCH, IDEMPOTENCY], requestBody: json(ref("RowUpsert")), responses: { "201": json(ref("Row"), "Added."), "200": json(ref("Row"), "Already there: updated, restored, refreshed, or unchanged."), "400": err("A bad address or field, or the board is full (entry_cap, " + MAX_ENTRIES + " rows)."), "412": err("Stale."), "502": err("estimate_unavailable: the explicit refresh failed; cached facts are unchanged.") } },
 		},
 	},

@@ -1,4 +1,4 @@
-import { artifactTypeFromSource, canonicalizeSource, hfUrlFromCanonical } from "../worker/sources.ts";
+import { artifactTypeFromSource, canonicalizeSource, hfUrlFromCanonical, urlFromCanonical } from "../worker/sources.ts";
 import {
 	DEFAULT_DIAL_INDICES,
 	GAUGE_META,
@@ -249,7 +249,7 @@ export function mountCreate(root: HTMLElement) {
 }
 
 export function entryArtifactType(e: Pick<Entry, "source" | "artifact_type">): string {
-	if (e.artifact_type === "dataset" || e.artifact_type === "model") return e.artifact_type;
+	if (e.artifact_type === "dataset" || e.artifact_type === "model" || e.artifact_type === "code") return e.artifact_type;
 	return artifactTypeFromSource(e.source) ?? "—";
 }
 
@@ -308,6 +308,7 @@ export function ledgerGroup(e: Entry, key: SortKey): { key: string; label: strin
 		const t = entryArtifactType(e);
 		if (t === "dataset") return { key: "dataset", label: "datasets" };
 		if (t === "model") return { key: "model", label: "models" };
+		if (t === "code") return { key: "code", label: "code" };
 		return { key: "other", label: "unnamed kinds" };
 	}
 	if (key === "family") {
@@ -331,6 +332,7 @@ export function factPrimer(fact: string): PrimerKey | null {
 	if (fact === "closed") return "closed";
 	if (/\bglobs?$/.test(fact)) return "subset";
 	if (fact === "dataset") return "dataset";
+	if (fact === "code") return "code";
 	if (fact === "model") return "bundle";
 	if (/^\d[\d.]*[BMT]\b/.test(fact) || /B\/param$/.test(fact)) return "dtype";
 	if (/\b(repository total|selection|archive)\b/.test(fact)) return "archive";
@@ -1055,6 +1057,14 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			const name = source.replace(/\/+$/, "").slice(source.replace(/\/+$/, "").lastIndexOf("/") + 1);
 			return [el("span", { class: "src-scheme" }, `${parsed.host}/`), el("span", { class: "src-name" }, name)];
 		}
+		if (parsed.kind === "github") {
+			const [owner, ...rest] = parsed.locator.split("/");
+			return [
+				el("span", { class: "src-scheme src-scheme-gh" }, "github:"),
+				el("span", { class: "src-owner" }, `${owner}/`),
+				el("span", { class: "src-name" }, rest.join("/")),
+			];
+		}
 		if (parsed.kind !== "hf") return [el("span", { class: "src-name" }, source)];
 		const prefix = parsed.artifactType === "dataset" ? "huggingface:datasets/" : "huggingface:";
 		const [owner, ...rest] = parsed.locator.split("/");
@@ -1080,7 +1090,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const folio = el("span", { class: "work-folio", "aria-hidden": "true" }, String(index + 1));
 
 		const src = el("div", { class: "work-id" });
-		const href = closed ? e.source : hfUrlFromCanonical(e.source);
+		const href = closed ? e.source : urlFromCanonical(e.source);
 		if (href) src.append(el("a", { href, rel: "noreferrer", target: "_blank", class: "src-link" }, ...sourceLabel(e.source)));
 		else src.append(el("span", { class: "src-link" }, ...sourceLabel(e.source)));
 		const sub: string[] = [];
@@ -1095,6 +1105,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		}
 		if (closed) facts.append(teachChip("closed", "closed", "chip-type chip-closed", e, "A home page, not a source — a place held in its family"));
 		else if (kind === "dataset") facts.append(teachChip("dataset", "dataset", "chip-type chip-type-dataset", e));
+		else if (kind === "code") facts.append(teachChip("code", "code", "chip-type chip-type-code", e, "A repository at one commit — the tree lands under code/"));
 		else if (kind === "model") facts.append(teachChip("model", "bundle", "chip-type chip-type-model", e, "What lands on disk for a model"));
 		else facts.append(el("span", { class: "muted" }, "—"));
 
@@ -1313,8 +1324,9 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		});
 		const tray = el("div", { class: "work-tray", role: "group", "aria-label": `Actions for ${repoName(e.source)}` });
 		tray.hidden = true;
-		if (!closed && canonicalizeSource(e.source).kind === "hf") {
-			const refresh = el("button", { type: "button", class: "btn compact secondary", title: "Refresh repository or selection sizes and GGUF variants from the Hub. Use darsay estimate to classify the archive." }, "Refresh size");
+		const srcKind = canonicalizeSource(e.source).kind;
+		if (!closed && (srcKind === "hf" || srcKind === "github")) {
+			const refresh = el("button", { type: "button", class: "btn compact secondary", title: "Refresh repository or selection sizes from upstream — the Hub's inventory and GGUF variants, or a GitHub tree. Use darsay estimate to classify the archive." }, "Refresh size");
 			refresh.addEventListener("click", () => {
 				refresh.disabled = true;
 				refresh.textContent = "Refreshing…";
@@ -1325,7 +1337,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 							body: JSON.stringify({ source: e.source, revision: e.revision, include: e.include, refresh: true }),
 						});
 						await loadBoard();
-						toast("Hub inventory refreshed; archive classification uses darsay estimate.");
+						toast("Upstream inventory refreshed; archive classification uses darsay estimate.");
 					} catch (err) {
 						refresh.disabled = false;
 						refresh.textContent = "Refresh size";
@@ -1850,7 +1862,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const li = el("li", {
 			class: `member${e.status === "have" ? " is-have" : ""}${closed ? " is-closed" : ""}${claimed ? " is-claimed" : ""}${edge ? " is-derivative" : ""}`,
 		});
-		const href = closed ? e.source : hfUrlFromCanonical(e.source);
+		const href = closed ? e.source : urlFromCanonical(e.source);
 		const nameText = lin.member ?? (lin.generation ? "flagship" : lineageOf(e.source).family ?? e.source);
 		const name = href
 			? el("a", { href, rel: "noreferrer", target: "_blank", class: "member-name" }, nameText)
@@ -1963,7 +1975,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		const add = el("form", { class: "add-card", "aria-labelledby": "add-title" });
 		const source = el("input", {
 			type: "text",
-			placeholder: "owner/name, datasets/owner/name, a Hugging Face URL, or a closed work's home page",
+			placeholder: "owner/name, datasets/owner/name, github:owner/repo, a Hub or GitHub URL, or a closed work's home page",
 			required: "true",
 			id: "add-source",
 			autocomplete: "off",
@@ -1986,13 +1998,13 @@ export async function mountBoard(root: HTMLElement, id: string) {
 		);
 		const addBtn = el("button", { type: "submit", class: "btn" }, "Explore collection →");
 		// A Hub source opens the room; a closed work or an explicit include set is added as it is.
-		const explores = () => canonicalizeSource(source.value).kind !== "home" && !inc.value.trim();
+		const explores = () => canonicalizeSource(source.value).kind === "hf" && !inc.value.trim();
 		const relabel = () => { addBtn.textContent = explores() ? "Explore collection →" : "Add to the board"; };
 		source.addEventListener("input", relabel);
 		inc.addEventListener("input", relabel);
 		const addErr = el("p", { class: "add-err", role: "alert" });
 		const help = el("p", { class: "add-help muted" });
-		help.append("Inspect a Hub publication, choose the variants worth keeping, and review their storage before adding one collection. A home page on another site holds a place for a closed work and is added as it is. Rate it 1–9; ");
+		help.append("Inspect a Hub publication, choose the variants worth keeping, and review their storage before adding one collection. A GitHub repository is added as it is — a code bundle, priced from its tree. A home page on another site holds a place for a closed work and is added as it is. Rate it 1–9; ");
 		const fg = el("button", { type: "button", class: "linkish" }, "✦ what desire does");
 		fg.addEventListener("click", () => openGuide("desire", fg));
 		help.append(fg, ". ");

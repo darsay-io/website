@@ -170,3 +170,13 @@ describe("row identity", () => {
 		expect(sameRowIdentity({ ...selected, source: "bad source" }, { ...selected, source: "another bad source" })).toBe(false);
 	});
 });
+
+describe("code rows on the ledger", () => {
+	it("read their type from the digest or the address and file under code", () => {
+		expect(entryArtifactType(row(1, { source: "github:MiaAI-Lab/Recipe", artifact_type: null }))).toBe("code");
+		expect(entryArtifactType(row(1, { source: "github:MiaAI-Lab/Recipe", artifact_type: "code" }))).toBe("code");
+		expect(ledgerGroup(row(1, { source: "github:MiaAI-Lab/Recipe", artifact_type: "code" }), "type")).toEqual({ key: "code", label: "code" });
+		expect(factPrimer("code")).toBe("code");
+		expect(rowLinkTarget("github:MiaAI-Lab/Recipe")).toBe("github:MiaAI-Lab/Recipe");
+	});
+});

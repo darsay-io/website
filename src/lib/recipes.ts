@@ -35,6 +35,8 @@ export const DOCS = {
 		label: "Cookbook → Price one quant",
 	},
 	dataset: { href: "/docs/examples/#archive-a-dataset", label: "Cookbook → Archive a dataset" },
+	// The anchor #archive-a-repository lands with the docs sync that pins the CLI release carrying it.
+	code: { href: "/docs/examples/", label: "Cookbook" },
 	shards: {
 		href: "/docs/examples/#split-a-download-across-machines",
 		label: "Cookbook → Split a download",
@@ -72,7 +74,7 @@ export type RecipeKey =
 	| "after"
 	| "whenopen";
 
-export type Trait = "large" | "gated" | "subset" | "pack" | "dataset" | "opaque" | "closed" | "unsized";
+export type Trait = "large" | "gated" | "subset" | "pack" | "dataset" | "code" | "opaque" | "closed" | "unsized";
 
 export type Recipe = {
 	key: RecipeKey;
@@ -124,6 +126,7 @@ export function includeArgs(include: string[] | null | undefined): string {
 /** `owner--name` (or `datasets--owner--name`), as the CLI names a bundle directory. */
 export function bundleName(source: string): string | null {
 	const parsed = canonicalizeSource(source);
+	if (parsed.kind === "github") return `github--${parsed.locator.split("/").join("--").toLowerCase()}`;
 	if (parsed.kind !== "hf") return null;
 	const slug = parsed.locator.split("/").join("--").toLowerCase();
 	return parsed.artifactType === "dataset" ? `datasets--${slug}` : slug;
@@ -166,12 +169,14 @@ export function alignComments(rows: Row[]): string[] {
 export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: string): RecipeSet {
 	const parsed = canonicalizeSource(e.source);
 	const hf = parsed.kind === "hf" ? parsed : null;
+	const gh = parsed.kind === "github" ? parsed : null;
 	const closed = parsed.kind === "home";
-	const kind: "model" | "dataset" | null =
-		e.artifact_type === "dataset" || e.artifact_type === "model"
+	const kind: "model" | "dataset" | "code" | null =
+		e.artifact_type === "dataset" || e.artifact_type === "model" || e.artifact_type === "code"
 			? e.artifact_type
-			: (hf?.artifactType ?? null);
+			: (hf?.artifactType ?? gh?.artifactType ?? null);
 	const dataset = kind === "dataset";
+	const code = kind === "code";
 	const include = e.include && e.include.length ? e.include : null;
 	const bytes = typeof e.payload_bytes === "number" ? e.payload_bytes : null;
 	const size = scopedSize(e);
@@ -189,12 +194,13 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 
 	const traits: Trait[] = [];
 	if (closed) traits.push("closed");
-	else if (!hf) traits.push("opaque");
+	else if (!hf && !gh) traits.push("opaque");
 	if (large) traits.push("large");
 	if (gated) traits.push("gated");
 	if (include) traits.push("subset");
 	if (pack) traits.push("pack");
 	if (dataset) traits.push("dataset");
+	if (code) traits.push("code");
 	if (bytes === null && !closed) traits.push("unsized");
 
 	const facts: string[] = [];
@@ -215,7 +221,11 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 		headline = "Closed weights, a place held";
 		verdict =
 			"A home page, not a source. Nothing to fetch and no price; the row keeps this work's place in its family until the weights are published.";
-	} else if (!hf) {
+	} else if (code) {
+		headline = "A repository at a commit, same verbs";
+		verdict =
+			"Payload lands under code/: the tree at one commit, every file with its git SHA-1 as its upstream expectation. hydrate and run do not apply — copy the tree out and follow its README. estimate says what the tree declares and references before anything is fetched.";
+	} else if (!hf && !gh) {
 		headline = "Another provider";
 		verdict =
 			"Not a Hugging Face address. darsay resolves it through its provider registry — the same verbs, if a provider claims the scheme.";
@@ -255,7 +265,9 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 			? `A ${size} commitment. Price it from Hub metadata — no download, no files written.`
 			: bytes === null
 				? "Price it from Hub metadata — no download, no files written. Exit code says whether disk suffices."
-				: "See the size before you commit. Priced from Hub metadata; nothing is written.",
+				: code
+					? "See the size before you commit, and what the tree declares and references. Priced from the repository's tree; nothing is written."
+					: "See the size before you commit. Priced from Hub metadata; nothing is written.",
 		label: "price it",
 		lines: [`darsay estimate ${srcInc}`],
 		doc: DOCS.estimate,
@@ -268,9 +280,11 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 			? "The gate is enforced server-side; darsay does not bypass it. Accept the author's terms on the Hub, sign in once, then the same verb as any other source."
 			: include
 				? "Collect the matched files plus recognized support files. Other variants and optional projectors remain outside this explicit scope; the manifest records that selection without calling the unselected artifacts disposable."
-				: dataset
-					? "Same verbs as a model; the payload lands under data/. Interrupt any time and rerun the same line."
-					: "Pin it, verify it, register it. Interrupt any time and rerun the same line — every run converges on the same bundle.",
+				: code
+					? "Same verbs as a model; the tree lands under code/ with every file's git SHA-1 as its upstream expectation. HEAD is the default branch; a tag or commit goes on the row's revision."
+					: dataset
+						? "Same verbs as a model; the payload lands under data/. Interrupt any time and rerun the same line."
+						: "Pin it, verify it, register it. Interrupt any time and rerun the same line — every run converges on the same bundle.",
 		label: "pin · verify · register",
 		lines: gated
 			? alignComments([
@@ -278,7 +292,7 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 					`darsay archive ${srcInc}`,
 				])
 			: [`darsay archive ${srcInc}`],
-		doc: gated && hf ? { href: hf.url, label: "Accept the terms on Hugging Face" } : dataset ? DOCS.dataset : DOCS.first,
+		doc: gated && hf ? { href: hf.url, label: "Accept the terms on Hugging Face" } : code ? DOCS.code : dataset ? DOCS.dataset : DOCS.first,
 	};
 
 	/** The row-specific board round trip: `archive SOURCE --board URL`, as the cookbook writes it. */
@@ -367,13 +381,13 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 	const after: Recipe = {
 		key: "after",
 		title: "Once it's on disk",
-		why: dataset
+		why: dataset || code
 			? "Prove the bytes have not drifted, read the index card, or hand a friend a USB drive — one deterministic tar."
 			: "Prove the bytes have not drifted, talk to it offline, or hand a friend a USB drive — one deterministic tar.",
-		label: "verify · run · export",
+		label: dataset || code ? "verify · info · export" : "verify · run · export",
 		lines: alignComments([
 			[`darsay verify ${bundleArg}`, "re-hash every payload file"],
-			dataset
+			dataset || code
 				? [`darsay info ${bundleArg}`, "the index card"]
 				: [`darsay run ${bundleArg} "Say hello"`, "offline; the payload is not touched"],
 			[`darsay export ${bundleArg} -o /Volumes/USB`, "one .mvb.tar, same bytes every time"],
@@ -401,7 +415,7 @@ export function deriveRecipes(e: RecipeInput, catalogId: string, boardUrl?: stri
 	if (closed) {
 		hero = [whenOpen];
 		more = [];
-	} else if (!hf) {
+	} else if (!hf && !gh) {
 		hero = [estimate, archive, ...(board ? [board] : []), adopt];
 		more = [];
 	} else if (large) {

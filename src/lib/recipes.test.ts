@@ -376,3 +376,18 @@ describe("the board round-trip card", () => {
 		expect(keys(gatedLarge.more)).toEqual(["halves", "shards", "adopt", "after"]);
 	});
 });
+
+describe("code rows", () => {
+	it("name their bundle directory with the provider and get the repository recipe", () => {
+		expect(bundleName("github:MiaAI-Lab/Recipe")).toBe("github--miaai-lab--recipe");
+		const set = deriveRecipes(
+			entry({ source: "github:MiaAI-Lab/Recipe", artifact_type: "code", parameters: null, dominant_dtype: null, payload_bytes: 276_482, gguf_variants: [] }),
+			"spark",
+		);
+		const text = JSON.stringify(set);
+		expect(text).toContain("A repository at a commit, same verbs");
+		expect(text).toContain("darsay archive github:MiaAI-Lab/Recipe");
+		expect(text).toContain("github--miaai-lab--recipe");
+		expect(text).not.toContain("Another provider");
+	});
+});

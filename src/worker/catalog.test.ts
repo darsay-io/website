@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG_TOP_KEYS, DIGEST_KEYS, entryToApi, exportCatalog, liveClaim, parseClaim, sanitizeDigest } from "./catalog.ts";
+import { CATALOG_TOP_KEYS, DIGEST_KEYS, entryToApi, exportCatalog, liveClaim, parseClaim, sanitizeDigest, addressOf, type EntryRow } from "./catalog.ts";
 import fixture from "./glm-5.3-flash-gguf.json";
 import { ggufVariants } from "./gguf.ts";
 
@@ -239,5 +239,32 @@ describe("liveClaim", () => {
 			}),
 		};
 		expect(entryToApi(row).claim).toBeNull();
+	});
+});
+
+describe("a code row", () => {
+	it("has a GitHub address, the code type, and is not closed", () => {
+		expect(addressOf("github:MiaAI-Lab/Recipe")).toEqual({ kind: "code", provider: "github", locator: "MiaAI-Lab/Recipe", url: "https://github.com/MiaAI-Lab/Recipe" });
+		const row: EntryRow = {
+			id: 1,
+			source: "github:MiaAI-Lab/Recipe",
+			revision: "",
+			include_json: null,
+			desire: null,
+			note: null,
+			status: "want",
+			holders: "",
+			added: "2026-09-05T00:00:00+00:00",
+			updated: null,
+			dropped: null,
+			payload_bytes: null,
+			estimate_json: null,
+			claim_json: null,
+		};
+		const api = entryToApi(row);
+		expect(api.artifact_type).toBe("code");
+		expect(api.closed).toBe(false);
+		expect(api.address.kind).toBe("code");
+		expect(api.lineage).toMatchObject({ family: "Recipe", read_from: "name" });
 	});
 });

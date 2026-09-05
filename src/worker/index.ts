@@ -82,6 +82,8 @@ export type Env = {
 	ASSETS?: Fetcher;
 	/** Wrangler secret. Required for POST /api/boards. Never commit this value. */
 	CREATE_PASSWORD?: string;
+	/** Wrangler secret, optional: a GitHub token, so pricing a repository row is not bound by the unauthenticated API allowance. */
+	GITHUB_TOKEN?: string;
 };
 
 type Vars = { grant: Grant; board: BoardRow; actor: Actor };
@@ -198,6 +200,7 @@ function opCtx(c: Ctx): OpCtx {
 		actor: c.get("actor"),
 		expectRevision: parseIfMatch(c.req.header("if-match")),
 		origin: origin(c),
+		githubToken: c.env.GITHUB_TOKEN,
 		waitUntil: waitUntilOf(c),
 	};
 }
@@ -558,6 +561,7 @@ async function mcp(c: Ctx): Promise<Response> {
 		actor,
 		expectRevision: null,
 		origin: origin(c),
+		githubToken: c.env.GITHUB_TOKEN,
 		waitUntil: waitUntilOf(c),
 	}));
 	if (answer.body === null) return c.body(null, 202);

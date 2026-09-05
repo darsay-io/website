@@ -26,6 +26,7 @@ export type LensKey =
 	| "moe"
 	| "spec"
 	| "dataset"
+	| "code"
 	| "closed"
 	| "unpriced";
 
@@ -70,7 +71,7 @@ export type Lens = {
 /** The repo name after `owner/` (and after `datasets/`), or the whole ref for another provider. */
 export function repoName(source: string): string {
 	const parsed = canonicalizeSource(source);
-	if (parsed.kind === "hf") return parsed.locator.split("/").slice(1).join("/");
+	if (parsed.kind === "hf" || parsed.kind === "github") return parsed.locator.split("/").slice(1).join("/");
 	return source;
 }
 
@@ -94,7 +95,8 @@ export function isAbliterated(source: string): boolean {
 }
 
 export function isBaseModel(source: string): boolean {
-	if (artifactTypeFromSource(source) === "dataset") return false;
+	const t = artifactTypeFromSource(source);
+	if (t === "dataset" || t === "code") return false;
 	return BASE_RE.test(repoName(source));
 }
 
@@ -108,7 +110,8 @@ export function moeFromName(source: string): { total: number | null; active: num
 }
 
 export function isSpeculator(source: string): boolean {
-	if (artifactTypeFromSource(source) === "dataset") return false;
+	const t = artifactTypeFromSource(source);
+	if (t === "dataset" || t === "code") return false;
 	if (/rwkv/i.test(source)) return false; // RWKV's "Eagle" is an architecture, not a draft head
 	const name = repoName(source);
 	if (SPEC_RE.test(name)) return true;
@@ -134,8 +137,8 @@ export function effectiveHints(e: LensEntry): Hint[] {
 	return [...out].sort();
 }
 
-function kind(e: LensEntry): "model" | "dataset" | null {
-	if (e.artifact_type === "dataset" || e.artifact_type === "model") return e.artifact_type;
+function kind(e: LensEntry): "model" | "dataset" | "code" | null {
+	if (e.artifact_type === "dataset" || e.artifact_type === "model" || e.artifact_type === "code") return e.artifact_type;
 	return artifactTypeFromSource(e.source);
 }
 
@@ -278,6 +281,15 @@ export const LENSES: Lens[] = [
 		primer: "dataset",
 		blurb: "The second artifact type: `datasets/owner/name`, payload under `data/`, same verbs, no engine.",
 		test: (e) => kind(e) === "dataset",
+	},
+	{
+		key: "code",
+		label: "Code",
+		noun: "code",
+		group: "kind",
+		primer: "code",
+		blurb: "The third artifact type: a repository at one commit — `github:owner/repo`, payload under `code/`, same verbs, no engine. What the tree declares and references is read from its files.",
+		test: (e) => kind(e) === "code",
 	},
 	{
 		key: "closed",

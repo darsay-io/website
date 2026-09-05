@@ -40,7 +40,7 @@ export const MCP_MODERN_VERSIONS = ["2026-07-28"] as const;
 export const MCP_LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** Everything the server speaks, newest first: what the card and `server/discover` advertise. */
 export const MCP_PROTOCOL_VERSIONS = [...MCP_MODERN_VERSIONS, ...MCP_LEGACY_VERSIONS] as const;
-export const MCP_SERVER = { name: "darsay.io board", title: "darsay.io board", version: "2.0.0" };
+export const MCP_SERVER = { name: "darsay.io board", title: "darsay.io board", version: "2.1.0" };
 export const MCP_CAPABILITIES = { tools: { listChanged: false } };
 /** How long a client may keep `tools/list` and `server/discover`: the tools are code, not data. */
 export const MCP_TTL_MS = 3_600_000;
@@ -52,10 +52,10 @@ const HEADER_MISMATCH = -32020;
 const UNSUPPORTED_VERSION = -32022;
 
 const INSTRUCTIONS = [
-	"This server is one darsay.io board: a want-list of models and datasets a group is archiving into their own vaults.",
+	"This server is one darsay.io board: a want-list of models, datasets, and the code that runs them, which a group is archiving into their own vaults.",
 	"A board has rows, not cards, and no columns. A row wants or has a work (status), is rated 1–9 (desire, which orders the list), carries a short note, and names who holds a copy (holders).",
-	"A row's identity is its address: the canonical source (huggingface:owner/name, huggingface:datasets/owner/name, or an https home page for a closed work), the pinned revision, and the include set. add_row and apply match on that address, so re-sending is safe.",
-	"Chips on a row (archive, quant, gated, large, redundant, subset, closed, family…) are read from the work, never written by hand; call explain with a chip to learn what it means.",
+	"A row's identity is its address: the canonical source (huggingface:owner/name, huggingface:datasets/owner/name, github:owner/repo for a code bundle, or an https home page for a closed work), the pinned revision, and the include set. add_row and apply match on that address, so re-sending is safe.",
+	"Chips on a row (archive, quant, gated, large, redundant, subset, dataset, code, closed, family…) are read from the work, never written by hand; call explain with a chip to learn what it means.",
 	"drop_row is undoable; remove_row is not. Pass expect_revision (from get_board) to refuse a write when someone else changed the board first. Use apply with dry_run: true to see a plan before committing it.",
 ].join("\n");
 
@@ -91,7 +91,7 @@ const ADDRESS_FIELDS = {
 	source: {
 		type: "string",
 		maxLength: 300,
-		description: "owner/name, huggingface:owner/name, datasets/owner/name, a Hub URL, or an https home page for a closed work.",
+		description: "owner/name, huggingface:owner/name, datasets/owner/name, a Hub URL, github:owner/repo or a GitHub repository URL, or an https home page for a closed work.",
 	},
 	revision: { type: ["string", "null"], maxLength: 64, description: "A commit or tag to pin; null means the default branch." },
 	include: { type: ["array", "null"], items: { type: "string", maxLength: MAX_INCLUDE_GLOB }, maxItems: MAX_INCLUDES, description: "Glob patterns that make this row a subset of the repo; a leading / anchors the repository path." },
@@ -131,7 +131,7 @@ export const TOOLS: Tool[] = [
 				q: { type: "string", description: "Free text matched against source, note, holders, family, and member." },
 				source: { type: "string", description: "An address in any accepted spelling; matched after canonicalization." },
 				status: { type: "string", enum: ["want", "have"] },
-				type: { type: "string", enum: ["model", "dataset", "closed", "opaque"] },
+				type: { type: "string", enum: ["model", "dataset", "code", "closed", "opaque"] },
 				lens: { type: "string", description: "Comma-separated lens keys, AND-combined: " + Object.keys(LENS_BY_KEY).join(", ") + "." },
 				family: { type: "string", description: "A family key as read from the names (qwen, kimi, deepseek…)." },
 				desire_min: { type: "integer", minimum: 1, maximum: 9 },
@@ -282,7 +282,7 @@ export const TOOLS: Tool[] = [
 	{
 		name: "explain",
 		title: "Explain a chip",
-		description: "The field guide: what a chip, lens, or column on a row means and what a collector should do about it. Pass a word such as archive, quant, gated, large, redundant, subset, closed, family, desire, claims, dataset, or moe. With no chip, the whole guide.",
+		description: "The field guide: what a chip, lens, or column on a row means and what a collector should do about it. Pass a word such as archive, quant, gated, large, redundant, subset, closed, family, desire, claims, dataset, code, or moe. With no chip, the whole guide.",
 		inputSchema: { type: "object", properties: { chip: { type: "string", maxLength: 40 } }, additionalProperties: false },
 		readOnly: true,
 		idempotent: true,
