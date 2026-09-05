@@ -28,7 +28,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		const dialog = el("dialog", { class: "collection-dialog", "aria-labelledby": "collection-title" });
 		const close = el("button", { type: "button", class: "collection-close", "aria-label": "Close collection picker" }, "×");
 		const title = el("h2", { id: "collection-title", tabindex: "-1" }, "Choose your collection.");
-		const steps = el("p", { class: "collection-steps" }, "01 · Inspect");
+		const steps = el("p", { class: "collection-steps" });
 		const body = el("div", { class: "collection-body" });
 		const footer = el("div", { class: "collection-footer" });
 		const live = el("p", { class: "collection-live", role: "status", "aria-live": "polite", "aria-atomic": "true" });
@@ -57,6 +57,13 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		const announce = (message: string) => {
 			window.clearTimeout(announcement);
 			announcement = window.setTimeout(() => { live.textContent = message; }, 180);
+		};
+		// The step being taken is lit; the others wait in the margin.
+		const setSteps = (labels: string[], current: number) => {
+			steps.replaceChildren(...labels.flatMap((label, i) => [
+				...(i ? [el("span", { "aria-hidden": "true" }, "  /  ")] : []),
+				el("span", i === current ? { class: "collection-step", "aria-current": "step" } : { class: "collection-step" }, `0${i + 1} · ${label}`),
+			]));
 		};
 		close.addEventListener("click", () => { if (!saving) finish(false); });
 		dialog.addEventListener("cancel", (event) => {
@@ -117,7 +124,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 
 		function choose() {
 			chosen = true;
-			steps.textContent = "01 · Choose    /    02 · Review";
+			setSteps(["Choose", "Review"], 0);
 			title.textContent = "Choose your collection.";
 			const main = el("section", { class: "collection-main", "aria-label": "Collection selection" });
 			const notes = el("div", { class: "collection-notes" }, learn(focused));
@@ -217,7 +224,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 
 		function reviewCollection() {
 			const whole = include.includes("/*");
-			steps.textContent = "01 · Choose    /    02 · Review";
+			setSteps(chosen ? ["Choose", "Review"] : ["Inspect", "Review"], 1);
 			title.textContent = whole ? "The publication, as published." : "A collection with intention.";
 			const total = collectionBreakdown(publication, include);
 			const models = publication.variants.filter((v) => variantSelected(v, include));
@@ -281,7 +288,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 
 		function reviewUninspected() {
 			title.textContent = "A place on the want-list.";
-			steps.textContent = "Uninspected / confirm scope";
+			setSteps(["Inspect", "Confirm"], 1);
 			body.replaceChildren(el("section", { class: "collection-review", "aria-label": "Review uninspected publication" },
 				el("p", { class: "collection-eyebrow" }, "Whole publication / not inspected"),
 				el("p", { class: "collection-review-amount" }, "Size unknown"),
@@ -295,7 +302,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 
 		async function inspect() {
 			title.textContent = "Choose your collection.";
-			steps.textContent = "01 · Inspect";
+			setSteps(["Inspect"], 0);
 			request?.abort();
 			const current = new AbortController();
 			request = current;
