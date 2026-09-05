@@ -839,16 +839,16 @@ export async function mountBoard(root: HTMLElement, id: string) {
 					const label = variant.precision ?? variant.name;
 					const details = el("details", { class: "variant-command" });
 					const code = codeLines(commands);
-					const copy = el("button", { type: "button", class: "btn compact", "aria-label": `Copy estimate and archive commands for ${variant.name}` }, "Copy commands");
+					const copy = el("button", { type: "button", class: "btn compact secondary", "aria-label": `Copy estimate and archive commands for ${variant.name}` }, "Copy commands");
 					copy.addEventListener("click", () => void copyOrSelect(copy, commands.join("\n"), code));
 					details.append(el("summary", {}, "Exact files"), el("pre", {}, code));
 					const existing = variantRow();
 					if (existing) {
 						// Already its own row: show where it went, and offer the way
 						// back. Dropping is undoable, like the row's own Drop button.
-						const show = el("button", { type: "button", class: "btn compact", "aria-label": `Show the board row for ${variant.name}` }, "View row");
+						const show = el("button", { type: "button", class: "btn compact secondary", "aria-label": `Show the board row for ${variant.name}` }, "View row");
 						show.addEventListener("click", () => showRow(existing));
-						const remove = el("button", { type: "button", class: "btn compact secondary work-drop", title: "Drop the variant's row — undoable; the catalog stops asking for it, vaults are untouched", "aria-label": `Remove ${variant.name} from the board` }, "Remove variant");
+						const remove = el("button", { type: "button", class: "btn compact secondary variant-remove", title: "Drop the variant's row — undoable; the catalog stops asking for it, vaults are untouched", "aria-label": `Remove ${variant.name} from the board` }, "Remove variant");
 						remove.addEventListener("click", () => {
 							show.disabled = true;
 							remove.disabled = true;
@@ -878,7 +878,11 @@ export async function mountBoard(root: HTMLElement, id: string) {
 							};
 							writes = writes.then(run, run);
 						});
-						selection.append(el("span", { class: "variant-on-board" }, "On board"), " ", show, " ", remove, " ", copy, details);
+						selection.append(el("div", { class: "variant-actions" },
+							el("span", { class: "variant-on-board" }, el("span", { "aria-hidden": "true" }, "✦ "), "On board"),
+							el("div", { class: "variant-btns" }, show, remove, copy),
+							details,
+						));
 					} else {
 						const add = el("button", { type: "button", class: "btn compact", "aria-label": `Add ${variant.name} as its own board row` }, "Add variant");
 						add.addEventListener("click", () => {
@@ -899,7 +903,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 							};
 							writes = writes.then(run, run);
 						});
-						selection.append(add, " ", copy, details);
+						selection.append(el("div", { class: "variant-actions" }, el("div", { class: "variant-btns" }, add, copy), details));
 					}
 				} else {
 					selection.append("Incomplete inventory — refresh before selecting");

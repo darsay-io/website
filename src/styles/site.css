@@ -1027,16 +1027,46 @@ button.btn.bring-download {
 	color: var(--d-muted);
 }
 
+.variant-table th:last-child,
+.variant-table td:last-child {
+	min-width: 24rem;
+}
+
+/* The Selection cell: state on its own line, then the buttons in one row. */
+.variant-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.55rem;
+}
+
+.variant-btns {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem;
+}
+
 .variant-on-board {
-	color: var(--d-gold);
-	font-size: 0.8rem;
-	letter-spacing: 0.04em;
+	font-size: 0.7rem;
+	letter-spacing: 0.14em;
 	text-transform: uppercase;
+	color: var(--d-gold);
 	white-space: nowrap;
+}
+
+button.btn.secondary.variant-remove:hover {
+	color: var(--d-danger);
+	border-color: var(--d-danger);
+	background: rgba(212, 132, 122, 0.08);
 }
 
 .variant-command {
 	margin-top: 0.5rem;
+}
+
+.variant-actions .variant-command {
+	margin-top: 0;
 }
 
 .variant-command pre {
