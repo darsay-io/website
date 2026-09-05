@@ -34,7 +34,7 @@ copy already at the destination is hashed in place, not copied again
 ### Is rsync still a valid way to move or copy a bundle? Will it stay valid?
 
 Yes, and yes. **rsync is a first-class copy** is an invariant of the
-project — listed in [CLAUDE.md](https://github.com/darsay-io/darsay/blob/4463f0a6aacedeb411382e79fb9c863849187963/CLAUDE.md) and on the
+project — listed in [CLAUDE.md](https://github.com/darsay-io/darsay/blob/72d041d336ab7a1ba5ed349287603ef23fcf3955/CLAUDE.md) and on the
 [docs index](/docs/#invariants) — not a compatibility mode. A vault is
 a folder tree with no database; `darsay list` is a walk of it. Anything
 that puts the right bytes at `<vault>/<name>/<rev>/` has put a bundle in
