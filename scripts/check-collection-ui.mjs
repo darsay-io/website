@@ -171,6 +171,15 @@ for (const [name,width,height,mobile] of [['desktop',1440,1050,false],['mobile',
   assert.equal(await evaluate('document.querySelector(".collection-review-actions .collection-primary").disabled'),true);
   await key('Escape'); await until('!document.querySelector(".collection-dialog")');
 
+  // A publication with nothing to choose between opens straight on its review, with nothing to refine.
+  await evaluate(`document.querySelector('#add-source').value='Qwen/Qwen3-0.6B'; document.querySelector('#add-rev').value=''; document.querySelector('.add-card').requestSubmit();`);
+  await until('document.querySelector(".collection-review")');
+  assert.equal(await evaluate('document.querySelectorAll(".collection-intent").length'),0);
+  assert((await evaluate('document.querySelector(".collection-review").innerText')).includes('No include selectors'));
+  assert.equal(await evaluate('document.querySelectorAll(".collection-review-actions .btn").length'),1,'Nothing to refine when there was nothing to choose');
+  await shot(`collection-${name}-plain-publication`);
+  await key('Escape'); await until('!document.querySelector(".collection-dialog")');
+
   // The add button says what it will do: a closed work is added as it is, not explored.
   await evaluate(`document.querySelector('#add-source').value='https://example.com/models/closed-work'; document.querySelector('#add-source').dispatchEvent(new Event('input'))`);
   assert.equal(await evaluate('document.querySelector(".add-card [type=submit]").textContent'),'Add to the board');

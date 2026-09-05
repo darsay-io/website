@@ -74,6 +74,7 @@ body.collection-open { overflow: hidden; }
 .collection-meter { height: 3px; background: #d4b06a1c; margin-bottom: 14px; overflow: hidden; }
 .collection-meter-fill { display: block; height: 100%; background: var(--d-gold); transition: width .2s ease; }
 .collection-footer-row, .collection-review-actions { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.collection-review-actions > .collection-primary:only-child { margin-left: auto; }
 .collection-total { display: grid; gap: 2px; }
 .collection-amount { font: 400 28px/1.2 var(--d-serif); }
 .collection-total-note { color: var(--d-muted); font: 10px/1.6 var(--d-sans); }

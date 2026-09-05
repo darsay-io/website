@@ -39,6 +39,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		let pendingSave: Promise<void> | null = null;
 		let finished = false;
 		let intent: Intent | null = null;
+		let chosen = false;
 		let focused: GgufVariant | null = null;
 		let announcement = 0;
 		const choice = (): CollectionChoice => ({ source: publication.source, revision: publication.revision, include: choiceInclude(include) });
@@ -115,6 +116,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		}
 
 		function choose() {
+			chosen = true;
 			steps.textContent = "01 · Choose    /    02 · Review";
 			title.textContent = "Choose your collection.";
 			const main = el("section", { class: "collection-main", "aria-label": "Collection selection" });
@@ -214,10 +216,10 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		}
 
 		function reviewCollection() {
-			steps.textContent = "01 · Choose    /    02 · Review";
-			title.textContent = "A collection with intention.";
-			const total = collectionBreakdown(publication, include);
 			const whole = include.includes("/*");
+			steps.textContent = "01 · Choose    /    02 · Review";
+			title.textContent = whole ? "The publication, as published." : "A collection with intention.";
+			const total = collectionBreakdown(publication, include);
 			const models = publication.variants.filter((v) => variantSelected(v, include));
 			const companions = publication.companions.filter((v) => variantSelected(v, include));
 			const list = el("ul", { class: "collection-review-list" });
@@ -237,18 +239,20 @@ export function chooseCollection(options: Options): Promise<boolean> {
 				el("div", { class: "collection-pin" }, el("span", { class: "collection-eyebrow" }, "Pinned to the inspected revision"), el("code", {}, publication.revision), el("p", {}, "The saved row uses this exact commit. A moving branch cannot silently change this selection.")),
 				selectors, el("p", { class: "collection-explainer" }, guide.scope),
 			));
-			saveFooter(() => options.save(choice()), () => choose(), "Add this collection", "← Refine selection");
+			// Nothing to refine when there was nothing to choose between.
+			saveFooter(() => options.save(choice()), chosen ? () => choose() : null, "Add this collection", "← Refine selection");
 		}
 
-		function saveFooter(save: () => Promise<void>, goBack: () => void, label: string, backLabel: string) {
-			const back = el("button", { type: "button", class: "btn" }, backLabel);
+		function saveFooter(save: () => Promise<void>, goBack: (() => void) | null, label: string, backLabel: string) {
+			const back = goBack ? el("button", { type: "button", class: "btn" }, backLabel) : null;
 			const add = el("button", { type: "button", class: "btn collection-primary" }, label);
 			const error = el("p", { class: "collection-error", role: "alert" });
-			back.addEventListener("click", () => { goBack(); title.focus(); });
+			back?.addEventListener("click", () => { goBack?.(); title.focus(); });
 			add.addEventListener("click", async () => {
 				if (saving) return;
 				saving = true;
-				add.disabled = back.disabled = close.disabled = true;
+				add.disabled = close.disabled = true;
+				if (back) back.disabled = true;
 				add.textContent = "Adding collection…";
 				error.textContent = "";
 				pendingSave = save();
@@ -257,7 +261,8 @@ export function chooseCollection(options: Options): Promise<boolean> {
 					pendingSave = null;
 					saving = false;
 					if (finished) return;
-					back.disabled = close.disabled = false;
+					close.disabled = false;
+					if (back) back.disabled = false;
 					if (err instanceof SaveRefused) {
 						// Nothing a retry could change; the way out is back or close.
 						error.textContent = err.message;
@@ -269,7 +274,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 					add.textContent = "Retry save";
 				}
 			});
-			footer.replaceChildren(error, el("div", { class: "collection-review-actions" }, back, add), el("p", { class: "collection-footer-fine" }, "This saves a want-list row. Archiving happens later, in your vault."));
+			footer.replaceChildren(error, el("div", { class: "collection-review-actions" }, ...(back ? [back] : []), add), el("p", { class: "collection-footer-fine" }, "This saves a want-list row. Archiving happens later, in your vault."));
 			title.focus();
 			body.scrollTop = 0;
 		}
@@ -303,8 +308,16 @@ export function chooseCollection(options: Options): Promise<boolean> {
 				const result = await options.inspect(current.signal);
 				if (finished || current.signal.aborted) return;
 				publication = result;
-				choose();
-				announce(`${publication.variants.length} model variants found. Choose your collection.`);
+				if (!publication.variants.length && !publication.companions.length) {
+					// Nothing to choose between: the room is one screen, the review of the whole publication.
+					include = ["/*"];
+					intent = "whole";
+					reviewCollection();
+					announce("No GGUF alternatives to choose between. Review the whole publication.");
+				} else {
+					choose();
+					announce(`${publication.variants.length} model variants found. Choose your collection.`);
+				}
 			} catch (err) {
 				if (finished || current.signal.aborted) return;
 				const retry = el("button", { type: "button", class: "btn collection-primary" }, "Try inspection again");
