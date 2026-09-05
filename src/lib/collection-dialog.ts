@@ -2,7 +2,7 @@ import { el } from "./dom.ts";
 import { hfUrlFromCanonical } from "../worker/sources.ts";
 import type { GgufVariant } from "./size.ts";
 import {
-	COLLECTION_GUIDE as guide, collectionBreakdown, collectionSize, encodingFamily,
+	COLLECTION_GUIDE as guide, choiceInclude, collectionBreakdown, collectionSize, encodingFamily,
 	selectionTotals, startingSelection, toggleVariant, variantSelected,
 	type CollectionChoice, type Intent, type Publication,
 } from "./collection.ts";
@@ -37,7 +37,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 		let intent: Intent | null = null;
 		let focused: GgufVariant | null = null;
 		let announcement = 0;
-		const choice = (): CollectionChoice => ({ source: publication.source, revision: publication.revision, include: [...include] });
+		const choice = (): CollectionChoice => ({ source: publication.source, revision: publication.revision, include: choiceInclude(include) });
 		const finish = (saved: boolean) => {
 			if (finished) return;
 			finished = true;
@@ -206,7 +206,9 @@ export function chooseCollection(options: Options): Promise<boolean> {
 			const companions = publication.companions.filter((v) => variantSelected(v, include));
 			const list = el("ul", { class: "collection-review-list" });
 			for (const v of [...models, ...companions]) list.append(el("li", {}, el("span", {}, v.name + (v.complete ? "" : " · incomplete group, retained as found")), el("strong", {}, collectionSize(v.size_bytes))));
-			const selectors = el("details", { class: "collection-selectors" }, el("summary", {}, "Exact include selectors"), el("pre", {}, el("code", {}, include.join("\n"))));
+			const selectors = whole
+				? el("p", { class: "collection-explainer" }, "No include selectors: the row is the whole repository at this commit. What the archive retains inside it is a separate, recorded decision.")
+				: el("details", { class: "collection-selectors" }, el("summary", {}, "Exact include selectors"), el("pre", {}, el("code", {}, include.join("\n"))));
 			body.replaceChildren(el("section", { class: "collection-review", "aria-label": "Review collection" },
 				el("p", { class: "collection-eyebrow" }, whole ? "Whole publication / one board row" : "Selected variants / one board row"),
 				el("p", { class: "collection-review-amount" }, `${total.unknown ? "≥ " : ""}${collectionSize(total.bytes)}`),
@@ -253,7 +255,7 @@ export function chooseCollection(options: Options): Promise<boolean> {
 				el("p", { class: "collection-eyebrow" }, "Whole publication / not inspected"),
 				el("p", { class: "collection-review-amount" }, "Size unknown"),
 				el("p", { class: "collection-lede" }, "Keep the intention. Don’t guess the inventory."),
-				el("p", { class: "collection-explainer" }, "This row will request every published path with /*. No variant choice, file completeness, storage budget, or recreation evidence has been reviewed here. The publication may be much larger than one model copy."),
+				el("p", { class: "collection-explainer" }, "This row is the whole repository, with no include selectors. No variant choice, file completeness, storage budget, or recreation evidence has been reviewed here. The publication may be much larger than one model copy."),
 				el("div", { class: "collection-pin" }, el("span", { class: "collection-eyebrow" }, "Requested revision · not resolved here"), el("code", {}, options.revision ?? "main"), el("p", {}, "The CLI resolves and pins it when archiving begins. A branch can move before then.")),
 				el("p", { class: "collection-warning" }, "Archive only after checking your access, intended scope, and available disk. This saves a want-list row; it does not download model bytes."),
 			));

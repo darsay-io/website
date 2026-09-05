@@ -226,8 +226,10 @@ No failed inspection is replaced by a guessed collection size.
 
 Union the chosen groups' selectors, retain recognized support files once,
 and POST that union with the returned source and exact revision to `/entries`
-to save **one** collection row. `/*` selects every published path. The digest
-in this preview describes the whole publication, not your draft selection.
+to save **one** collection row. The whole publication is a row with no
+`include` at all; `/*` is accepted as the same thing and stored as none. The
+digest in this preview describes the whole publication, not your draft
+selection.
 Group completeness and encoding labels do not establish runtime compatibility
 or exact recoverability. See [Choosing a collection](/docs/board/collections/).
 

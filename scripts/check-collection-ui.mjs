@@ -136,7 +136,7 @@ for (const [name,width,height,mobile] of [['desktop',1440,1050,false],['mobile',
   await click('.collection-primary');
   await until('!document.querySelector(".collection-dialog") && document.querySelectorAll(".work-card").length === 2');
   const fallback=(await (await fetch(`${base}/api/boards/${id}`)).json()).entries.find(e=>e.source.includes('uninspected-collection-test'));
-  assert.deepEqual(fallback.include,['/*']); assert.equal(fallback.revision,null);
+  assert.equal(fallback.include,null); assert.equal(fallback.revision,null);
 
   // A late inspection response cannot reopen a cancelled draft (even if a transport ignores abort).
   await evaluate(`window.fetch=(url,init)=>String(url).includes('/preview?') ? new Promise(resolve=>setTimeout(()=>resolve(new Response('{}')),500)) : window.collectionOriginalFetch(url,init); document.querySelector('#add-source').value=${JSON.stringify(source)}; document.querySelector('.add-card [type=submit]').focus(); document.querySelector('.add-card').requestSubmit();`);

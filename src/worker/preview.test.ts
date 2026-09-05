@@ -83,8 +83,23 @@ describe("publication inspection", () => {
 	it("can save an explicitly uninspected whole-publication intention without inventing a price", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 404 })));
 		const { call, id } = await harness();
-		const result = await call(`/api/boards/${id}/entries`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "curator/private-publication", revision: null, include: ["/*"] }) });
+		const result = await call(`/api/boards/${id}/entries`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "curator/private-publication", revision: null, include: null }) });
 		expect(result.status).toBe(201);
-		expect(await result.json()).toMatchObject({ include: ["/*"], revision: null, payload_bytes: null, size_basis: null });
+		expect(await result.json()).toMatchObject({ include: null, revision: null, payload_bytes: null, size_basis: null });
+	});
+	it("prices the whole publication as the repository, whichever way it is spelled", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(upstream()))));
+		const { call, id } = await harness();
+		const spelled = await call(`/api/boards/${id}/entries`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: fixture.source, revision: fixture.revision, include: ["/*"] }) });
+		expect(spelled.status).toBe(201);
+		const row = await spelled.json() as { include: string[] | null; size_basis: string; payload_bytes: number; hints: string[] };
+		expect(row).toMatchObject({ include: null, size_basis: "repository", payload_bytes: 2_545_636_747_545 });
+		expect(row.hints).not.toContain("subset");
+		// The same identity, so the plain spelling is an upsert, not a second row.
+		const plain = await call(`/api/boards/${id}/entries`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: fixture.source, revision: fixture.revision, include: null }) });
+		expect(plain.status).toBe(200);
+		const board = await (await call(`/api/boards/${id}`)).json() as { entries: { include: string[] | null; hints: string[] }[] };
+		expect(board.entries).toHaveLength(1);
+		expect(board.entries[0].hints).not.toContain("subset");
 	});
 });

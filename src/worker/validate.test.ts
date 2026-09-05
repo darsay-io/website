@@ -4,6 +4,7 @@ import {
 	includeKey,
 	parseCatalogId,
 	parseDesire,
+	parseInclude,
 	secretEqual,
 	slugifyTitle,
 	utcNow,
@@ -16,6 +17,12 @@ describe("include identity", () => {
 		expect(includeKey(["a", "a"])).toBe(JSON.stringify(["a", "a"]));
 		expect(includeJson(null)).toBeNull();
 		expect(includeKey(null)).toBe("[]");
+	});
+	it("treats /* as the whole repository, which is no selection at all", () => {
+		expect(includeKey(["/*"])).toBe("[]");
+		expect(parseInclude(["/*"])).toEqual({ ok: true, include: null });
+		expect(parseInclude(["/*", "*.gguf"])).toEqual({ ok: true, include: ["/*", "*.gguf"] });
+		expect(parseInclude(["*"])).toEqual({ ok: true, include: ["*"] });
 	});
 });
 

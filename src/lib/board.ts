@@ -1785,7 +1785,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 						inspect: async (signal) => await api(`/api/boards/${id}/preview?${query}`, { signal }) as Publication,
 						onBoard: (choice) => board.entries.some((row) => !row.dropped && sameRowIdentity(row, choice)),
 						save: saveCollection,
-						saveUninspected: () => saveCollection({ source: parsed.canonical, revision: rev.value.trim() || null, include: ["/*"] }),
+						saveUninspected: () => saveCollection({ source: parsed.canonical, revision: rev.value.trim() || null, include: null }),
 					});
 					if (!saved) return;
 				} else {

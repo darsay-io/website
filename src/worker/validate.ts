@@ -45,8 +45,13 @@ export function parseCatalogId(explicit: unknown, title: string): { ok: true; id
 	return { ok: true, id: folded };
 }
 
+/** `/*` names the whole repository: no selection at all, the same identity as no include. */
+export function isWholeRepository(include: string[] | null): boolean {
+	return include !== null && include.length === 1 && include[0] === "/*";
+}
+
 export function includeKey(include: string[] | null): string {
-	if (!include || include.length === 0) return "[]";
+	if (!include || include.length === 0 || isWholeRepository(include)) return "[]";
 	return JSON.stringify([...include].sort());
 }
 
@@ -66,7 +71,7 @@ export function parseInclude(raw: unknown): { ok: true; include: string[] | null
 		}
 		globs.push(g);
 	}
-	return { ok: true, include: globs.length ? globs : null };
+	return { ok: true, include: globs.length && !isWholeRepository(globs) ? globs : null };
 }
 
 export function parseDesire(raw: unknown): { ok: true; desire: number | null } | { ok: false; error: string } {

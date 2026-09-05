@@ -13,7 +13,12 @@ export type Publication = {
 	variants: GgufVariant[];
 	companions: GgufVariant[];
 };
-export type CollectionChoice = { source: string; revision: string; include: string[] };
+export type CollectionChoice = { source: string; revision: string; include: string[] | null };
+
+/** The room keeps `/*` as its whole-publication marker; a saved row carries no selectors for it. */
+export function choiceInclude(include: string[]): string[] | null {
+	return include.includes("/*") ? null : [...include];
+}
 
 export function bitFamily(precision: string | null): number | null {
 	const match = /(?:^|[-_])I?Q([1-8])(?:_|$)/.exec((precision ?? "").toUpperCase());

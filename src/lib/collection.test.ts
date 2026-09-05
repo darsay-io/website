@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
-import { COLLECTION_GUIDE, bitFamily, encodingFamily, selectionTotals, startingSelection, toggleVariant, variantSelected, type Publication } from "./collection.ts";
+import { COLLECTION_GUIDE, bitFamily, choiceInclude, encodingFamily, selectionTotals, startingSelection, toggleVariant, variantSelected, type Publication } from "./collection.ts";
 import { ggufVariants, isProjector } from "../worker/gguf.ts";
 import { selectSubset } from "../worker/subset.ts";
 import fixture from "../worker/glm-5.3-flash-gguf.json";
@@ -29,6 +29,10 @@ describe("the collection room", () => {
 		expect(variants.filter((v) => variantSelected(v, pair)).map((v) => bitFamily(v.precision)).sort()).toEqual([4, 8]);
 		expect(companions.some((v) => variantSelected(v, pair))).toBe(false);
 		expect(startingSelection(variants, "whole")).toEqual(["/*"]);
+	});
+	it("saves the whole publication as the repository itself, with no selectors", () => {
+		expect(choiceInclude(startingSelection(variants, "whole"))).toBeNull();
+		expect(choiceInclude(variants[0].include)).toEqual(variants[0].include);
 	});
 	it("does not guess a missing family or recommend incomplete/unknown-size groups", () => {
 		const invalid = variants.map((v, i) => ({ ...v, complete: i % 2 === 0, size_bytes: i % 2 === 0 ? null : v.size_bytes }));
