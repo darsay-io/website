@@ -835,33 +835,72 @@ export async function mountBoard(root: HTMLElement, id: string) {
 				const selection = el("td", {});
 				if (commands.length) {
 					const identity: RowIdentity = { source: e.source, revision: e.revision, include: [...variant.include] };
-					const isOnBoard = () => board.entries.some((row) => !row.dropped && sameRowIdentity(row, identity));
-					const add = el("button", { type: "button", class: "btn compact", "aria-label": `Add ${variant.name} as its own board row` }, isOnBoard() ? "On board" : "Add variant");
-					add.disabled = isOnBoard();
-					add.addEventListener("click", () => {
-						add.disabled = true;
-						add.textContent = "Adding…";
-						const run = async () => {
-							try {
-								if (!isOnBoard()) {
-									await api(`/api/boards/${id}/entries`, { method: "POST", body: JSON.stringify(identity) });
-								}
-								await loadBoard();
-								toast(`${variant.precision ?? variant.name} is on the board as a separate selection.`);
-							} catch (err) {
-								add.disabled = false;
-								add.textContent = "Add variant";
-								toast(humanError(err instanceof Error ? err.message : "failed"), "error");
-							}
-						};
-						writes = writes.then(run, run);
-					});
+					const variantRow = () => board.entries.find((row) => !row.dropped && sameRowIdentity(row, identity)) ?? null;
+					const label = variant.precision ?? variant.name;
 					const details = el("details", { class: "variant-command" });
 					const code = codeLines(commands);
 					const copy = el("button", { type: "button", class: "btn compact", "aria-label": `Copy estimate and archive commands for ${variant.name}` }, "Copy commands");
 					copy.addEventListener("click", () => void copyOrSelect(copy, commands.join("\n"), code));
 					details.append(el("summary", {}, "Exact files"), el("pre", {}, code));
-					selection.append(add, " ", copy, details);
+					const existing = variantRow();
+					if (existing) {
+						// Already its own row: show where it went, and offer the way
+						// back. Dropping is undoable, like the row's own Drop button.
+						const show = el("button", { type: "button", class: "btn compact", "aria-label": `Show the board row for ${variant.name}` }, "View row");
+						show.addEventListener("click", () => showRow(existing));
+						const remove = el("button", { type: "button", class: "btn compact secondary work-drop", title: "Drop the variant's row — undoable; the catalog stops asking for it, vaults are untouched", "aria-label": `Remove ${variant.name} from the board` }, "Remove variant");
+						remove.addEventListener("click", () => {
+							show.disabled = true;
+							remove.disabled = true;
+							remove.textContent = "Removing…";
+							const run = async () => {
+								try {
+									await api(`/api/boards/${id}/entries/${existing.id}/drop`, { method: "POST" });
+									await loadBoard();
+									toast(`${label} is off the board.`, "ok", {
+										label: "Undo",
+										run: async () => {
+											try {
+												await api(`/api/boards/${id}/entries/${existing.id}/restore`, { method: "POST" });
+												toast(`${label} is back on the board.`);
+												await reload();
+											} catch (err) {
+												toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+											}
+										},
+									});
+								} catch (err) {
+									show.disabled = false;
+									remove.disabled = false;
+									remove.textContent = "Remove variant";
+									toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+								}
+							};
+							writes = writes.then(run, run);
+						});
+						selection.append(el("span", { class: "variant-on-board" }, "On board"), " ", show, " ", remove, " ", copy, details);
+					} else {
+						const add = el("button", { type: "button", class: "btn compact", "aria-label": `Add ${variant.name} as its own board row` }, "Add variant");
+						add.addEventListener("click", () => {
+							add.disabled = true;
+							add.textContent = "Adding…";
+							const run = async () => {
+								try {
+									if (!variantRow()) {
+										await api(`/api/boards/${id}/entries`, { method: "POST", body: JSON.stringify(identity) });
+									}
+									await loadBoard();
+									toast(`${label} is on the board as a separate selection.`);
+								} catch (err) {
+									add.disabled = false;
+									add.textContent = "Add variant";
+									toast(humanError(err instanceof Error ? err.message : "failed"), "error");
+								}
+							};
+							writes = writes.then(run, run);
+						});
+						selection.append(add, " ", copy, details);
+					}
 				} else {
 					selection.append("Incomplete inventory — refresh before selecting");
 				}
@@ -875,7 +914,7 @@ export async function mountBoard(root: HTMLElement, id: string) {
 			table.append(thead, tbody);
 			out.push(el("section", { class: "variant-inventory", "aria-label": "Published GGUF variants" },
 				el("h4", {}, "Published GGUF variants"),
-				el("p", {}, "Each size includes every shard of that variant. Estimates add recognized support files; optional projectors need an explicit selection. Add variant creates a separate collection scope and leaves this row unchanged. Unselected variants are not being judged recoverable or disposable."),
+				el("p", {}, "Each size includes every shard of that variant. Estimates add recognized support files; optional projectors need an explicit selection. Add variant creates a separate collection scope and leaves this row unchanged; Remove variant drops that row again, undoably. Unselected variants are not being judged recoverable or disposable."),
 				el("div", { class: "variant-table-wrap", tabindex: "0", role: "region", "aria-label": "GGUF variants and commands" }, table),
 			));
 		}

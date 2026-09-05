@@ -1027,6 +1027,14 @@ button.btn.bring-download {
 	color: var(--d-muted);
 }
 
+.variant-on-board {
+	color: var(--d-gold);
+	font-size: 0.8rem;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
 .variant-command {
 	margin-top: 0.5rem;
 }
